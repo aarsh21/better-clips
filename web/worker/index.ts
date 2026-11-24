@@ -364,12 +364,16 @@ async function uniqueKey(bucket: R2Bucket, key: string) {
   }
 }
 
+/* R2 fills in every field of the range, setting the unused ones to
+ * undefined, so check values rather than which keys exist. */
 function rangeBounds(range: R2Range, size: number) {
-  if ("suffix" in range) return { start: size - range.suffix, end: size - 1 }
+  if ("suffix" in range && range.suffix !== undefined)
+    return { start: Math.max(0, size - range.suffix), end: size - 1 }
 
-  const start = range.offset ?? 0
+  const start = ("offset" in range ? range.offset : undefined) ?? 0
+  const length = ("length" in range ? range.length : undefined) ?? size - start
 
-  return { start, end: start + (range.length ?? size - start) - 1 }
+  return { start, end: Math.min(size, start + length) - 1 }
 }
 
 /* Serves an R2 object with Range support, so video can seek. */
