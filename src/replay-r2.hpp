@@ -9,6 +9,10 @@
 /* ---- Settings (plugin-main.cpp) ---------------------------------------- */
 
 struct R2Config {
+	/* When set, clips upload through the clips app (web/) instead of S3. */
+	std::string app_url;      /* e.g. https://clips.<you>.workers.dev */
+	std::string upload_token; /* from the app's setup code */
+
 	std::string s3_url;     /* https://<account>.r2.cloudflarestorage.com/<bucket> */
 	std::string access_key; /* R2 API token: Access Key ID */
 	std::string secret_key; /* R2 API token: Secret Access Key */
@@ -68,6 +72,16 @@ bool mux_clip_to_mp4(const Clip &clip, std::vector<uint8_t> &mp4, std::string &e
 
 bool s3_put_object(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body,
 		   const char *content_type, std::string &error);
+
+/* Uploads through the clips app; key is set to where the clip landed. */
+bool app_upload(const R2Config &config, const std::string &name, const std::vector<uint8_t> &mp4, std::string &key,
+		std::string &error);
+
+/* Checks that the clips app accepts the upload token. */
+bool app_check(const R2Config &config, std::string &error);
+
+/* True for https:// URLs, and plain http only on this computer, for testing. */
+bool secure_url(const std::string &url);
 
 /* Joins the folder and file name into an object key. */
 std::string object_key(const R2Config &config, const std::string &name);

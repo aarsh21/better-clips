@@ -116,21 +116,77 @@ export const downloadUrl = (key: string) => `/api/media/${enc(key)}?download`
 export const thumbUrl = (clip: ApiClip) =>
   `/api/thumb/${enc(clip.key)}?v=${clip.thumb?.v ?? ""}`
 
+/* Thrown when the app needs a password ("password") or has none set ("none"). */
+export class SignInError extends Error {
+  readonly setUp: boolean
+
+  constructor(setUp: boolean) {
+    super("Sign in to see your clips")
+    this.setUp = setUp
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
 
-  if (res.status === 401 || res.status === 403) {
-    /* The Cloudflare Access session expired: sign in again. */
-    location.reload()
-    throw new Error("Signing in again")
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+
+    if (data.auth === "password" || data.auth === "none")
+      throw new SignInError(data.auth === "password")
+
+    /* The Cloudflare Access session expired: reload so Access signs you in
+     * again, but only once, in case the app's Access settings are wrong. */
+    if (data.auth === "access" && sessionStorage.getItem("reloaded") === null) {
+      sessionStorage.setItem("reloaded", "1")
+      location.reload()
+    }
+
+    throw new Error(data.error ?? `Request failed (${res.status})`)
   }
 
-  const data = await res.json().catch(() => ({}))
-
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`)
+  sessionStorage.removeItem("reloaded")
 
   // SAFETY: every route is served by worker/index.ts, which returns T on success.
-  return data as T
+  return (await res.json()) as T
+}
+
+/* A Worker request body is capped at 100 MB, so edits go up in 50 MB parts,
+ * like clips from OBS. The server saves it next to the source clip. */
+const PART_SIZE = 50 * 1024 * 1024
+
+async function saveEdit(from: string, body: ArrayBuffer) {
+  const { key, uploadId } = await request<{ key: string; uploadId: string }>(
+    `/api/upload/start?from=${encodeURIComponent(from)}`,
+    { method: "POST" }
+  )
+
+  const query = `key=${encodeURIComponent(key)}&uploadId=${encodeURIComponent(uploadId)}`
+  const offsets = []
+
+  for (let at = 0; at < body.byteLength; at += PART_SIZE) offsets.push(at)
+
+  try {
+    const parts = await Promise.all(
+      offsets.map(async (at, i) => {
+        const { etag } = await request<{ etag: string }>(
+          `/api/upload/part?${query}&part=${i + 1}`,
+          { method: "PUT", body: body.slice(at, at + PART_SIZE) }
+        )
+
+        return { partNumber: i + 1, etag }
+      })
+    )
+
+    return await request<{ key: string }>(`/api/upload/complete?${query}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parts }),
+    })
+  } catch (err) {
+    void fetch(`/api/upload/abort?${query}`, { method: "POST" })
+    throw err
+  }
 }
 
 export function errorMessage(cause: unknown) {
@@ -156,12 +212,7 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ key, days }),
     }),
-  saveEdit: (from: string, body: ArrayBuffer) =>
-    request<{ key: string }>(`/api/clips?from=${encodeURIComponent(from)}`, {
-      method: "POST",
-      headers: { "content-type": "video/mp4" },
-      body,
-    }),
+  saveEdit,
   putThumb: (
     key: string,
     blob: Blob,
@@ -178,4 +229,10 @@ export const api = {
       body: blob,
     }),
   setup: () => request<{ code: string }>("/api/setup"),
+  login: (password: string) =>
+    request<{ ok: true }>("/api/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password }),
+    }),
 }

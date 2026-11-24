@@ -26,22 +26,35 @@ plugin's hotkey instead.
 
 ## Setup
 
-1. In Cloudflare, create an R2 bucket.
-2. Go to **R2 > Manage API tokens** and create a token with
-   **Object Read & Write** for that bucket. Copy the Access Key ID and
-   Secret Access Key.
-3. In the bucket's **Settings**, copy the **S3 API** URL. It looks like
-   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`.
-4. Optional: to get share links, turn on **Public Development URL**
-   (`https://pub-xxxx.r2.dev`) or connect a custom domain.
-5. In OBS, open **Tools > Replay to R2 Settings**, fill in the fields, and
-   click **Test Upload**.
-6. In **Settings > Output**, enable the Replay Buffer. In **Settings > Hotkeys**,
-   bind **Save Replay to Cloudflare R2**.
-7. Start the Replay Buffer and press your hotkey.
+It takes about two minutes, and you need no R2 API keys.
 
-To stay within R2's free 10 GB, add a lifecycle rule to the bucket, such as
-deleting objects in `replays/` after 30 days.
+1. Deploy your own clips app to Cloudflare, which is free:
+
+   [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/aarsh21/obs-replay-r2/tree/main/web)
+
+   Cloudflare creates the R2 bucket for you. Pick a password when it asks
+   for `APP_PASSWORD`.
+2. Install the plugin from the
+   [latest release](https://github.com/aarsh21/obs-replay-r2/releases/latest)
+   and restart OBS.
+3. Open your app (`https://clips.<you>.workers.dev`), sign in, click
+   **Connect OBS** and copy the setup code.
+4. In OBS, open **Tools > Replay to R2 Settings**, click **Paste setup code**,
+   then **Test Upload** and **Save**.
+5. In **Settings > Output**, enable the Replay Buffer. In **Settings > Hotkeys**,
+   bind **Save Replay to Cloudflare R2**.
+6. Start the Replay Buffer and press your hotkey.
+
+Clips upload through your app, which deletes new clips after 30 days and the
+trash after 7. Clips you keep stay. R2's first 10 GB a month are free; past
+that, storage costs about $0.015 per GB a month.
+
+### Without the app
+
+The plugin can also upload straight to any S3-compatible bucket. Create an R2
+API token with **Object Read & Write** for your bucket, then fill in **S3 API
+URL** (`https://<account-id>.r2.cloudflarestorage.com/<bucket>`), **Access Key
+ID** and **Secret Access Key** in the settings, and leave **Clips app** empty.
 
 ## Building
 

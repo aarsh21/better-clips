@@ -27,7 +27,7 @@ export function SetupSteps() {
   return (
     <ol className="flex flex-col gap-5 text-xs">
       <Step n={1} title="Install the plugin">
-        Download the installer for your system from{" "}
+        Download version 0.1.1 or newer for your system from{" "}
         <a
           href={RELEASES}
           target="_blank"
@@ -57,7 +57,7 @@ export function SetupSteps() {
           </Button>
         </div>
         <p className="mt-1.5 text-[11px] text-muted-foreground">
-          It holds an upload-only key for your clips bucket. Keep it private.
+          It lets OBS upload to this app. Keep it private.
         </p>
       </Step>
       <Step n={3} title="Paste it in OBS">

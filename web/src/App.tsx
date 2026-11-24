@@ -11,11 +11,12 @@ import { cn } from "cn"
 
 import { ClipGrid } from "@/components/clip-grid"
 import { SetupSteps } from "@/components/setup-steps"
+import { SignIn } from "@/components/sign-in"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatBytes, type Clip } from "@/lib/api"
+import { formatBytes, SignInError, type Clip } from "@/lib/api"
 import { useClips, useNewClipToasts, useThumbnailWorker } from "@/lib/clips"
 import {
   useGlobalKeys,
@@ -99,6 +100,8 @@ export default function App() {
   usePreload()
 
   const index = clip ? visible.findIndex((c) => c.key === clip.key) : -1
+
+  if (error instanceof SignInError) return <SignIn setUp={error.setUp} />
 
   const navigate = (from: Clip, step: number) => {
     const next = visible[visible.findIndex((c) => c.key === from.key) + step]

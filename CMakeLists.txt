@@ -55,6 +55,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CURL::libcurl)
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
+    src/app-upload.cpp
     src/memory-mux.cpp
     src/plugin-main.cpp
     src/replay-output.cpp

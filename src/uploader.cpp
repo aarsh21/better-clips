@@ -25,6 +25,10 @@ std::thread worker;
  * for a couple of minutes before giving up. */
 constexpr int RETRY_DELAYS[] = {2, 5, 15, 30, 60};
 
+/* Each waiting clip holds its video in memory, so stop taking new ones when
+ * uploads fall this far behind instead of running OBS out of memory. */
+constexpr size_t MAX_QUEUED = 3;
+
 std::string format_mb(size_t bytes)
 {
 	char buf[32];
@@ -32,7 +36,7 @@ std::string format_mb(size_t bytes)
 	return buf;
 }
 
-void upload_clip(const Clip &clip)
+void upload_clip(Clip &clip)
 {
 	std::vector<uint8_t> mp4;
 	std::string error;
@@ -49,12 +53,20 @@ void upload_clip(const Clip &clip)
 	obs_log(LOG_INFO, "Built %s in memory: %zu bytes, %zu packets, %lld ms", clip.name.c_str(), mp4.size(),
 		clip.packets.size(), (long long)mux_ms);
 
-	const std::string key = object_key(clip.config, clip.name);
+	/* The MP4 has everything now; free the buffered packets while it uploads. */
+	for (encoder_packet &pkt : clip.packets)
+		obs_encoder_packet_release(&pkt);
+	clip.packets.clear();
+
+	const bool via_app = !clip.config.app_url.empty();
+	std::string key = via_app ? clip.name : object_key(clip.config, clip.name);
 	notify_user("Replay to R2: uploading " + clip.name + " (" + format_mb(mp4.size()) + ")...");
 
 	for (size_t attempt = 0;; attempt++) {
 		auto upload_start = std::chrono::steady_clock::now();
-		if (s3_put_object(clip.config, key, mp4, "video/mp4", error)) {
+		bool uploaded = via_app ? app_upload(clip.config, clip.name, mp4, key, error)
+					: s3_put_object(clip.config, key, mp4, "video/mp4", error);
+		if (uploaded) {
 			auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 					  std::chrono::steady_clock::now() - upload_start)
 					  .count();
@@ -126,9 +138,17 @@ void uploader_stop()
 
 void uploader_enqueue(Clip *clip)
 {
-	obs_log(LOG_INFO, "Saved replay %s from memory (%zu packets)", clip->name.c_str(), clip->packets.size());
 	{
 		std::lock_guard<std::mutex> lock(mutex);
+		if (queue.size() >= MAX_QUEUED) {
+			obs_log(LOG_WARNING, "Dropped %s: %zu clips are still waiting to upload", clip->name.c_str(),
+				queue.size());
+			notify_user("Replay to R2: still uploading earlier clips, this one was not saved");
+			delete clip;
+			return;
+		}
+		obs_log(LOG_INFO, "Saved replay %s from memory (%zu packets)", clip->name.c_str(),
+			clip->packets.size());
 		queue.emplace_back(clip);
 	}
 	wake.notify_one();

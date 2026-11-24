@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "packageManager": "pnpm@12.0.0",
   "scripts": {
     "dev": "vite",
     "build": "wrangler types && tsc -b && vite build",
@@ -10,10 +11,20 @@
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "deploy": "pnpm build && wrangler deploy",
+    "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
     "doctor": "react-doctor --blocking warning",
     "check": "wrangler types && tsc -b && eslint . && oxlint && react-doctor --blocking warning"
+  },
+  "cloudflare": {
+    "bindings": {
+      "APP_PASSWORD": {
+        "description": "The password you sign in to your clips app with. Use **12 or more characters**, for example from `openssl rand -base64 18`."
+      },
+      "BUCKET": {
+        "description": "The R2 bucket your clips are stored in. OBS uploads to it through this app, so you need no R2 API keys."
+      }
+    }
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

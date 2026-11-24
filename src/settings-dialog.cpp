@@ -17,9 +17,15 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <atomic>
+#include <chrono>
 #include <thread>
 
 namespace {
+
+/* Test uploads run on their own thread; OBS waits for them before it unloads
+ * the plugin and shuts curl down. */
+std::atomic<int> tests_running{0};
 
 class SettingsDialog : public QDialog {
 public:
@@ -29,6 +35,10 @@ public:
 		setMinimumWidth(560);
 
 		R2Config config = get_config();
+		app_url = new QLineEdit(QString::fromStdString(config.app_url));
+		app_url->setPlaceholderText("https://clips.<you>.workers.dev");
+		upload_token = new QLineEdit(QString::fromStdString(config.upload_token));
+		upload_token->setEchoMode(QLineEdit::Password);
 		s3_url = new QLineEdit(QString::fromStdString(config.s3_url));
 		s3_url->setPlaceholderText("https://<account-id>.r2.cloudflarestorage.com/<bucket>");
 		access_key = new QLineEdit(QString::fromStdString(config.access_key));
@@ -45,6 +55,12 @@ public:
 		help->setWordWrap(true);
 
 		auto *form = new QFormLayout();
+		form->addRow("Clips app", app_url);
+		form->addRow("Upload token", upload_token);
+		auto *s3_heading =
+			new QLabel("Or upload straight to your own S3 bucket (used when Clips app is empty):");
+		s3_heading->setWordWrap(true);
+		form->addRow(s3_heading);
 		form->addRow("S3 API URL", s3_url);
 		form->addRow("Access Key ID", access_key);
 		form->addRow("Secret Access Key", secret_key);
@@ -74,12 +90,14 @@ public:
 	}
 
 private:
-	QLineEdit *s3_url, *access_key, *secret_key, *folder, *public_url;
+	QLineEdit *app_url, *upload_token, *s3_url, *access_key, *secret_key, *folder, *public_url;
 	QLabel *status;
 
 	R2Config current() const
 	{
 		R2Config config;
+		config.app_url = app_url->text().trimmed().toStdString();
+		config.upload_token = upload_token->text().trimmed().toStdString();
 		config.s3_url = s3_url->text().trimmed().toStdString();
 		config.access_key = access_key->text().trimmed().toStdString();
 		config.secret_key = secret_key->text().trimmed().toStdString();
@@ -88,47 +106,57 @@ private:
 		return config;
 	}
 
-	/* The clips app's setup code: "r2obs1:" + base64 of
+	/* The clips app's setup code, "r2obs2:" + base64 of {"a": app URL,
+	 * "t": upload token}. Older apps gave "r2obs1:" + base64 of
 	 * {"u": S3 API URL, "k": access key, "s": secret key, "f": folder}. */
 	void paste_setup_code()
 	{
 		QString text = QApplication::clipboard()->text().trimmed();
-		const QString prefix = "r2obs1:";
 		QJsonObject code;
-		if (text.startsWith(prefix)) {
-			QByteArray json = QByteArray::fromBase64(text.mid(prefix.size()).toUtf8());
-			code = QJsonDocument::fromJson(json).object();
-		}
-		if (code.value("u").toString().isEmpty() || code.value("k").toString().isEmpty() ||
-		    code.value("s").toString().isEmpty()) {
+		if (text.startsWith("r2obs1:") || text.startsWith("r2obs2:"))
+			code = QJsonDocument::fromJson(QByteArray::fromBase64(text.mid(7).toUtf8())).object();
+
+		if (!code.value("a").toString().isEmpty() && !code.value("t").toString().isEmpty()) {
+			app_url->setText(code.value("a").toString());
+			upload_token->setText(code.value("t").toString());
+		} else if (!code.value("u").toString().isEmpty() && !code.value("k").toString().isEmpty() &&
+			   !code.value("s").toString().isEmpty()) {
+			app_url->clear();
+			upload_token->clear();
+			s3_url->setText(code.value("u").toString());
+			access_key->setText(code.value("k").toString());
+			secret_key->setText(code.value("s").toString());
+			folder->setText(code.value("f").toString("replays"));
+		} else {
 			status->setText("No setup code on the clipboard. Copy it from Connect OBS in your clips app.");
 			return;
 		}
-		s3_url->setText(code.value("u").toString());
-		access_key->setText(code.value("k").toString());
-		secret_key->setText(code.value("s").toString());
-		folder->setText(code.value("f").toString("replays"));
 		public_url->clear();
 		status->setText("Setup code pasted. Click Test Upload, then Save.");
 	}
 
-	/* Uploads a small text file so a typo shows up now, not after a clip is lost. */
+	/* Checks the settings now, so a typo shows up before a clip is lost. With
+	 * S3, uploads a small text file. */
 	void run_test(QPushButton *button)
 	{
 		R2Config config = current();
 		std::string key = object_key(config, "replay-r2-test.txt");
 		button->setEnabled(false);
-		status->setText("Uploading test file...");
+		status->setText("Testing...");
 
 		QPointer<SettingsDialog> self(this);
 		QPointer<QPushButton> button_ptr(button);
+		tests_running++;
 		std::thread([config, key, self, button_ptr]() {
 			const std::string text = "Replay to R2 for OBS can upload to this bucket.\n";
 			std::vector<uint8_t> body(text.begin(), text.end());
 			std::string error;
-			bool ok = s3_put_object(config, key, body, "text/plain", error);
-			QString message = ok ? QString("Test upload worked: %1").arg(QString::fromStdString(key))
-					     : QString("Test upload failed: %1").arg(QString::fromStdString(error));
+			bool via_app = !config.app_url.empty();
+			bool ok = via_app ? app_check(config, error)
+					  : s3_put_object(config, key, body, "text/plain", error);
+			QString where = QString::fromStdString(via_app ? config.app_url : key);
+			QString message = ok ? QString("Test worked: clips will upload to %1").arg(where)
+					     : QString("Test failed: %1").arg(QString::fromStdString(error));
 			QMetaObject::invokeMethod(
 				qApp,
 				[self, button_ptr, message]() {
@@ -138,11 +166,18 @@ private:
 						button_ptr->setEnabled(true);
 				},
 				Qt::QueuedConnection);
+			tests_running--;
 		}).detach();
 	}
 };
 
 } // namespace
+
+void wait_for_tests()
+{
+	while (tests_running > 0)
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+}
 
 void show_settings_dialog()
 {

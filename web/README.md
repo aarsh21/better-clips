@@ -6,12 +6,17 @@ next to the bucket, so the browser never sees bucket keys.
 
 - **Browse:** clips grouped by day, with thumbnails, hover previews and search.
 - **Trim:** pick in and out points on a filmstrip; the cut is saved as a new
-  clip without re-encoding (Mediabunny, in the browser).
+  clip without re-encoding (Mediabunny, in the browser). Because it isn't
+  re-encoded, the file starts at the keyframe before your in point, so up to
+  a couple of seconds before it are still in the file, just not played.
+  Don't rely on trimming to hide something before you share.
 - **Keep, delete, restore:** recent clips are cleared after 30 days, the trash
   after 7. Kept clips stay forever.
 - **Share:** links that expire after 1, 7 or 30 days, or never. Share pages
   embed as video in Discord and other apps.
 - **Connect OBS:** copies a setup code the plugin pastes in one click.
+- **Cleanup:** a daily job deletes new clips after 30 days and the trash
+  after 7.
 
 Keyboard: `/` search, `1` `2` `3` tabs, then in a clip `←` `→` next and
 previous, `K` keep, `T` trim, `E` rename, `Del` delete, `Space` play. While
@@ -25,24 +30,43 @@ saved/<day>/...                    kept clips, never deleted
 trash/<day>/...                    deleted clips, purged after 7 days
 thumbs/<clip key>.jpg              made in the browser the first time a clip is seen
 shares/<id>.json                   share links
+config/upload-token                the token OBS uploads with
 ```
 
 ## Deploy
 
-Sign-in is Cloudflare Access (one-time code to the owner's email); share
-links under `/s/` bypass it. `wrangler.jsonc` holds the domain, Access team and
-audience. The owner's email and the plugin's upload keys are Worker secrets:
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/aarsh21/obs-replay-r2/tree/main/web)
+
+The button copies this folder into your GitHub account, creates the `clips`
+bucket, and asks for `APP_PASSWORD`, the password you sign in with (12 or more
+characters). The app runs on `clips.<you>.workers.dev`. OBS uploads through
+the app with a token it makes the first time you open **Connect OBS**, so you
+need no R2 API keys.
+
+By hand:
 
 ```sh
 pnpm install
-pnpm wrangler secret put OWNER_EMAIL
-pnpm wrangler secret put OBS_ACCESS_KEY_ID
-pnpm wrangler secret put OBS_SECRET_ACCESS_KEY
-pnpm run deploy
+pnpm wrangler secret put APP_PASSWORD
+pnpm build && pnpm run deploy
 ```
 
-For local development, `.dev.vars` with `DEV_NO_AUTH=1` skips the sign-in
-check, and `pnpm dev` serves the app against a local bucket.
+To sign in with Cloudflare Access instead of a password, put the app behind an
+Access application, then set `ACCESS_TEAM` and `ACCESS_AUD` (the application's
+audience tag) as vars and `OWNER_EMAIL` as a secret. Keep `APP_PASSWORD` set
+too: OBS's upload token is made from it. Add Bypass applications for
+`<your domain>/s` (share links) and `<your domain>/api/upload` (OBS, which
+checks its own token), or Access blocks them before they reach the app. A gitignored
+`wrangler.local.jsonc` is a good place for your own domain and Access settings:
+`pnpm build && pnpm wrangler deploy -c wrangler.local.jsonc`.
+
+If you deploy more than one copy of the app in the same Cloudflare account,
+give each one its own `namespace_id` under `ratelimits` in `wrangler.jsonc`,
+so they don't share sign-in limits.
+
+For local development, copy `.dev.vars.example` to `.dev.vars` and set a
+password, or set `DEV_NO_AUTH=1` to skip sign-in. `pnpm dev` serves the app
+against a local bucket.
 
 ## Checks
 

@@ -129,12 +129,24 @@ std::string object_key(const R2Config &config, const std::string &name)
 	return key + name;
 }
 
+bool secure_url(const std::string &url)
+{
+	for (const char *allowed : {"https://", "http://localhost:", "http://127.0.0.1:"})
+		if (url.rfind(allowed, 0) == 0)
+			return true;
+	return false;
+}
+
 bool s3_put_object(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body,
 		   const char *content_type, std::string &error)
 {
 	ParsedUrl url;
 	if (!parse_s3_url(config.s3_url, url, error))
 		return false;
+	if (!secure_url(config.s3_url)) {
+		error = "The S3 API URL must start with https://";
+		return false;
+	}
 	if (config.access_key.empty() || config.secret_key.empty()) {
 		error = "Access Key ID and Secret Access Key are required";
 		return false;

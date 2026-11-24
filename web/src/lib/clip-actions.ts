@@ -44,9 +44,7 @@ export function useClipActions(
       (done) =>
         done &&
         toast(kept ? "No longer kept" : "Kept forever", {
-          description: kept
-            ? "It will be cleared in 30 days."
-            : undefined,
+          description: kept ? "It will be cleared in 30 days." : undefined,
         })
     )
   }
@@ -107,7 +105,16 @@ export function useClipActions(
     try {
       const { url, key } = await api.share(clip.key, days)
 
-      if (key !== clip.key) nav.onMoved(clip.key, key)
+      /* Sharing keeps the clip, which moves it: update the list before the
+       * viewer follows, so it doesn't close on a clip it can't find. */
+      if (key !== clip.key) {
+        qc.setQueryData<Clip[]>(["clips"], (list) =>
+          list?.map((c) =>
+            c.key === clip.key ? { ...c, key, folder: "saved" } : c
+          )
+        )
+        nav.onMoved(clip.key, key)
+      }
 
       await qc.invalidateQueries({ queryKey: ["clips"] })
       await copyLink(url, days, pending)

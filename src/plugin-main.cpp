@@ -34,6 +34,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <mutex>
 
 void show_settings_dialog();
+void wait_for_tests();
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -60,6 +61,8 @@ void load_config()
 	if (!data)
 		return;
 	obs_data_set_default_string(data, "folder", "replays");
+	config.app_url = obs_data_get_string(data, "app_url");
+	config.upload_token = obs_data_get_string(data, "upload_token");
 	config.s3_url = obs_data_get_string(data, "s3_url");
 	config.access_key = obs_data_get_string(data, "access_key");
 	config.secret_key = obs_data_get_string(data, "secret_key");
@@ -77,6 +80,8 @@ void save_config()
 	obs_data_t *data = obs_data_create();
 	{
 		std::lock_guard<std::mutex> lock(config_mutex);
+		obs_data_set_string(data, "app_url", config.app_url.c_str());
+		obs_data_set_string(data, "upload_token", config.upload_token.c_str());
 		obs_data_set_string(data, "s3_url", config.s3_url.c_str());
 		obs_data_set_string(data, "access_key", config.access_key.c_str());
 		obs_data_set_string(data, "secret_key", config.secret_key.c_str());
@@ -148,8 +153,9 @@ void on_save_hotkey(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 		notify_user("Replay to R2: start the Replay Buffer first");
 		return;
 	}
-	if (get_config().s3_url.empty()) {
-		notify_user("Replay to R2: set up your R2 bucket in Tools > Replay to R2 Settings");
+	R2Config current = get_config();
+	if (current.app_url.empty() && current.s3_url.empty()) {
+		notify_user("Replay to R2: connect your clips app in Tools > Replay to R2 Settings");
 		return;
 	}
 	replay_r2_request_save(replay_output);
@@ -248,6 +254,7 @@ void obs_module_unload(void)
 	obs_frontend_remove_save_callback(on_frontend_save, nullptr);
 	stop_replay_output();
 	uploader_stop();
+	wait_for_tests();
 	curl_global_cleanup();
 	obs_log(LOG_INFO, "plugin unloaded");
 }
