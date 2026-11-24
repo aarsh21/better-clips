@@ -82,7 +82,7 @@ struct ReadState {
 size_t read_body(char *buffer, size_t size, size_t nitems, void *userdata)
 {
 	ReadState *state = (ReadState *)userdata;
-	size_t n = std::min(size * nitems, state->body->size() - state->pos);
+	size_t n = (std::min)(size * nitems, state->body->size() - state->pos);
 	memcpy(buffer, state->body->data() + state->pos, n);
 	state->pos += n;
 	return n;
