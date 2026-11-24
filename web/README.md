@@ -17,8 +17,9 @@ next to the bucket, so the browser never sees bucket keys.
   embed as video in Discord and other apps.
 - **Search:** `/` or `⌘K` opens a search box for clips (by name or day) and
   commands such as switching tabs or the theme.
-- **Connect OBS:** **Settings → OBS** copies a setup code the plugin pastes
-  in one click, and turns green as soon as OBS checks in (Test Upload).
+- **Connect OBS:** **Settings → OBS** gives a one-line install command for
+  macOS/Linux or Windows that installs the plugin and connects it, and turns
+  green as soon as OBS checks in.
 - **Light and dark:** switch in the header, in search, or in **Settings →
   Appearance**, which also has a System option.
 - **Cleanup:** a daily job deletes old clips using the Storage settings.

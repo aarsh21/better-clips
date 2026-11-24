@@ -2,6 +2,7 @@ import * as React from "react"
 import { DesktopIcon, MoonIcon, SunIcon } from "@phosphor-icons/react"
 import { cn } from "cn"
 
+import { Segmented } from "@/components/segmented"
 import { ObsConnect } from "@/components/setup-steps"
 import { useTheme } from "@/components/theme-provider"
 import {
@@ -35,14 +36,18 @@ export function SettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Pinned near the top, so switching tabs or connecting OBS changes the
           height downwards instead of making the dialog jump. */}
-      <DialogContent className="top-[10vh] translate-y-0 gap-0 p-0 sm:max-w-lg">
+      <DialogContent className="top-[10vh] max-h-[85vh] translate-y-0 gap-0 overflow-y-auto p-0 sm:max-w-lg">
         <DialogHeader className="px-5 pt-5 pb-3">
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription className="sr-only">
             Connect OBS, choose how long clips are kept, and pick a theme.
           </DialogDescription>
         </DialogHeader>
-        <Tabs value={tab} onValueChange={(value: SettingsTab) => onTab(value)}>
+        <Tabs
+          value={tab}
+          onValueChange={(value: SettingsTab) => onTab(value)}
+          className="min-w-0"
+        >
           <TabsList
             variant="line"
             className="w-full justify-start border-b px-3"
@@ -183,56 +188,6 @@ function OptionRow<T extends number | null>({
         value={value}
         onChange={onChange}
       />
-    </div>
-  )
-}
-
-/* A row of buttons, one of them chosen, read out as a radio group. */
-function Segmented<T extends string | number | null>({
-  labelledBy,
-  options,
-  value,
-  onChange,
-}: {
-  labelledBy: string
-  options: {
-    value: T
-    label: string
-    title?: string
-    icon?: React.ElementType
-  }[]
-  value: T | undefined
-  onChange: (value: T) => void
-}) {
-  return (
-    <div
-      role="radiogroup"
-      aria-labelledby={labelledBy}
-      className="flex w-full border bg-muted/30"
-    >
-      {options.map((option) => {
-        const checked = option.value === value
-        const Icon = option.icon
-
-        return (
-          <button
-            key={String(option.value)}
-            type="button"
-            role="radio"
-            aria-checked={checked}
-            title={option.title}
-            onClick={() => onChange(option.value)}
-            className={cn(
-              "flex h-8 flex-1 items-center justify-center gap-1.5 border-r text-xs text-muted-foreground tabular-nums transition-colors last:border-r-0 hover:text-foreground focus-visible:relative focus-visible:z-10 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
-              checked &&
-                "bg-background font-medium text-foreground shadow-[inset_0_-2px_0_var(--primary)]"
-            )}
-          >
-            {Icon && <Icon className="size-3.5" />}
-            {option.label}
-          </button>
-        )
-      })}
     </div>
   )
 }

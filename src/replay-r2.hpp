@@ -18,10 +18,20 @@ struct R2Config {
 	std::string secret_key; /* R2 API token: Secret Access Key */
 	std::string folder = "replays";
 	std::string public_url; /* optional, e.g. https://pub-xxxx.r2.dev */
+
+	bool start_replay_buffer = true; /* start OBS's Replay Buffer when OBS opens */
 };
 
 R2Config get_config();
 void set_config(const R2Config &config);
+
+/* Fills in config from a clips app setup code ("r2obs1:" or "r2obs2:").
+ * Returns false, leaving config alone, if text isn't one. (settings-dialog.cpp) */
+bool apply_setup_code(const std::string &text, R2Config &config);
+
+/* Checks the connection on a background thread and shows the result in the
+ * status bar. (settings-dialog.cpp) */
+void check_connection_async(const R2Config &config);
 
 /* Shows a message in the OBS status bar and, when link is set, copies it to
  * the clipboard. Safe to call from any thread. */

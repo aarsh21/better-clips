@@ -34,16 +34,35 @@ It takes about two minutes, and you need no R2 API keys.
 
    Cloudflare creates the R2 bucket for you. Pick a password when it asks
    for `APP_PASSWORD`.
-2. Install the plugin from the
-   [latest release](https://github.com/aarsh21/obs-replay-r2/releases/latest)
-   and restart OBS.
-3. Open your app (`https://clips.<you>.workers.dev`), sign in, click
-   **Connect OBS** (later: the gear icon) and copy the setup code.
-4. In OBS, open **Tools > Replay to R2 Settings**, click **Paste setup code**,
-   then **Test Upload** and **Save**.
-5. In **Settings > Output**, enable the Replay Buffer. In **Settings > Hotkeys**,
-   bind **Save Replay to Cloudflare R2**.
-6. Start the Replay Buffer and press your hotkey.
+2. Open your app (`https://clips.<you>.workers.dev`), sign in and click
+   **Connect OBS** (later: the gear icon). Copy the install command for your
+   system and paste it into a terminal:
+
+   ```sh
+   # macOS / Linux
+   curl -fsSL https://raw.githubusercontent.com/aarsh21/obs-replay-r2/main/install.sh | sh -s -- '<setup code>'
+   ```
+
+   ```powershell
+   # Windows (PowerShell)
+   $env:CLIPS_SETUP_CODE='<setup code>'; irm https://raw.githubusercontent.com/aarsh21/obs-replay-r2/main/install.ps1 | iex
+   ```
+
+   It waits for OBS to close, installs the plugin, connects it to your app,
+   turns on the Replay Buffer, binds **Ctrl+Alt+R** and opens OBS. Nothing
+   needs sudo; Windows asks once for permission. The command holds your setup
+   code, so keep it private.
+3. Press **Ctrl+Alt+R** in a game. The clip shows up in your app.
+
+To set it up by hand instead: install the plugin from the
+[latest release](https://github.com/aarsh21/obs-replay-r2/releases/latest)
+(0.1.1 or newer), then in OBS open **Tools > Replay to R2 Settings**, click
+**Paste setup code**, then **Test Upload** and **Save**. Enable the Replay
+Buffer in **Settings > Output** and bind **Save Replay to Cloudflare R2** in
+**Settings > Hotkeys**.
+
+The Linux script installs into your OBS config folder and supports OBS from
+your distro's packages or PPA on x86_64. It doesn't support Flatpak OBS.
 
 Clips upload through your app, which deletes new clips after 30 days and the
 trash after 7; change both in **Settings → Storage**. Clips you keep stay. R2's first 10 GB a month are free; past

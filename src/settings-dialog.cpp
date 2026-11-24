@@ -5,6 +5,7 @@
 #include <obs-frontend-api.h>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -26,6 +27,19 @@ namespace {
 /* Test uploads run on their own thread; OBS waits for them before it unloads
  * the plugin and shuts curl down. */
 std::atomic<int> tests_running{0};
+
+/* The same check as Test Upload. With S3, uploads a small text file. */
+bool test_connection(const R2Config &config, std::string &where, std::string &error)
+{
+	if (!config.app_url.empty()) {
+		where = config.app_url;
+		return app_check(config, error);
+	}
+	where = object_key(config, "replay-r2-test.txt");
+	const std::string text = "Replay to R2 for OBS can upload to this bucket.\n";
+	std::vector<uint8_t> body(text.begin(), text.end());
+	return s3_put_object(config, where, body, "text/plain", error);
+}
 
 class SettingsDialog : public QDialog {
 public:
@@ -54,6 +68,9 @@ public:
 					"Then bind <b>Save Replay to Cloudflare R2</b> in Settings &gt; Hotkeys.");
 		help->setWordWrap(true);
 
+		start_replay = new QCheckBox("Start the Replay Buffer when OBS opens");
+		start_replay->setChecked(config.start_replay_buffer);
+
 		auto *form = new QFormLayout();
 		form->addRow("Clips app", app_url);
 		form->addRow("Upload token", upload_token);
@@ -66,6 +83,7 @@ public:
 		form->addRow("Secret Access Key", secret_key);
 		form->addRow("Folder", folder);
 		form->addRow("Public URL", public_url);
+		form->addRow(start_replay);
 
 		status = new QLabel();
 		status->setWordWrap(true);
@@ -91,6 +109,7 @@ public:
 
 private:
 	QLineEdit *app_url, *upload_token, *s3_url, *access_key, *secret_key, *folder, *public_url;
+	QCheckBox *start_replay;
 	QLabel *status;
 
 	R2Config current() const
@@ -103,60 +122,43 @@ private:
 		config.secret_key = secret_key->text().trimmed().toStdString();
 		config.folder = folder->text().trimmed().toStdString();
 		config.public_url = public_url->text().trimmed().toStdString();
+		config.start_replay_buffer = start_replay->isChecked();
 		return config;
 	}
 
-	/* The clips app's setup code, "r2obs2:" + base64 of {"a": app URL,
-	 * "t": upload token}. Older apps gave "r2obs1:" + base64 of
-	 * {"u": S3 API URL, "k": access key, "s": secret key, "f": folder}. */
 	void paste_setup_code()
 	{
-		QString text = QApplication::clipboard()->text().trimmed();
-		QJsonObject code;
-		if (text.startsWith("r2obs1:") || text.startsWith("r2obs2:"))
-			code = QJsonDocument::fromJson(QByteArray::fromBase64(text.mid(7).toUtf8())).object();
-
-		if (!code.value("a").toString().isEmpty() && !code.value("t").toString().isEmpty()) {
-			app_url->setText(code.value("a").toString());
-			upload_token->setText(code.value("t").toString());
-		} else if (!code.value("u").toString().isEmpty() && !code.value("k").toString().isEmpty() &&
-			   !code.value("s").toString().isEmpty()) {
-			app_url->clear();
-			upload_token->clear();
-			s3_url->setText(code.value("u").toString());
-			access_key->setText(code.value("k").toString());
-			secret_key->setText(code.value("s").toString());
-			folder->setText(code.value("f").toString("replays"));
-		} else {
+		R2Config config = current();
+		if (!apply_setup_code(QApplication::clipboard()->text().toStdString(), config)) {
 			status->setText("No setup code on the clipboard. Copy it from Connect OBS in your clips app.");
 			return;
 		}
+		app_url->setText(QString::fromStdString(config.app_url));
+		upload_token->setText(QString::fromStdString(config.upload_token));
+		s3_url->setText(QString::fromStdString(config.s3_url));
+		access_key->setText(QString::fromStdString(config.access_key));
+		secret_key->setText(QString::fromStdString(config.secret_key));
+		folder->setText(QString::fromStdString(config.folder));
 		public_url->clear();
 		status->setText("Setup code pasted. Click Test Upload, then Save.");
 	}
 
-	/* Checks the settings now, so a typo shows up before a clip is lost. With
-	 * S3, uploads a small text file. */
+	/* Checks the settings now, so a typo shows up before a clip is lost. */
 	void run_test(QPushButton *button)
 	{
 		R2Config config = current();
-		std::string key = object_key(config, "replay-r2-test.txt");
 		button->setEnabled(false);
 		status->setText("Testing...");
 
 		QPointer<SettingsDialog> self(this);
 		QPointer<QPushButton> button_ptr(button);
 		tests_running++;
-		std::thread([config, key, self, button_ptr]() {
-			const std::string text = "Replay to R2 for OBS can upload to this bucket.\n";
-			std::vector<uint8_t> body(text.begin(), text.end());
-			std::string error;
-			bool via_app = !config.app_url.empty();
-			bool ok = via_app ? app_check(config, error)
-					  : s3_put_object(config, key, body, "text/plain", error);
-			QString where = QString::fromStdString(via_app ? config.app_url : key);
-			QString message = ok ? QString("Test worked: clips will upload to %1").arg(where)
-					     : QString("Test failed: %1").arg(QString::fromStdString(error));
+		std::thread([config, self, button_ptr]() {
+			std::string where, error;
+			bool ok = test_connection(config, where, error);
+			QString message =
+				ok ? QString("Test worked: clips will upload to %1").arg(QString::fromStdString(where))
+				   : QString("Test failed: %1").arg(QString::fromStdString(error));
 			QMetaObject::invokeMethod(
 				qApp,
 				[self, button_ptr, message]() {
@@ -172,6 +174,50 @@ private:
 };
 
 } // namespace
+
+/* "r2obs2:" + base64 of {"a": app URL, "t": upload token}. Older apps gave
+ * "r2obs1:" + base64 of {"u": S3 API URL, "k": access key, "s": secret key,
+ * "f": folder}. */
+bool apply_setup_code(const std::string &text, R2Config &config)
+{
+	QString code = QString::fromStdString(text).trimmed();
+	if (!code.startsWith("r2obs1:") && !code.startsWith("r2obs2:"))
+		return false;
+	QJsonObject fields = QJsonDocument::fromJson(QByteArray::fromBase64(code.mid(7).toUtf8())).object();
+	auto field = [&](const char *name) {
+		return fields.value(name).toString().toStdString();
+	};
+
+	if (!field("a").empty() && !field("t").empty()) {
+		config.app_url = field("a");
+		config.upload_token = field("t");
+	} else if (!field("u").empty() && !field("k").empty() && !field("s").empty()) {
+		config.app_url.clear();
+		config.upload_token.clear();
+		config.s3_url = field("u");
+		config.access_key = field("k");
+		config.secret_key = field("s");
+		config.folder = fields.value("f").toString("replays").toStdString();
+	} else {
+		return false;
+	}
+	config.public_url.clear();
+	return true;
+}
+
+void check_connection_async(const R2Config &config)
+{
+	tests_running++;
+	std::thread([config]() {
+		std::string where, error;
+		if (test_connection(config, where, error))
+			notify_user("Replay to R2: connected to " + where +
+				    ". Press your Save Replay to Cloudflare R2 hotkey to save a clip.");
+		else
+			notify_user("Replay to R2: could not connect (" + error + ")");
+		tests_running--;
+	}).detach();
+}
 
 void wait_for_tests()
 {

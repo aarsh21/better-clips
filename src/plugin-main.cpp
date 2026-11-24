@@ -21,6 +21,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "plugin-support.h"
 
 #include <obs-frontend-api.h>
+#include <util/config-file.h>
 #include <util/platform.h>
 
 #include <curl/curl.h>
@@ -46,6 +47,7 @@ R2Config config;
 obs_hotkey_id save_hotkey = OBS_INVALID_HOTKEY_ID;
 obs_output_t *replay_output = nullptr; /* our in-memory replay buffer */
 bool ui_alive = true;
+bool just_set_up = false; /* the install script's setup code was applied */
 
 std::string config_path()
 {
@@ -61,6 +63,7 @@ void load_config()
 	if (!data)
 		return;
 	obs_data_set_default_string(data, "folder", "replays");
+	obs_data_set_default_bool(data, "start_replay_buffer", true);
 	config.app_url = obs_data_get_string(data, "app_url");
 	config.upload_token = obs_data_get_string(data, "upload_token");
 	config.s3_url = obs_data_get_string(data, "s3_url");
@@ -68,6 +71,7 @@ void load_config()
 	config.secret_key = obs_data_get_string(data, "secret_key");
 	config.folder = obs_data_get_string(data, "folder");
 	config.public_url = obs_data_get_string(data, "public_url");
+	config.start_replay_buffer = obs_data_get_bool(data, "start_replay_buffer");
 
 	obs_data_array_t *hotkey = obs_data_get_array(data, "save_hotkey");
 	obs_hotkey_load(save_hotkey, hotkey);
@@ -87,6 +91,7 @@ void save_config()
 		obs_data_set_string(data, "secret_key", config.secret_key.c_str());
 		obs_data_set_string(data, "folder", config.folder.c_str());
 		obs_data_set_string(data, "public_url", config.public_url.c_str());
+		obs_data_set_bool(data, "start_replay_buffer", config.start_replay_buffer);
 	}
 	obs_data_array_t *hotkey = obs_hotkey_save(save_hotkey);
 	obs_data_set_array(data, "save_hotkey", hotkey);
@@ -135,6 +140,81 @@ void start_replay_output()
 			obs_output_get_last_error(replay_output));
 }
 
+/* Turns on OBS's Replay Buffer in the current profile. OBS creates its
+ * outputs after it loads plugins, so this takes effect on this start. */
+void enable_replay_buffer_in_profile()
+{
+	config_t *profile = obs_frontend_get_profile_config();
+	if (!profile)
+		return;
+	config_set_bool(profile, "SimpleOutput", "RecRB", true);
+	config_set_bool(profile, "AdvOut", "RecRB", true);
+	config_save_safe(profile, "tmp", nullptr);
+}
+
+/* Binds Ctrl+Alt+R to the save hotkey, unless it already has a key. */
+void bind_default_hotkey()
+{
+	obs_data_array_t *current = obs_hotkey_save(save_hotkey);
+	size_t bound = obs_data_array_count(current);
+	obs_data_array_release(current);
+	if (bound)
+		return;
+
+	obs_data_t *key = obs_data_create();
+	obs_data_set_string(key, "key", "OBS_KEY_R");
+	obs_data_set_bool(key, "control", true);
+	obs_data_set_bool(key, "alt", true);
+	obs_data_array_t *keys = obs_data_array_create();
+	obs_data_array_push_back(keys, key);
+	obs_hotkey_load(save_hotkey, keys);
+	obs_data_array_release(keys);
+	obs_data_release(key);
+}
+
+/* The install script leaves the setup code from the clips app here. Applying
+ * it while OBS loads plugins sets everything up on OBS's first start: the
+ * upload settings, the Replay Buffer and a hotkey. */
+void apply_pending_setup_code()
+{
+	char *path = obs_module_config_path("setup-code.txt");
+	std::string file = path ? path : "";
+	bfree(path);
+
+	char *text = os_quick_read_utf8_file(file.c_str());
+	if (!text)
+		return;
+	R2Config next = get_config();
+	bool applied = apply_setup_code(text, next);
+	bfree(text);
+	os_unlink(file.c_str());
+
+	if (!applied) {
+		obs_log(LOG_WARNING, "Ignored %s: not a setup code", file.c_str());
+		return;
+	}
+	next.start_replay_buffer = true;
+	enable_replay_buffer_in_profile();
+	bind_default_hotkey();
+	set_config(next);
+	just_set_up = true;
+	obs_log(LOG_INFO, "Applied the setup code from the install script");
+}
+
+/* Starts OBS's Replay Buffer, which starts ours, unless that is turned off. */
+void start_obs_replay_buffer()
+{
+	if (!get_config().start_replay_buffer || obs_frontend_replay_buffer_active())
+		return;
+	obs_output_t *output = obs_frontend_get_replay_buffer_output();
+	if (!output) {
+		notify_user("Replay to R2: turn on the Replay Buffer in Settings > Output");
+		return;
+	}
+	obs_output_release(output);
+	obs_frontend_replay_buffer_start();
+}
+
 void stop_replay_output()
 {
 	if (!replay_output)
@@ -164,6 +244,13 @@ void on_save_hotkey(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 void on_frontend_event(enum obs_frontend_event event, void *)
 {
 	switch (event) {
+	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+		start_obs_replay_buffer();
+		if (just_set_up) {
+			just_set_up = false;
+			check_connection_async(get_config());
+		}
+		break;
 	case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED:
 		start_replay_output();
 		break;
@@ -237,6 +324,7 @@ bool obs_module_load(void)
 	save_hotkey = obs_hotkey_register_frontend("ReplayR2.Save", obs_module_text("ReplayR2.Save"), on_save_hotkey,
 						   nullptr);
 	load_config();
+	apply_pending_setup_code();
 
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 	obs_frontend_add_save_callback(on_frontend_save, nullptr);

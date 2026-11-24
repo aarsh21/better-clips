@@ -1,8 +1,14 @@
 import * as React from "react"
-import { CheckIcon, CopyIcon } from "@phosphor-icons/react"
+import {
+  CheckIcon,
+  CopyIcon,
+  TerminalIcon,
+  WindowsLogoIcon,
+} from "@phosphor-icons/react"
 import { useQuery } from "@tanstack/react-query"
 import { cn } from "cn"
 
+import { Segmented } from "@/components/segmented"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
@@ -70,7 +76,7 @@ function ObsStatus({
         <span className="text-[11px] text-muted-foreground">
           {seen
             ? `Last checked in ${timeAgo(seen)}.`
-            : "Follow the steps below. This turns green when you click Test Upload in OBS."}
+            : "Run the command below. This turns green as soon as OBS opens."}
         </span>
       </div>
     </div>
@@ -91,6 +97,27 @@ function timeAgo(iso: string) {
   return `${days} ${days === 1 ? "day" : "days"} ago`
 }
 
+const SCRIPTS = "https://raw.githubusercontent.com/aarsh21/obs-replay-r2/main"
+
+type Platform = "unix" | "windows"
+
+const PLATFORMS = [
+  { value: "unix", label: "macOS / Linux", icon: TerminalIcon },
+  { value: "windows", label: "Windows", icon: WindowsLogoIcon },
+] as const
+
+/* The one-line installer for each platform, with the setup code inside, so
+ * pasting it installs the plugin and connects OBS in one go. */
+function installCommand(platform: Platform, code: string) {
+  return platform === "windows"
+    ? `$env:CLIPS_SETUP_CODE='${code}'; irm ${SCRIPTS}/install.ps1 | iex`
+    : `curl -fsSL ${SCRIPTS}/install.sh | sh -s -- '${code}'`
+}
+
+function hidden(code: string) {
+  return code.slice(0, 14) + "••••••••"
+}
+
 export function SetupSteps() {
   const setup = useQuery({
     queryKey: ["setup"],
@@ -98,17 +125,67 @@ export function SetupSteps() {
     staleTime: Infinity,
   })
 
-  const [copied, setCopied] = React.useState(false)
+  const [platform, setPlatform] = React.useState<Platform>(() =>
+    navigator.userAgent.includes("Windows") ? "windows" : "unix"
+  )
 
-  const copy = async () => {
-    if (!setup.data) return
-    await navigator.clipboard.writeText(setup.data.code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+  const [manual, setManual] = React.useState(false)
+  const platformId = React.useId()
+  const code = setup.data?.code
 
   return (
-    <ol className="flex flex-col gap-5 text-xs">
+    <div className="flex flex-col gap-4 text-xs">
+      <div className="flex flex-col gap-2">
+        <span id={platformId} className="font-medium">
+          Run this in a terminal
+        </span>
+        <Segmented
+          labelledBy={platformId}
+          options={[...PLATFORMS]}
+          value={platform}
+          onChange={setPlatform}
+        />
+        <CopyField
+          text={code && installCommand(platform, code)}
+          shown={code && installCommand(platform, hidden(code))}
+          error={setup.error?.message}
+        />
+        <p className="leading-relaxed text-muted-foreground">
+          {platform === "windows"
+            ? "Paste it into PowerShell. Windows asks once for permission to add the plugin."
+            : "Paste it into Terminal. Nothing needs sudo."}{" "}
+          It waits for OBS to close, installs the plugin, then opens OBS with
+          the Replay Buffer running. Press{" "}
+          <kbd className="border bg-muted px-1 font-mono text-[10px] text-foreground">
+            Ctrl+Alt+R
+          </kbd>{" "}
+          to save a clip. The command holds your setup code, so keep it private.
+        </p>
+      </div>
+      {manual ? (
+        <ManualSteps code={code} error={setup.error?.message} />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setManual(true)}
+          className="self-start text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        >
+          Set it up by hand instead
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ManualSteps({
+  code,
+  error,
+}: {
+  code: string | undefined
+  error: string | undefined
+}) {
+  return (
+    <ol className="flex flex-col gap-5 border-t pt-4">
       <Step n={1} title="Install the plugin">
         Download version 0.1.1 or newer for your system from{" "}
         <a
@@ -122,26 +199,7 @@ export function SetupSteps() {
         and restart OBS.
       </Step>
       <Step n={2} title="Copy your setup code">
-        <div className="mt-2 flex items-stretch gap-0">
-          <div className="flex h-8 min-w-0 flex-1 items-center border bg-muted/40 px-2 font-mono text-[11px] text-muted-foreground">
-            {setup.data ? (
-              <span className="truncate">
-                {setup.data.code.slice(0, 28)}••••••••
-              </span>
-            ) : setup.error ? (
-              <span className="text-destructive">{setup.error.message}</span>
-            ) : (
-              <Skeleton className="h-3 w-40" />
-            )}
-          </div>
-          <Button onClick={copy} disabled={!setup.data} className="h-8">
-            {copied ? <CheckIcon weight="bold" /> : <CopyIcon />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
-        </div>
-        <p className="mt-1.5 text-[11px] text-muted-foreground">
-          It lets OBS upload to this app. Keep it private.
-        </p>
+        <CopyField text={code} shown={code && hidden(code)} error={error} />
       </Step>
       <Step n={3} title="Paste it in OBS">
         Open <b>Tools → Replay to R2 Settings</b>, click <b>Paste setup code</b>
@@ -152,6 +210,50 @@ export function SetupSteps() {
         Start the Replay Buffer and press it.
       </Step>
     </ol>
+  )
+}
+
+/* A secret shown cut short, with a button that copies all of it. */
+function CopyField({
+  text,
+  shown,
+  error,
+}: {
+  text: string | undefined
+  shown: string | undefined
+  error: string | undefined
+}) {
+  const [copied, setCopied] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 2000)
+
+    return () => clearTimeout(timer)
+  }, [copied])
+
+  const copy = async () => {
+    if (!text) return
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+  }
+
+  return (
+    <div className="mt-1 flex items-stretch">
+      <div className="flex h-8 min-w-0 flex-1 items-center border bg-muted/40 px-2 font-mono text-[11px] text-muted-foreground">
+        {shown ? (
+          <span className="truncate">{shown}</span>
+        ) : error ? (
+          <span className="text-destructive">{error}</span>
+        ) : (
+          <Skeleton className="h-3 w-40" />
+        )}
+      </div>
+      <Button onClick={copy} disabled={!text} className="h-8">
+        {copied ? <CheckIcon weight="bold" /> : <CopyIcon />}
+        {copied ? "Copied" : "Copy"}
+      </Button>
+    </div>
   )
 }
 
