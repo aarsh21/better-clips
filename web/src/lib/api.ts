@@ -1,3 +1,5 @@
+import { clipTitle } from "../../worker/clip-title"
+
 export type Folder = "replays" | "saved" | "trash"
 
 /* What GET /api/clips returns (worker/index.ts). */
@@ -41,14 +43,9 @@ export function parseClip(raw: ApiClip): Clip {
     label = file
   }
 
-  const trimmed = /-trim(-\d+)?$/.test(label)
-  label = label
-    .replace(/-trim(-\d+)?$/, "")
-    .replace(/_[a-z2-9]{6,8}$/, "") /* the plugin's random link code */
-    .replace(/[-_]+/g, " ")
-    .trim()
+  const { title, trimmed } = clipTitle(label)
 
-  return { ...raw, day, time, title: label || "Untitled", trimmed }
+  return { ...raw, day, time, title: title || "Untitled", trimmed }
 }
 
 export function localDay(d: Date) {

@@ -21,8 +21,11 @@ written to disk.
 - If an upload fails, it retries for about 2 minutes. After that, the clip is
   lost, because it was never saved to disk.
 
-OBS's own **Save Replay** button and hotkey still save a file as usual. Use the
-plugin's hotkey instead.
+Save with the **Replay to R2** dock, which sits next to OBS's Controls, or with
+the hotkey. The dock also sets the replay length; a new length applies right
+away, without restarting the Replay Buffer, and a clip always covers at least
+that long. OBS's own **Save Replay** button and hotkey still save a file as
+usual.
 
 ## Setup
 

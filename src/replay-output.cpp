@@ -31,7 +31,7 @@ struct ReplayR2 {
 
 	std::mutex mutex;
 	std::deque<encoder_packet> packets;
-	int keyframes = 0;
+	std::deque<int64_t> keyframes; /* dts_usec of each video keyframe in packets */
 	int64_t cur_size = 0;
 	int64_t cur_time = 0; /* dts_usec of the oldest packet */
 
@@ -49,7 +49,7 @@ void clear(ReplayR2 *r)
 	for (encoder_packet &pkt : r->packets)
 		obs_encoder_packet_release(&pkt);
 	r->packets.clear();
-	r->keyframes = 0;
+	r->keyframes.clear();
 	r->cur_size = 0;
 	r->cur_time = 0;
 }
@@ -62,7 +62,7 @@ bool purge_front(ReplayR2 *r)
 
 	bool keyframe = pkt.type == OBS_ENCODER_VIDEO && pkt.keyframe;
 	if (keyframe)
-		r->keyframes--;
+		r->keyframes.pop_front();
 
 	if (r->packets.empty()) {
 		r->cur_size = 0;
@@ -91,11 +91,13 @@ void purge_gop(ReplayR2 *r)
 void purge(ReplayR2 *r, const encoder_packet *incoming)
 {
 	if (r->max_size_bytes) {
-		while (!r->packets.empty() && r->keyframes > 2 &&
+		while (!r->packets.empty() && r->keyframes.size() > 2 &&
 		       r->cur_size + (int64_t)incoming->size > r->max_size_bytes)
 			purge_gop(r);
 	}
-	while (!r->packets.empty() && r->keyframes > 2 && incoming->dts_usec - r->cur_time > r->max_time_usec)
+	/* Drop the oldest group of pictures only while the rest still covers the
+	 * whole length, so a clip is never shorter than the length the user set. */
+	while (r->keyframes.size() > 2 && incoming->dts_usec - r->keyframes[1] >= r->max_time_usec)
 		purge_gop(r);
 }
 
@@ -288,6 +290,16 @@ void destroy(void *data)
 	delete r;
 }
 
+/* Takes new limits, even while running: a longer limit keeps more from now
+ * on, a shorter one drops the oldest packets with the next packet. */
+void update(void *data, obs_data_t *settings)
+{
+	ReplayR2 *r = (ReplayR2 *)data;
+	std::lock_guard<std::mutex> lock(r->mutex);
+	r->max_time_usec = obs_data_get_int(settings, "max_time_sec") * 1000000LL;
+	r->max_size_bytes = obs_data_get_int(settings, "max_size_mb") * 1024 * 1024;
+}
+
 bool start(void *data)
 {
 	ReplayR2 *r = (ReplayR2 *)data;
@@ -295,11 +307,6 @@ bool start(void *data)
 		return false;
 	if (!obs_output_initialize_encoders(r->output, 0))
 		return false;
-
-	obs_data_t *settings = obs_output_get_settings(r->output);
-	r->max_time_usec = obs_data_get_int(settings, "max_time_sec") * 1000000LL;
-	r->max_size_bytes = obs_data_get_int(settings, "max_size_mb") * 1024 * 1024;
-	obs_data_release(settings);
 
 	r->save_ts = 0;
 	r->active = true;
@@ -344,7 +351,7 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 	r->cur_size += (int64_t)pkt.size;
 	r->packets.push_back(pkt);
 	if (is_keyframe)
-		r->keyframes++;
+		r->keyframes.push_back(pkt.dts_usec);
 
 	int64_t save_ts = r->save_ts;
 	if (save_ts && packet->sys_dts_usec >= save_ts) {
@@ -392,6 +399,7 @@ void register_replay_r2_output()
 	info.destroy = destroy;
 	info.start = start;
 	info.stop = stop;
+	info.update = update;
 	info.encoded_packet = encoded_packet;
 	obs_register_output(&info);
 }

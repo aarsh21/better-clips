@@ -20,6 +20,8 @@ import { Hono, type Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { createRemoteJWKSet, jwtVerify } from "jose"
 
+import { clipTitle } from "./clip-title"
+
 type Env = {
   BUCKET: R2Bucket
   ASSETS: Fetcher
@@ -665,14 +667,7 @@ function sharePage(key: string | null, url: string, thumb?: R2Object | null) {
     .replace(/\.mp4$/, "")
 
   const label = file.match(/^\d{2}-\d{2}-\d{2}_?(.*)$/)?.[1] ?? file
-
-  const clean = label
-    .replace(/-trim(-\d+)?$/, "")
-    .replace(/_[a-z2-9]{6,8}$/, "") /* the plugin's old random link code */
-    .replace(/[-_]+/g, " ")
-    .trim()
-
-  const title = escapeHtml(clean || "Clip")
+  const title = escapeHtml(clipTitle(label).title || "Clip")
   const width = dimension(thumb?.customMetadata?.width, 1280)
   const height = dimension(thumb?.customMetadata?.height, 720)
   const video = `${url}/clip.mp4`
@@ -723,24 +718,45 @@ function uploadTarget(c: Context<App>) {
 }
 
 /* Where an upload goes: OBS names a new replay; the trim editor saves next
- * to its source, e.g. ..._Valorant-trim.mp4 */
+ * to its source. */
 function uploadKey(c: Context<App>) {
   const name = c.req.query("name") ?? ""
   const from = clipKey(c.req.query("from") ?? "")
 
-  if (from && c.get("uploader") === "owner") {
-    const folder = from.folder === "trash" ? "replays" : from.folder
-
-    return `${from.key.replace(/^[^/]+/, folder).replace(/\.mp4$/, "")}-trim.mp4`
-  }
+  if (from && c.get("uploader") === "owner") return trimKey(c.env.BUCKET, from)
 
   return UPLOAD_NAME.test(name) ? `replays/${name}` : null
+}
+
+/* Trims are numbered after their source: ..._Valorant-trim-1.mp4, then
+ * -trim-2. A trim of a trim takes the original's next number, so names
+ * never stack up. Numbers already used in any folder are skipped, so a kept
+ * or trashed trim doesn't share its number with a new one. */
+async function trimKey(
+  bucket: R2Bucket,
+  from: { key: string; folder: Folder }
+) {
+  const folder = from.folder === "trash" ? "replays" : from.folder
+
+  const path = from.key
+    .slice(from.folder.length + 1)
+    .replace(/(?:-trim)+(?:-\d+)?\.mp4$|\.mp4$/, "")
+
+  for (let n = 1; ; n++) {
+    const file = `${path}-trim-${n}.mp4`
+
+    const taken = await Promise.all(
+      FOLDERS.map((f) => bucket.head(`${f}/${file}`))
+    )
+
+    if (!taken.some(Boolean)) return `${folder}/${file}`
+  }
 }
 
 app.get("/api/upload/check", (c) => c.json({ ok: true }))
 
 app.post("/api/upload/start", async (c) => {
-  const wanted = uploadKey(c)
+  const wanted = await uploadKey(c)
 
   if (!wanted) return c.json({ error: "Bad clip name" }, 400)
   const key = await uniqueKey(c.env.BUCKET, wanted)

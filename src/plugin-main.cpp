@@ -32,9 +32,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QMetaObject>
 #include <QStatusBar>
 
+#include <cstring>
 #include <mutex>
 
-void show_settings_dialog();
 void wait_for_tests();
 
 OBS_DECLARE_MODULE()
@@ -48,6 +48,7 @@ obs_hotkey_id save_hotkey = OBS_INVALID_HOTKEY_ID;
 obs_output_t *replay_output = nullptr; /* our in-memory replay buffer */
 bool ui_alive = true;
 bool just_set_up = false; /* the install script's setup code was applied */
+bool dock_placed = false; /* the dock was put next to Controls once */
 
 std::string config_path()
 {
@@ -72,6 +73,7 @@ void load_config()
 	config.folder = obs_data_get_string(data, "folder");
 	config.public_url = obs_data_get_string(data, "public_url");
 	config.start_replay_buffer = obs_data_get_bool(data, "start_replay_buffer");
+	dock_placed = obs_data_get_bool(data, "dock_placed");
 
 	obs_data_array_t *hotkey = obs_data_get_array(data, "save_hotkey");
 	obs_hotkey_load(save_hotkey, hotkey);
@@ -93,6 +95,7 @@ void save_config()
 		obs_data_set_string(data, "public_url", config.public_url.c_str());
 		obs_data_set_bool(data, "start_replay_buffer", config.start_replay_buffer);
 	}
+	obs_data_set_bool(data, "dock_placed", dock_placed);
 	obs_data_array_t *hotkey = obs_hotkey_save(save_hotkey);
 	obs_data_set_array(data, "save_hotkey", hotkey);
 	obs_data_array_release(hotkey);
@@ -118,9 +121,11 @@ void start_replay_output()
 	replay_output = obs_output_create("replay_r2_output", "Replay to R2", nullptr, nullptr);
 
 	obs_data_t *obs_settings = obs_output_get_settings(obs_replay);
+	int max_time_sec = (int)obs_data_get_int(obs_settings, "max_time_sec");
+	int max_size_mb = (int)obs_data_get_int(obs_settings, "max_size_mb");
 	obs_data_t *settings = obs_data_create();
-	obs_data_set_int(settings, "max_time_sec", obs_data_get_int(obs_settings, "max_time_sec"));
-	obs_data_set_int(settings, "max_size_mb", obs_data_get_int(obs_settings, "max_size_mb"));
+	obs_data_set_int(settings, "max_time_sec", max_time_sec);
+	obs_data_set_int(settings, "max_size_mb", max_size_mb);
 	obs_output_update(replay_output, settings);
 	obs_data_release(settings);
 	obs_data_release(obs_settings);
@@ -134,10 +139,17 @@ void start_replay_output()
 	obs_output_release(obs_replay);
 
 	if (obs_output_start(replay_output))
-		obs_log(LOG_INFO, "In-memory replay buffer started");
+		obs_log(LOG_INFO, "In-memory replay buffer started (%d s, %d MB)", max_time_sec, max_size_mb);
 	else
 		obs_log(LOG_ERROR, "Could not start in-memory replay buffer: %s",
 			obs_output_get_last_error(replay_output));
+}
+
+/* OBS keeps the Replay Buffer settings in the profile, per output mode. */
+const char *replay_section(config_t *profile)
+{
+	const char *mode = config_get_string(profile, "Output", "Mode");
+	return mode && strcmp(mode, "Advanced") == 0 ? "AdvOut" : "SimpleOutput";
 }
 
 /* Turns on OBS's Replay Buffer in the current profile. OBS creates its
@@ -227,24 +239,18 @@ void stop_replay_output()
 
 void on_save_hotkey(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 {
-	if (!pressed)
-		return;
-	if (!replay_output || !obs_output_active(replay_output)) {
-		notify_user("Replay to R2: start the Replay Buffer first");
-		return;
-	}
-	R2Config current = get_config();
-	if (current.app_url.empty() && current.s3_url.empty()) {
-		notify_user("Replay to R2: connect your clips app in Tools > Replay to R2 Settings");
-		return;
-	}
-	replay_r2_request_save(replay_output);
+	if (pressed)
+		save_replay_to_r2();
 }
 
 void on_frontend_event(enum obs_frontend_event event, void *)
 {
 	switch (event) {
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+		/* Until OBS has saved a layout with the dock in it, put it next
+		 * to Controls. After that, OBS remembers where the user keeps it. */
+		if (!dock_placed)
+			place_save_dock();
 		start_obs_replay_buffer();
 		if (just_set_up) {
 			just_set_up = false;
@@ -253,13 +259,19 @@ void on_frontend_event(enum obs_frontend_event event, void *)
 		break;
 	case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED:
 		start_replay_output();
+		update_save_dock();
 		break;
 	case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPING:
 	case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED:
 		stop_replay_output();
+		update_save_dock();
+		break;
+	case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
+		update_save_dock();
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:
 		stop_replay_output();
+		dock_placed = true; /* OBS saves its layout, with the dock, as it exits */
 		save_config();
 		ui_alive = false;
 		break;
@@ -277,6 +289,64 @@ void on_frontend_save(obs_data_t *, bool saving, void *)
 }
 
 } // namespace
+
+bool replay_r2_running()
+{
+	return replay_output && obs_output_active(replay_output);
+}
+
+void save_replay_to_r2()
+{
+	if (!replay_r2_running()) {
+		notify_user("Replay to R2: start the Replay Buffer first");
+		return;
+	}
+	R2Config current = get_config();
+	if (current.app_url.empty() && current.s3_url.empty()) {
+		notify_user("Replay to R2: connect your clips app in Tools > Replay to R2 Settings");
+		return;
+	}
+	replay_r2_request_save(replay_output);
+}
+
+int get_replay_seconds()
+{
+	config_t *profile = obs_frontend_get_profile_config();
+	return profile ? (int)config_get_int(profile, replay_section(profile), "RecRBTime") : 0;
+}
+
+void set_replay_seconds(int seconds)
+{
+	config_t *profile = obs_frontend_get_profile_config();
+	if (!profile || seconds <= 0)
+		return;
+	if (seconds != get_replay_seconds()) {
+		/* OBS's own Replay Buffer picks this up when it next starts. */
+		config_set_int(profile, replay_section(profile), "RecRBTime", seconds);
+		config_save_safe(profile, "tmp", nullptr);
+	}
+	sync_replay_seconds();
+}
+
+/* OBS only applies a new Maximum Replay Time when its Replay Buffer restarts.
+ * Ours takes it right away: a longer length keeps more from now on. */
+void sync_replay_seconds()
+{
+	int seconds = get_replay_seconds();
+	if (!replay_output || seconds <= 0)
+		return;
+	obs_data_t *current = obs_output_get_settings(replay_output);
+	bool changed = obs_data_get_int(current, "max_time_sec") != seconds;
+	obs_data_release(current);
+	if (!changed)
+		return;
+
+	obs_data_t *settings = obs_data_create();
+	obs_data_set_int(settings, "max_time_sec", seconds);
+	obs_output_update(replay_output, settings);
+	obs_data_release(settings);
+	obs_log(LOG_INFO, "Replay length set to %d s", seconds);
+}
 
 R2Config get_config()
 {
@@ -304,6 +374,7 @@ void notify_user(const std::string &message, const std::string &link)
 				return;
 			if (!url.isEmpty())
 				QApplication::clipboard()->setText(url);
+			show_dock_message(text);
 			auto *window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 			if (!window)
 				return;
@@ -330,6 +401,7 @@ bool obs_module_load(void)
 	obs_frontend_add_save_callback(on_frontend_save, nullptr);
 	obs_frontend_add_tools_menu_item(
 		obs_module_text("ReplayR2.Settings"), [](void *) { show_settings_dialog(); }, nullptr);
+	create_save_dock();
 
 	uploader_start();
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);

@@ -60,6 +60,7 @@ target_sources(
     src/plugin-main.cpp
     src/replay-output.cpp
     src/s3-upload.cpp
+    src/save-dock.cpp
     src/settings-dialog.cpp
     src/sha256.cpp
     src/uploader.cpp

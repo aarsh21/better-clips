@@ -15,16 +15,12 @@ export type ClipNav = {
 
 export type ClipActions = ReturnType<typeof useClipActions>
 
-/* Everything you can do to the open clip. Actions that remove it from the
- * current view step to a neighbour first, so the viewer never follows a clip
- * into the trash. */
-export function useClipActions(
-  clip: Clip,
-  nav: ClipNav,
-  askDelete: () => void
-) {
-  const qc = useQueryClient()
-  const move = useMoveClip(nav.onMoved)
+export type ClipMoves = ReturnType<typeof useClipMoves>
+
+/* Keep, trash and restore for any clip, with a toast for each. Used by the
+ * grid's card buttons and by the viewer. */
+export function useClipMoves(onMoved?: (from: string, to: string) => void) {
+  const move = useMoveClip(onMoved)
   const { data: settings } = useSettings()
 
   /* mutateAsync, unlike mutate's callbacks, still resolves after the viewer
@@ -33,13 +29,7 @@ export function useClipActions(
   const moved = (vars: Parameters<typeof move.mutateAsync>[0]) =>
     move.mutateAsync(vars).catch(() => null)
 
-  const leave = () => {
-    if (nav.hasNext) nav.onNavigate(clip, 1)
-    else if (nav.hasPrev) nav.onNavigate(clip, -1)
-    else nav.onClose()
-  }
-
-  const keep = () => {
+  const keep = (clip: Clip) => {
     const kept = clip.folder === "saved"
 
     void moved({ clip, to: kept ? "replays" : "saved" }).then(
@@ -54,12 +44,9 @@ export function useClipActions(
     )
   }
 
-  const trash = () => {
-    if (clip.folder === "trash") return askDelete()
-
+  const trash = (clip: Clip) => {
     const from = clip.folder
 
-    leave()
     void moved({ clip, to: "trash" }).then(
       (done) =>
         done &&
@@ -77,17 +64,52 @@ export function useClipActions(
     )
   }
 
-  const restore = () => {
-    leave()
+  const restore = (clip: Clip) => {
     void moved({ clip, to: "replays" }).then(
       (done) => done && toast("Restored")
     )
   }
 
-  const rename = (name: string) => {
-    if (name.trim() === clip.title) return
-
+  const rename = (clip: Clip, name: string) => {
     void moved({ clip, name }).then((done) => done && toast("Renamed"))
+  }
+
+  return { keep, trash, restore, rename }
+}
+
+/* Everything you can do to the open clip. Actions that remove it from the
+ * current view step to a neighbour first, so the viewer never follows a clip
+ * into the trash. */
+export function useClipActions(
+  clip: Clip,
+  nav: ClipNav,
+  askDelete: () => void
+) {
+  const qc = useQueryClient()
+  const moves = useClipMoves(nav.onMoved)
+
+  const leave = () => {
+    if (nav.hasNext) nav.onNavigate(clip, 1)
+    else if (nav.hasPrev) nav.onNavigate(clip, -1)
+    else nav.onClose()
+  }
+
+  const keep = () => moves.keep(clip)
+
+  const trash = () => {
+    if (clip.folder === "trash") return askDelete()
+
+    leave()
+    moves.trash(clip)
+  }
+
+  const restore = () => {
+    leave()
+    moves.restore(clip)
+  }
+
+  const rename = (name: string) => {
+    if (name.trim() !== clip.title) moves.rename(clip, name)
   }
 
   const destroy = async () => {

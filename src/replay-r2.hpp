@@ -2,6 +2,8 @@
 
 #include <obs-module.h>
 
+#include <QString>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -32,6 +34,28 @@ bool apply_setup_code(const std::string &text, R2Config &config);
 /* Checks the connection on a background thread and shows the result in the
  * status bar. (settings-dialog.cpp) */
 void check_connection_async(const R2Config &config);
+
+/* Saves the last N seconds and uploads them, or tells the user what's
+ * missing. Call on the UI thread. (plugin-main.cpp) */
+void save_replay_to_r2();
+bool replay_r2_running();
+
+/* The replay length in seconds, OBS's Maximum Replay Time. Setting it also
+ * applies it to the running in-memory buffer. (plugin-main.cpp) */
+int get_replay_seconds();
+void set_replay_seconds(int seconds);
+void sync_replay_seconds();
+
+void show_settings_dialog(); /* settings-dialog.cpp */
+
+/* ---- The dock with the Save button (save-dock.cpp), UI thread only ---- */
+
+void create_save_dock();
+void update_save_dock();
+/* Puts the dock next to OBS's Controls dock and shows it, unless Controls
+ * is hidden. */
+void place_save_dock();
+void show_dock_message(const QString &message);
 
 /* Shows a message in the OBS status bar and, when link is set, copies it to
  * the clipboard. Safe to call from any thread. */
