@@ -10,24 +10,29 @@ next to the bucket, so the browser never sees bucket keys.
   re-encoded, the file starts at the keyframe before your in point, so up to
   a couple of seconds before it are still in the file, just not played.
   Don't rely on trimming to hide something before you share.
-- **Keep, delete, restore:** recent clips are cleared after 30 days, the trash
-  after 7. Kept clips stay forever.
+- **Keep, delete, restore:** kept clips stay forever; new clips and the trash
+  are cleared after the number of days you pick in **Settings → Storage**
+  (30 and 7 by default, or never for new clips).
 - **Share:** links that expire after 1, 7 or 30 days, or never. Share pages
   embed as video in Discord and other apps.
-- **Connect OBS:** copies a setup code the plugin pastes in one click.
-- **Cleanup:** a daily job deletes new clips after 30 days and the trash
-  after 7.
+- **Search:** `/` or `⌘K` opens a search box for clips (by name or day) and
+  commands such as switching tabs or the theme.
+- **Connect OBS:** **Settings → OBS** copies a setup code the plugin pastes
+  in one click, and turns green as soon as OBS checks in (Test Upload).
+- **Light and dark:** switch in the header, in search, or in **Settings →
+  Appearance**, which also has a System option.
+- **Cleanup:** a daily job deletes old clips using the Storage settings.
 
-Keyboard: `/` search, `1` `2` `3` tabs, then in a clip `←` `→` next and
+Keyboard: `/` or `⌘K` search, `1` `2` `3` tabs, then in a clip `←` `→` next and
 previous, `K` keep, `T` trim, `E` rename, `Del` delete, `Space` play. While
 trimming: `I` `O` set in and out, `Enter` save, `Esc` cancel.
 
 ## Bucket layout
 
 ```
-replays/<day>/<time>_<scene>.mp4   from OBS, deleted after 30 days
+replays/<day>/<time>_<scene>.mp4   from OBS, deleted after N days (Settings)
 saved/<day>/...                    kept clips, never deleted
-trash/<day>/...                    deleted clips, purged after 7 days
+trash/<day>/...                    deleted clips, purged after N days (Settings)
 thumbs/<clip key>.jpg              made in the browser the first time a clip is seen
 shares/<id>.json                   share links
 config/upload-token                the token OBS uploads with
@@ -40,7 +45,7 @@ config/upload-token                the token OBS uploads with
 The button copies this folder into your GitHub account, creates the `clips`
 bucket, and asks for `APP_PASSWORD`, the password you sign in with (12 or more
 characters). The app runs on `clips.<you>.workers.dev`. OBS uploads through
-the app with a token it makes the first time you open **Connect OBS**, so you
+the app with a token from **Settings → OBS**, so you
 need no R2 API keys.
 
 By hand:

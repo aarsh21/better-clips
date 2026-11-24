@@ -10,7 +10,9 @@ import {
   mediaUrl,
   thumbUrl,
   type Clip,
+  type Settings,
 } from "@/lib/api"
+import { useSettings } from "@/lib/settings"
 
 export function ClipGrid({
   clips,
@@ -31,6 +33,8 @@ export function ClipGrid({
     return [...groups]
   }, [clips])
 
+  const { data: settings } = useSettings()
+
   return (
     <div className="flex flex-col gap-10">
       {days.map(([day, list]) => (
@@ -47,6 +51,7 @@ export function ClipGrid({
               <ClipCard
                 key={clip.key}
                 clip={clip}
+                settings={settings}
                 onOpen={() => onOpen(clip)}
               />
             ))}
@@ -58,11 +63,19 @@ export function ClipGrid({
 }
 
 /* Hovering for a moment plays a muted preview from the start. */
-function ClipCard({ clip, onOpen }: { clip: Clip; onOpen: () => void }) {
+function ClipCard({
+  clip,
+  settings,
+  onOpen,
+}: {
+  clip: Clip
+  settings: Settings | undefined
+  onOpen: () => void
+}) {
   const [loaded, setLoaded] = React.useState(false)
   const [preview, setPreview] = React.useState(false)
   const timer = React.useRef<number>(undefined)
-  const left = daysLeft(clip)
+  const left = daysLeft(clip, settings)
 
   const startPreview = () => {
     timer.current = window.setTimeout(() => setPreview(true), 350)

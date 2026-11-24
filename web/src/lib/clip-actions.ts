@@ -3,6 +3,7 @@ import { toast } from "sonner"
 
 import { api, errorMessage, type Clip } from "@/lib/api"
 import { useMoveClip } from "@/lib/clips"
+import { retentionText, useSettings } from "@/lib/settings"
 
 export type ClipNav = {
   onClose: () => void
@@ -24,6 +25,7 @@ export function useClipActions(
 ) {
   const qc = useQueryClient()
   const move = useMoveClip(nav.onMoved)
+  const { data: settings } = useSettings()
 
   /* mutateAsync, unlike mutate's callbacks, still resolves after the viewer
    * has moved on to another clip. It resolves to null on failure, which the
@@ -44,7 +46,10 @@ export function useClipActions(
       (done) =>
         done &&
         toast(kept ? "No longer kept" : "Kept forever", {
-          description: kept ? "It will be cleared in 30 days." : undefined,
+          description:
+            kept && settings?.replaysDays
+              ? `It will be cleared after ${retentionText(settings.replaysDays)}.`
+              : undefined,
         })
     )
   }

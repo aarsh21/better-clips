@@ -5,6 +5,17 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0f0e0d" />
+    <script>
+      /* Apply the saved theme before the first paint (theme-provider.tsx). */
+      try {
+        const saved = localStorage.getItem("theme") || "dark"
+        const dark =
+          saved === "dark" ||
+          (saved === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+        document.documentElement.classList.toggle("dark", dark)
+        document.documentElement.classList.toggle("light", !dark)
+      } catch {}
+    </script>
     <title>Clips</title>
   </head>
   <body>

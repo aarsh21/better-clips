@@ -38,7 +38,7 @@ It takes about two minutes, and you need no R2 API keys.
    [latest release](https://github.com/aarsh21/obs-replay-r2/releases/latest)
    and restart OBS.
 3. Open your app (`https://clips.<you>.workers.dev`), sign in, click
-   **Connect OBS** and copy the setup code.
+   **Connect OBS** (later: the gear icon) and copy the setup code.
 4. In OBS, open **Tools > Replay to R2 Settings**, click **Paste setup code**,
    then **Test Upload** and **Save**.
 5. In **Settings > Output**, enable the Replay Buffer. In **Settings > Hotkeys**,
@@ -46,7 +46,7 @@ It takes about two minutes, and you need no R2 API keys.
 6. Start the Replay Buffer and press your hotkey.
 
 Clips upload through your app, which deletes new clips after 30 days and the
-trash after 7. Clips you keep stay. R2's first 10 GB a month are free; past
+trash after 7; change both in **Settings → Storage**. Clips you keep stay. R2's first 10 GB a month are free; past
 that, storage costs about $0.015 per GB a month.
 
 ### Without the app

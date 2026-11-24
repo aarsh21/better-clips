@@ -63,22 +63,16 @@ export function useOpenClip() {
   return [key, open] as const
 }
 
-/* The clips in the current tab, newest first, filtered by the search box. */
-export function useVisibleClips(
-  clips: Clip[] | undefined,
-  view: View,
-  query: string
-) {
-  return React.useMemo(() => {
-    const q = query.trim().toLowerCase()
+/* Newest first. */
+export const byNewest = (a: Clip, b: Clip) =>
+  (b.day + b.time).localeCompare(a.day + a.time)
 
-    const matches = (c: Clip) =>
-      inView(c, view) && (!q || `${c.title} ${c.day}`.toLowerCase().includes(q))
-
-    return (clips ?? [])
-      .filter(matches)
-      .sort((a, b) => (b.day + b.time).localeCompare(a.day + a.time))
-  }, [clips, view, query])
+/* The clips in the current tab, newest first. */
+export function useVisibleClips(clips: Clip[] | undefined, view: View) {
+  return React.useMemo(
+    () => (clips ?? []).filter((c) => inView(c, view)).sort(byNewest),
+    [clips, view]
+  )
 }
 
 export function useViewCounts(clips: Clip[] | undefined) {
@@ -135,30 +129,34 @@ export function useOpenClipSync(
   return { clip, openClip, follow }
 }
 
-/* "/" focuses search; 1, 2 and 3 switch tabs. Off while a clip is open. */
+/* "/" and ⌘K open search; 1, 2 and 3 switch tabs. Off while a clip or a
+ * dialog is open. */
 export function useGlobalKeys(
   enabled: boolean,
-  search: React.RefObject<HTMLInputElement | null>,
+  onSearch: () => void,
   setView: (view: View) => void
 ) {
   React.useEffect(() => {
     if (!enabled) return
 
     const onKey = (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target) || e.metaKey || e.ctrlKey) return
+      const commandK = e.key === "k" && (e.metaKey || e.ctrlKey)
 
+      if (commandK || (e.key === "/" && !isEditableTarget(e.target))) {
+        e.preventDefault()
+        onSearch()
+
+        return
+      }
+
+      if (isEditableTarget(e.target) || e.metaKey || e.ctrlKey) return
       const tab = VIEWS[Number(e.key) - 1]
 
-      if (e.key === "/") {
-        e.preventDefault()
-        search.current?.focus()
-      } else if (tab) {
-        setView(tab)
-      }
+      if (tab) setView(tab)
     }
 
     window.addEventListener("keydown", onKey)
 
     return () => window.removeEventListener("keydown", onKey)
-  }, [enabled, search, setView])
+  }, [enabled, onSearch, setView])
 }

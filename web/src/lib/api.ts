@@ -75,12 +75,24 @@ export function dayLabel(day: string) {
   })
 }
 
-/* Days left before the bucket's lifecycle rule removes a clip. */
-export function daysLeft(clip: Clip) {
-  const ttl =
-    clip.folder === "replays" ? 30 : clip.folder === "trash" ? 7 : null
+/* How long clips are kept (Settings > Storage). null keeps them forever. */
+export type Settings = {
+  replaysDays: number | null
+  trashDays: number
+  /** When OBS last checked in, or null if it never has. */
+  obsSeen: string | null
+}
 
-  if (ttl === null) return null
+/* Days left before the daily cleanup removes a clip, or null if it stays. */
+export function daysLeft(clip: Clip, settings: Settings | undefined) {
+  const ttl =
+    clip.folder === "replays"
+      ? settings?.replaysDays
+      : clip.folder === "trash"
+        ? settings?.trashDays
+        : null
+
+  if (ttl === null || ttl === undefined) return null
   const age = (Date.now() - new Date(clip.uploaded).getTime()) / 86_400_000
 
   return Math.max(0, Math.ceil(ttl - age))
@@ -229,6 +241,13 @@ export const api = {
       body: blob,
     }),
   setup: () => request<{ code: string }>("/api/setup"),
+  settings: () => request<Settings>("/api/settings"),
+  saveSettings: (body: Partial<Omit<Settings, "obsSeen">>) =>
+    request<Omit<Settings, "obsSeen">>("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   login: (password: string) =>
     request<{ ok: true }>("/api/login", {
       method: "POST",

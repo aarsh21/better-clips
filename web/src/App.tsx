@@ -3,22 +3,27 @@ import {
   ArchiveIcon,
   BookmarkSimpleIcon,
   FilmSlateIcon,
+  GearSixIcon,
   MagnifyingGlassIcon,
-  PlugsConnectedIcon,
+  MoonIcon,
+  SunIcon,
   TrashIcon,
 } from "@phosphor-icons/react"
 import { cn } from "cn"
 
 import { ClipGrid } from "@/components/clip-grid"
-import { SetupSteps } from "@/components/setup-steps"
+import type { SettingsTab } from "@/components/settings-dialog"
+import { ObsConnect } from "@/components/setup-steps"
 import { SignIn } from "@/components/sign-in"
+import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatBytes, SignInError, type Clip } from "@/lib/api"
+import { formatBytes, SignInError, type Clip, type Settings } from "@/lib/api"
 import { useClips, useNewClipToasts, useThumbnailWorker } from "@/lib/clips"
+import { retentionText, useSettings } from "@/lib/settings"
 import {
+  byNewest,
   useGlobalKeys,
   useOpenClipSync,
   useViewCounts,
@@ -32,45 +37,60 @@ const TABS = {
     label: "All",
     icon: FilmSlateIcon,
     empty: "No clips",
-    hint: "Save a replay in OBS and it will show up here.",
+    hint: () => "Save a replay in OBS and it will show up here.",
   },
   saved: {
     label: "Kept",
     icon: BookmarkSimpleIcon,
     empty: "Nothing kept yet",
-    hint: "Press K on a clip to keep it forever. Other clips are cleared after 30 days.",
+    hint: (s?: Settings) =>
+      s?.replaysDays
+        ? `Press K on a clip to keep it forever. Other clips are cleared after ${retentionText(s.replaysDays)}.`
+        : "Press K on a clip to keep it.",
   },
   trash: {
     label: "Trash",
     icon: TrashIcon,
     empty: "Trash is empty",
-    hint: "Deleted clips stay here for 7 days.",
+    hint: (s?: Settings) =>
+      `Deleted clips stay here for ${retentionText(s?.trashDays ?? 7)}.`,
   },
 } satisfies Record<
   View,
-  { label: string; icon: React.ElementType; empty: string; hint: string }
+  {
+    label: string
+    icon: React.ElementType
+    empty: string
+    hint: (settings?: Settings) => string
+  }
 >
 
 const FREE_BYTES = 10 * 1024 ** 3
 
-/* The viewer and setup dialog load after first paint, then preload while the
- * browser is idle, so the grid shows fast and opening a clip stays instant. */
+/* The viewer and dialogs load after first paint, then preload while the
+ * browser is idle, so the grid shows fast and opening them stays instant. */
 const loadViewer = () => import("@/components/clip-viewer")
-const loadSetup = () => import("@/components/setup-dialog")
+const loadSettings = () => import("@/components/settings-dialog")
+const loadSearch = () => import("@/components/search-dialog")
 
 const ClipViewer = React.lazy(() =>
   loadViewer().then((m) => ({ default: m.ClipViewer }))
 )
 
-const SetupDialog = React.lazy(() =>
-  loadSetup().then((m) => ({ default: m.SetupDialog }))
+const SettingsDialog = React.lazy(() =>
+  loadSettings().then((m) => ({ default: m.SettingsDialog }))
+)
+
+const SearchDialog = React.lazy(() =>
+  loadSearch().then((m) => ({ default: m.SearchDialog }))
 )
 
 function usePreload() {
   React.useEffect(() => {
     const preload = () => {
       void loadViewer()
-      void loadSetup()
+      void loadSettings()
+      void loadSearch()
     }
 
     if (typeof requestIdleCallback === "undefined") {
@@ -88,25 +108,36 @@ function usePreload() {
 export default function App() {
   const { data: clips, isPending, error } = useClips()
   const [view, setView] = React.useState<View>("all")
-  const [query, setQuery] = React.useState("")
-  const [setupOpen, setSetupOpen] = React.useState(false)
-  const search = React.useRef<HTMLInputElement>(null)
-  const visible = useVisibleClips(clips, view, query)
+  const [searchOpen, setSearchOpen] = React.useState(false)
+  const [settingsOpen, setSettingsOpen] = React.useState(false)
+  const [settingsTab, setSettingsTab] = React.useState<SettingsTab>("obs")
+  const visible = useVisibleClips(clips, view)
   const { clip, openClip, follow } = useOpenClipSync(clips, view, setView)
+  const openSearch = React.useCallback(() => setSearchOpen(true), [])
+
+  const searchable = React.useMemo(
+    () => [...(clips ?? [])].sort(byNewest),
+    [clips]
+  )
 
   useThumbnailWorker(clips)
   useNewClipToasts(clips, openClip)
-  useGlobalKeys(!clip, search, setView)
+  useGlobalKeys(!clip && !settingsOpen, openSearch, setView)
   usePreload()
 
-  const index = clip ? visible.findIndex((c) => c.key === clip.key) : -1
-
   if (error instanceof SignInError) return <SignIn setUp={error.setUp} />
+
+  const index = clip ? visible.findIndex((c) => c.key === clip.key) : -1
 
   const navigate = (from: Clip, step: number) => {
     const next = visible[visible.findIndex((c) => c.key === from.key) + step]
 
     if (next) openClip(next.key)
+  }
+
+  const openSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab)
+    setSettingsOpen(true)
   }
 
   return (
@@ -115,26 +146,15 @@ export default function App() {
         clips={clips}
         view={view}
         onView={setView}
-        query={query}
-        onQuery={setQuery}
-        search={search}
-        onSetup={() => setSetupOpen(true)}
+        onSearch={openSearch}
+        onSettings={openSettings}
       />
 
       <main className="mx-auto max-w-[1600px] px-4 pt-4 pb-24 sm:px-6">
-        <div className="mb-4 md:hidden">
-          <Input
-            aria-label="Search clips"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search clips"
-          />
-        </div>
         <ClipsBody
           clips={clips}
           visible={visible}
           view={view}
-          query={query}
           pending={isPending}
           error={error}
           onOpen={(c) => openClip(c.key)}
@@ -151,8 +171,23 @@ export default function App() {
           hasPrev={index > 0}
           hasNext={index >= 0 && index < visible.length - 1}
         />
-        {setupOpen && (
-          <SetupDialog open={setupOpen} onOpenChange={setSetupOpen} />
+        {searchOpen && (
+          <SearchDialog
+            open={searchOpen}
+            onOpenChange={setSearchOpen}
+            clips={searchable}
+            onOpenClip={openClip}
+            onView={setView}
+            onSettings={openSettings}
+          />
+        )}
+        {settingsOpen && (
+          <SettingsDialog
+            open={settingsOpen}
+            tab={settingsTab}
+            onOpenChange={setSettingsOpen}
+            onTab={setSettingsTab}
+          />
         )}
       </React.Suspense>
     </div>
@@ -163,18 +198,14 @@ function AppHeader({
   clips,
   view,
   onView,
-  query,
-  onQuery,
-  search,
-  onSetup,
+  onSearch,
+  onSettings,
 }: {
   clips: Clip[] | undefined
   view: View
   onView: (view: View) => void
-  query: string
-  onQuery: (query: string) => void
-  search: React.RefObject<HTMLInputElement | null>
-  onSetup: () => void
+  onSearch: () => void
+  onSettings: (tab: SettingsTab) => void
 }) {
   const counts = useViewCounts(clips)
   const used = (clips ?? []).reduce((n, c) => n + c.size, 0)
@@ -203,27 +234,91 @@ function AppHeader({
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <div className="relative hidden md:block">
-            <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              ref={search}
-              aria-label="Search clips"
-              value={query}
-              onChange={(e) => onQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
-              placeholder="Search clips"
-              className="h-8 w-56 pr-8 pl-8"
-            />
-            <Kbd className="absolute top-1/2 right-1.5 -translate-y-1/2">/</Kbd>
-          </div>
-          <StorageMeter used={used} />
-          <Button variant="outline" size="sm" onClick={onSetup}>
-            <PlugsConnectedIcon />
-            <span className="hidden sm:inline">Connect OBS</span>
-          </Button>
+          <SearchButton onClick={onSearch} />
+          <StorageMeter used={used} onClick={() => onSettings("storage")} />
+          <ThemeButton />
+          <ObsButton onClick={onSettings} />
         </div>
       </div>
     </header>
+  )
+}
+
+/* Looks like a search box, but opens the search dialog. */
+function SearchButton({ onClick }: { onClick: () => void }) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onClick}
+        className="hidden h-8 w-56 items-center gap-2 border border-input bg-transparent px-2.5 text-xs text-muted-foreground transition-colors outline-none hover:border-foreground/20 hover:text-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 md:flex dark:bg-input/30"
+      >
+        <MagnifyingGlassIcon className="size-3.5" />
+        Search clips
+        <Kbd className="ml-auto">/</Kbd>
+      </button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Search clips"
+        onClick={onClick}
+        className="md:hidden"
+      >
+        <MagnifyingGlassIcon />
+      </Button>
+    </>
+  )
+}
+
+function ThemeButton() {
+  const { setTheme } = useTheme()
+
+  /* Flips whatever is showing now, including when the theme is "system". */
+  const toggle = () =>
+    setTheme(
+      document.documentElement.classList.contains("dark") ? "light" : "dark"
+    )
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label="Switch between light and dark"
+      title="Switch between light and dark"
+      onClick={toggle}
+    >
+      <SunIcon className="hidden dark:block" />
+      <MoonIcon className="dark:hidden" />
+    </Button>
+  )
+}
+
+/* Asks you to connect OBS until it has checked in once; after that it is
+ * just the way into Settings. */
+function ObsButton({ onClick }: { onClick: (tab: SettingsTab) => void }) {
+  const { data: settings } = useSettings()
+
+  if (settings && !settings.obsSeen)
+    return (
+      <Button variant="outline" size="sm" onClick={() => onClick("obs")}>
+        <span className="relative flex size-1.5">
+          <span className="absolute inline-flex size-full animate-ping bg-primary/70 [animation-duration:1.8s]" />
+          <span className="relative inline-flex size-1.5 bg-primary" />
+        </span>
+        Connect OBS
+      </Button>
+    )
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label="Settings"
+      title="Settings"
+      onClick={() => onClick("obs")}
+    >
+      <GearSixIcon />
+    </Button>
   )
 }
 
@@ -264,7 +359,6 @@ function ClipsBody({
   clips,
   visible,
   view,
-  query,
   pending,
   error,
   onOpen,
@@ -272,11 +366,12 @@ function ClipsBody({
   clips: Clip[] | undefined
   visible: Clip[]
   view: View
-  query: string
   pending: boolean
   error: Error | null
   onOpen: (clip: Clip) => void
 }) {
+  const { data: settings } = useSettings()
+
   if (error)
     return (
       <Empty
@@ -294,15 +389,7 @@ function ClipsBody({
 
   const tab = TABS[view]
 
-  return query ? (
-    <Empty
-      icon={MagnifyingGlassIcon}
-      title="Nothing matches"
-      body={`No clips match "${query}".`}
-    />
-  ) : (
-    <Empty icon={tab.icon} title={tab.empty} body={tab.hint} />
-  )
+  return <Empty icon={tab.icon} title={tab.empty} body={tab.hint(settings)} />
 }
 
 function FirstRun() {
@@ -312,24 +399,33 @@ function FirstRun() {
       <p className="mb-6 text-xs text-muted-foreground">
         Connect OBS once, then every replay you save lands here a second later.
       </p>
-      <SetupSteps />
+      <ObsConnect />
     </div>
   )
 }
 
-function StorageMeter({ used }: { used: number }) {
+function StorageMeter({
+  used,
+  onClick,
+}: {
+  used: number
+  onClick: () => void
+}) {
   const pct = Math.min(100, (used / FREE_BYTES) * 100)
 
   return (
-    <div
-      className="hidden w-28 flex-col gap-1 lg:flex"
-      title={`${formatBytes(used)} of the free 10 GB`}
+    <button
+      type="button"
+      onClick={onClick}
+      className="hidden w-28 flex-col gap-1 px-1 py-1 outline-none hover:opacity-80 focus-visible:ring-1 focus-visible:ring-ring lg:flex"
+      title={`${formatBytes(used)} of the free 10 GB. Click for storage settings.`}
+      aria-label={`Storage: ${formatBytes(used)} of 10 GB used`}
     >
-      <div className="flex justify-between text-[10px] text-muted-foreground tabular-nums">
+      <div className="flex w-full justify-between text-[10px] text-muted-foreground tabular-nums">
         <span>{formatBytes(used)}</span>
         <span>10 GB</span>
       </div>
-      <div className="h-0.5 bg-muted">
+      <div className="h-0.5 w-full bg-muted">
         <div
           className={cn(
             "h-full bg-primary transition-[width]",
@@ -338,7 +434,7 @@ function StorageMeter({ used }: { used: number }) {
           style={{ width: `${Math.max(pct, 1)}%` }}
         />
       </div>
-    </div>
+    </button>
   )
 }
 

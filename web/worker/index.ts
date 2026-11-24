@@ -6,12 +6,14 @@
  * salt in the bucket, so neither one alone is enough to forge them.
  *
  * Bucket layout:
- *   replays/<day>/<time>_<label>.mp4   uploaded by OBS, deleted after 30 days
+ *   replays/<day>/<time>_<label>.mp4   uploaded by OBS, deleted after N days
  *   saved/<day>/<time>_<label>.mp4     kept clips, never deleted
- *   trash/<day>/<time>_<label>.mp4     deleted clips, purged after 7 days
+ *   trash/<day>/<time>_<label>.mp4     deleted clips, purged after N days
  *   thumbs/<clip key>.jpg             thumbnail, metadata holds duration and size
  *   shares/<id>.json                  share link -> clip key and expiry
  *   config/salt                       random salt for sessions and the upload token
+ *   config/settings.json              how long new clips and the trash are kept
+ *   config/obs-seen                   written when OBS checks in; its date is shown
  */
 
 import { Hono, type Context } from "hono"
@@ -55,6 +57,13 @@ app.use("/api/*", async (c, next) => {
         401
       )
     c.set("uploader", "obs")
+
+    /* Lets the app show that OBS is connected, right after Test Upload. */
+    if (
+      c.req.path === "/api/upload/check" ||
+      c.req.path === "/api/upload/complete"
+    )
+      c.executionCtx.waitUntil(c.env.BUCKET.put("config/obs-seen", ""))
 
     return next()
   }
@@ -797,27 +806,82 @@ app.get("/api/setup", async (c) => {
   return c.json({ code: "r2obs2:" + btoa(JSON.stringify(config)) })
 })
 
+/* ---- Settings ---- */
+
+type Settings = { replaysDays: number | null; trashDays: number }
+
+const DEFAULT_SETTINGS: Settings = { replaysDays: 30, trashDays: 7 }
+const REPLAY_DAYS = [7, 14, 30, 60, 90, null]
+const TRASH_DAYS = [1, 3, 7, 14, 30]
+
+async function readSettings(bucket: R2Bucket): Promise<Settings> {
+  const stored = await bucket.get("config/settings.json")
+
+  return stored
+    ? { ...DEFAULT_SETTINGS, ...(await stored.json<Partial<Settings>>()) }
+    : DEFAULT_SETTINGS
+}
+
+app.get("/api/settings", async (c) => {
+  const [settings, seen] = await Promise.all([
+    readSettings(c.env.BUCKET),
+    c.env.BUCKET.head("config/obs-seen"),
+  ])
+
+  return c.json(
+    { ...settings, obsSeen: seen?.uploaded.toISOString() ?? null },
+    200,
+    { "cache-control": "no-store" }
+  )
+})
+
+app.put("/api/settings", async (c) => {
+  const body = await c.req.json<Partial<Settings>>().catch(() => null)
+  const next = { ...(await readSettings(c.env.BUCKET)), ...body }
+
+  if (
+    !REPLAY_DAYS.includes(next.replaysDays) ||
+    !TRASH_DAYS.includes(next.trashDays)
+  )
+    return c.json({ error: "Pick one of the listed lengths" }, 400)
+
+  const settings: Settings = {
+    replaysDays: next.replaysDays,
+    trashDays: next.trashDays,
+  }
+
+  await c.env.BUCKET.put("config/settings.json", JSON.stringify(settings))
+
+  return c.json(settings)
+})
+
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404))
 
 /* JSON errors, so OBS and the app can show what went wrong. */
 app.onError((err, c) => c.json({ error: err.message }, 500))
 
 /* ---- Daily cleanup ----
- * New clips are cleared after 30 days and the trash after 7, so the bucket
- * needs no lifecycle rules. Kept clips stay. */
-
-const MAX_AGE_DAYS = { replays: 30, trash: 7 }
+ * Clears new clips and the trash after the days set in Settings, so the
+ * bucket needs no lifecycle rules. Kept clips stay. */
 
 async function cleanup(bucket: R2Bucket) {
   const now = Date.now()
+  const settings = await readSettings(bucket)
+
+  const maxAge = [
+    ["replays", settings.replaysDays],
+    ["trash", settings.trashDays],
+  ] as const
 
   const old = await Promise.all(
-    Object.entries(MAX_AGE_DAYS).map(async ([folder, days]) =>
-      (await listAll(bucket, `${folder}/`)).flatMap((object) =>
-        now - object.uploaded.getTime() > days * 86_400_000
-          ? [object.key, `thumbs/${object.key}.jpg`]
-          : []
-      )
+    maxAge.map(async ([folder, days]) =>
+      days === null
+        ? []
+        : (await listAll(bucket, `${folder}/`)).flatMap((object) =>
+            now - object.uploaded.getTime() > days * 86_400_000
+              ? [object.key, `thumbs/${object.key}.jpg`]
+              : []
+          )
     )
   )
 
