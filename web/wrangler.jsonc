@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "clips",
+  "account_id": "1a9cd8ace49e0b10ee2c93d46c40a3fa",
+  "main": "worker/index.ts",
+  "workers_dev": false,
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/s/*"]
+  },
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "clips" }],
+  "routes": [{ "pattern": "clips.zabimaru.me", "custom_domain": true }],
+  "vars": {
+    "ACCESS_TEAM": "hyorinmaru",
+    "ACCESS_AUD": "d19e42099614dc82a8b7e5ea5850782c128b337697a800e2fefd2878ae40c7a3",
+    "R2_S3_URL": "https://1a9cd8ace49e0b10ee2c93d46c40a3fa.r2.cloudflarestorage.com/clips"
+  },
+  "observability": { "enabled": true }
+}

@@ -5,9 +5,12 @@
 #include <obs-frontend-api.h>
 
 #include <QApplication>
+#include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPointer>
@@ -36,10 +39,9 @@ public:
 		public_url->setPlaceholderText("Optional: https://pub-xxxx.r2.dev or your custom domain");
 
 		auto *help = new QLabel("Saved replays are uploaded from memory and never written to disk.<br>"
-					"Find the <b>S3 API</b> URL in your R2 bucket's Settings, and create an "
-					"<b>R2 API token</b> with Object Read &amp; Write for the key pair.<br>"
-					"Start the Replay Buffer, then bind <b>Save Replay to Cloudflare R2</b> "
-					"in Settings &gt; Hotkeys.");
+					"Easiest: open your clips app, click <b>Connect OBS</b>, copy the setup code, "
+					"then click <b>Paste setup code</b> here.<br>"
+					"Then bind <b>Save Replay to Cloudflare R2</b> in Settings &gt; Hotkeys.");
 		help->setWordWrap(true);
 
 		auto *form = new QFormLayout();
@@ -54,7 +56,9 @@ public:
 		status->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
 		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
+		QPushButton *paste = buttons->addButton("Paste setup code", QDialogButtonBox::ActionRole);
 		QPushButton *test = buttons->addButton("Test Upload", QDialogButtonBox::ActionRole);
+		connect(paste, &QPushButton::clicked, this, [this]() { paste_setup_code(); });
 		connect(buttons, &QDialogButtonBox::accepted, this, [this]() {
 			set_config(current());
 			accept();
@@ -82,6 +86,30 @@ private:
 		config.folder = folder->text().trimmed().toStdString();
 		config.public_url = public_url->text().trimmed().toStdString();
 		return config;
+	}
+
+	/* The clips app's setup code: "r2obs1:" + base64 of
+	 * {"u": S3 API URL, "k": access key, "s": secret key, "f": folder}. */
+	void paste_setup_code()
+	{
+		QString text = QApplication::clipboard()->text().trimmed();
+		const QString prefix = "r2obs1:";
+		QJsonObject code;
+		if (text.startsWith(prefix)) {
+			QByteArray json = QByteArray::fromBase64(text.mid(prefix.size()).toUtf8());
+			code = QJsonDocument::fromJson(json).object();
+		}
+		if (code.value("u").toString().isEmpty() || code.value("k").toString().isEmpty() ||
+		    code.value("s").toString().isEmpty()) {
+			status->setText("No setup code on the clipboard. Copy it from Connect OBS in your clips app.");
+			return;
+		}
+		s3_url->setText(code.value("u").toString());
+		access_key->setText(code.value("k").toString());
+		secret_key->setText(code.value("s").toString());
+		folder->setText(code.value("f").toString("replays"));
+		public_url->clear();
+		status->setText("Setup code pasted. Click Test Upload, then Save.");
 	}
 
 	/* Uploads a small text file so a typo shows up now, not after a clip is lost. */
