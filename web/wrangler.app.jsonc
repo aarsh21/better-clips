@@ -1,0 +1,40 @@
+// The hosted app at clips.zabimaru.me: everyone signs in with Cloudflare and
+// brings their own bucket (see worker/hosted.ts). Self-hosting uses
+// wrangler.jsonc instead.
+//
+// Deploy: pnpm build && wrangler d1 migrations apply clips-app --remote -c wrangler.app.jsonc
+//         && wrangler deploy -c wrangler.app.jsonc
+// Secrets (wrangler secret put … -c wrangler.app.jsonc): CREDS_KEY,
+// OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "clips-app",
+  "account_id": "1a9cd8ace49e0b10ee2c93d46c40a3fa",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "dist/client",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/s/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "clips-app",
+      "database_id": "9a11e3cd-dcc0-4283-a1da-7b704a8932ed",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "ratelimits": [
+    {
+      "name": "LOGIN_LIMIT",
+      "namespace_id": "4274",
+      "simple": { "limit": 10, "period": 60 },
+    },
+  ],
+  // Each run cleans the buckets that are due, a few at a time.
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "observability": { "enabled": true },
+}
