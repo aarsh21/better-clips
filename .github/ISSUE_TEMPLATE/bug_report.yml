@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in the plugin or the clips app doesn't work.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For a security problem, don't file it here; see [SECURITY.md](https://github.com/aarsh21/obs-replay-r2/blob/main/SECURITY.md).
+  - type: dropdown
+    id: part
+    attributes:
+      label: Where is the problem?
+      options:
+        - OBS plugin
+        - Install script
+        - Clips web app (self-hosted)
+        - Clips web app (hosted)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      placeholder: I pressed the hotkey and OBS showed "upload failed (…)". I expected the clip to show up in the app.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Plugin version, OBS version and operating system.
+      placeholder: Replay to R2 0.1.4, OBS 33.0.2, Windows 11
+    validations:
+      required: true
+  - type: input
+    id: encoder
+    attributes:
+      label: Video and audio encoder
+      description: From OBS Settings → Output. Helps with packaging problems.
+      placeholder: AMD HW AV1, CBR 12000 kbps, AAC 160 kbps
+  - type: textarea
+    id: log
+    attributes:
+      label: OBS log
+      description: Help → Log Files → Upload Current Log File, then paste the link. Remove anything private first.
+      render: text

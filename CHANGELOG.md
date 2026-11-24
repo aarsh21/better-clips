@@ -1,0 +1,67 @@
+# Changelog
+
+All notable changes. The plugin follows [semantic versioning](https://semver.org);
+the web app ships from `main`.
+
+## Unreleased
+
+### Web app
+
+- **Hosted mode.** One deployment can serve many people: sign in with
+  Cloudflare and bring your own R2 bucket, either one the app creates or one
+  you connect with a bucket-only key. Videos load straight from each bucket
+  through short-lived signed links. OBS 0.1.3 and later upload unchanged.
+- Share links are pinned to the recording and thumbnail they were made from.
+- Cleanup in a connected bucket waits until you confirm the lengths, and only
+  deletes `.mp4` clips.
+
+## [0.1.4] - 2026-11-24
+
+### Plugin
+
+- Write MP4s without FFmpeg, so one build loads on OBS 31, 32 and 33. OBS 33
+  ships FFmpeg 8, and plugins linked to FFmpeg 7 failed to load on Windows.
+- Supports H.264, HEVC and AV1 video and AAC and Opus audio, with the index at
+  the start for instant browser playback.
+
+## [0.1.3] - 2026-11-24
+
+### Plugin
+
+- A **Replay to R2** dock next to Controls with a Save button, the replay
+  length and the last result.
+- A new replay length applies to the running buffer right away, and clips
+  always cover at least that length.
+
+### Web app
+
+- Trims are numbered after their source (Trim 1, Trim 2).
+- Keep and Delete buttons on clip cards.
+
+## [0.1.2] - 2026-11-24
+
+- One-line install scripts for Windows, macOS and Linux. On its next start the
+  plugin applies the setup code, turns on the Replay Buffer, binds
+  **Ctrl+Alt+R** and checks the connection.
+- Web app: search (`/` or `⌘K`), a light theme, retention settings and OBS
+  connection status.
+- Fixed `Content-Range` on clip video responses, which broke seeking.
+
+## [0.1.1] - 2026-11-24
+
+- One-click **Deploy to Cloudflare** for the clips app, with password sign-in.
+- OBS uploads through the app with a setup code, so no R2 API keys are needed.
+- Multipart uploads in 50 MB parts, past the Worker's 100 MB request limit.
+- Daily cleanup of old replays and the trash.
+
+## [0.1.0] - 2026-11-24
+
+- First release: an in-memory replay buffer on OBS's encoders that uploads
+  clips to Cloudflare R2 without writing them to disk.
+- The clips web app to browse, preview, trim, keep, delete and share clips.
+
+[0.1.4]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.4
+[0.1.3]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.3
+[0.1.2]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.2
+[0.1.1]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.1
+[0.1.0]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.0

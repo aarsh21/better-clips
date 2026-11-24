@@ -1,8 +1,10 @@
 # Clips
 
-The web app for Replay to R2: browse, trim, keep, delete and share the clips
-OBS uploads to your Cloudflare R2 bucket. It is a single Cloudflare Worker
-next to the bucket, so the browser never sees bucket keys.
+The web app for [Replay to R2](../README.md): browse, trim, keep, delete and
+share the clips OBS uploads to your Cloudflare R2 bucket. It's one Cloudflare
+Worker (Hono) serving a React app, so the browser never sees bucket keys.
+
+![The clips app in light mode](../docs/images/app-light.webp)
 
 - **Browse:** clips grouped by day, with thumbnails, hover previews and search.
 - **Trim:** pick in and out points on a filmstrip; the cut is saved as a new
@@ -35,9 +37,35 @@ replays/<day>/<time>_<scene>.mp4   from OBS, deleted after N days (Settings)
 saved/<day>/...                    kept clips, never deleted
 trash/<day>/...                    deleted clips, purged after N days (Settings)
 thumbs/<clip key>.jpg              made in the browser the first time a clip is seen
-shares/<id>.json                   share links
-config/upload-token                the token OBS uploads with
 ```
+
+A self-hosted app also keeps its own state in the bucket: `shares/<id>.json`
+for share links, and `config/salt`, `config/settings.json` and
+`config/obs-seen`. The hosted app keeps that state in D1 instead.
+
+## Two ways to run it
+
+**Self-hosted** (`wrangler.jsonc`): one person, one bucket bound to the Worker,
+and a password or Cloudflare Access to sign in. This is what the Deploy button
+sets up.
+
+**Hosted** (`wrangler.app.jsonc`, [`worker/hosted.ts`](worker/hosted.ts)):
+one deployment serves many people. Everyone signs in with Cloudflare OAuth and
+brings their own bucket, either one the app creates for them or one they
+connect with a key that only works for that bucket. Accounts, share links and
+settings live in D1, bucket keys are encrypted with `CREDS_KEY`, and videos load
+straight from each person's bucket through short-lived signed links. Hosted mode
+switches on when the `DB` binding and the `CREDS_KEY`, `OAUTH_CLIENT_ID` and
+`OAUTH_CLIENT_SECRET` secrets are set.
+
+Some guarantees the hosted app keeps:
+
+- Share links are pinned to the recording and thumbnail they were made from, so
+  replacing a file never changes what an old link shows.
+- Uploads and moves never overwrite an existing clip.
+- In a bucket you connect yourself, cleanup stays off until you confirm the
+  lengths, and it only ever deletes `.mp4` clips in `replays/` and `trash/`.
+- A tab still showing another account can't change anything.
 
 ## Deploy
 
@@ -79,4 +107,12 @@ against a local bucket.
 `pnpm check` runs TypeScript, ESLint, the vendored
 [anti-slop](https://github.com/dmmulroy/anti-slop) Oxlint rules
 (`tools/oxlint/anti-slop`) and [React Doctor](https://react.doctor), which
-must score 100.
+must score 100. GitHub Actions runs it, plus a build, on every change to
+`web/`.
+
+## Stack
+
+React 19, TanStack Query, Tailwind CSS 4 and shadcn/ui on Base UI, built with
+Vite. The Worker uses Hono, `jose` for Access tokens, `aws4fetch` for signed
+R2 requests in hosted mode, and [Mediabunny](https://mediabunny.dev) trims in
+the browser.
