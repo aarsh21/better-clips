@@ -1,8 +1,11 @@
 import * as React from "react"
 import { DesktopIcon, MoonIcon, SunIcon } from "@phosphor-icons/react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
 
+import { useSignOut } from "@/components/connect-storage"
 import { Segmented } from "@/components/segmented"
+import { Button } from "@/components/ui/button"
 import { ObsConnect } from "@/components/setup-steps"
 import { useTheme } from "@/components/theme-provider"
 import {
@@ -13,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { formatBytes, type Clip } from "@/lib/api"
+import { announceAccountChange, api, formatBytes, type Clip } from "@/lib/api"
 import { useClips } from "@/lib/clips"
 import { retentionText, useSaveSettings, useSettings } from "@/lib/settings"
 
@@ -110,9 +113,139 @@ function StorageSettings() {
         value={settings?.trashDays}
         onChange={(trashDays) => save.mutate({ trashDays })}
       />
-      <p className="text-[11px] text-muted-foreground">
-        Cleanup runs once a day.
-      </p>
+      {settings?.paused ? (
+        <div className="flex flex-col gap-2 border border-primary/30 bg-primary/5 p-3">
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Cleanup is off for this bucket, since it may hold files this app
+            didn&apos;t make. Once it&apos;s on, only <b>.mp4</b> clips in{" "}
+            <b>replays/</b> and <b>trash/</b> are ever deleted.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="self-start"
+            disabled={save.isPending}
+            onClick={() =>
+              save.mutate({
+                replaysDays: settings.replaysDays,
+                trashDays: settings.trashDays,
+              })
+            }
+          >
+            Turn on cleanup with these lengths
+          </Button>
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">
+          Cleanup runs once a day.
+        </p>
+      )}
+      <AccountSettings />
+    </div>
+  )
+}
+
+/* On the hosted app: who is signed in and which bucket is connected. */
+function AccountSettings() {
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me })
+  const signOut = useSignOut()
+  const [confirming, setConfirming] = React.useState(false)
+
+  const disconnect = useMutation({
+    mutationFn: api.disconnectStorage,
+    onSuccess: () => {
+      announceAccountChange()
+      location.assign("/")
+    },
+  })
+
+  const qc = useQueryClient()
+
+  /* For an install command that got out: OBS needs the new one. */
+  const resetObs = useMutation({
+    mutationFn: api.resetObsToken,
+    onSuccess: (setup) => {
+      qc.setQueryData(["setup"], setup)
+
+      return qc.invalidateQueries({ queryKey: ["settings"] })
+    },
+  })
+
+  if (!me || !("email" in me)) return null
+
+  return (
+    <div className="flex flex-col gap-3 border-t pt-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-xs font-medium">
+            {me.storage ? `Bucket ${me.storage.bucket}` : "No bucket"}
+          </span>
+          <span className="truncate text-[11px] text-muted-foreground">
+            {me.email}
+            {me.storage &&
+              (me.storage.auto ? " · set up automatically" : " · your key")}
+          </span>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={signOut.isPending}
+          onClick={() => signOut.mutate()}
+        >
+          Sign out
+        </Button>
+      </div>
+      {me.storage && (
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {resetObs.isSuccess
+              ? "Done. The old command stops working; run the new one from the OBS tab."
+              : "Shared your OBS install command by mistake? Make a new one and the old one stops working."}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={resetObs.isPending}
+            onClick={() => resetObs.mutate()}
+          >
+            New OBS command
+          </Button>
+        </div>
+      )}
+      {confirming ? (
+        <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            clips stops using this bucket right away, and OBS stops uploading.
+            Your clips stay in the bucket. To turn the key off for good, delete
+            it in R2 → Manage API tokens.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={disconnect.isPending}
+              onClick={() => disconnect.mutate()}
+            >
+              Disconnect
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="self-start text-[11px] text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
+        >
+          Disconnect storage
+        </button>
+      )}
     </div>
   )
 }

@@ -149,6 +149,11 @@ export function SetupSteps() {
           text={code && installCommand(platform, code)}
           shown={code && installCommand(platform, hidden(code))}
           error={setup.error?.message}
+          fresh={async () => {
+            const latest = (await setup.refetch()).data?.code
+
+            return latest && installCommand(platform, latest)
+          }}
         />
         <p className="leading-relaxed text-muted-foreground">
           {platform === "windows"
@@ -163,7 +168,11 @@ export function SetupSteps() {
         </p>
       </div>
       {manual ? (
-        <ManualSteps code={code} error={setup.error?.message} />
+        <ManualSteps
+          code={code}
+          error={setup.error?.message}
+          fresh={async () => (await setup.refetch()).data?.code}
+        />
       ) : (
         <button
           type="button"
@@ -180,9 +189,11 @@ export function SetupSteps() {
 function ManualSteps({
   code,
   error,
+  fresh,
 }: {
   code: string | undefined
   error: string | undefined
+  fresh: () => Promise<string | undefined>
 }) {
   return (
     <ol className="flex flex-col gap-5 border-t pt-4">
@@ -199,7 +210,12 @@ function ManualSteps({
         and restart OBS.
       </Step>
       <Step n={2} title="Copy your setup code">
-        <CopyField text={code} shown={code && hidden(code)} error={error} />
+        <CopyField
+          text={code}
+          shown={code && hidden(code)}
+          error={error}
+          fresh={fresh}
+        />
       </Step>
       <Step n={3} title="Paste it in OBS">
         Open <b>Tools → Replay to R2 Settings</b>, click <b>Paste setup code</b>
@@ -214,14 +230,18 @@ function ManualSteps({
 }
 
 /* A secret shown cut short, with a button that copies all of it. */
+/* Copying asks the app for the current code first, so a code reset in
+ * another tab (or account switch) is never copied stale. */
 function CopyField({
   text,
   shown,
   error,
+  fresh,
 }: {
   text: string | undefined
   shown: string | undefined
   error: string | undefined
+  fresh: () => Promise<string | undefined>
 }) {
   const [copied, setCopied] = React.useState(false)
 
@@ -234,7 +254,10 @@ function CopyField({
 
   const copy = async () => {
     if (!text) return
-    await navigator.clipboard.writeText(text)
+    const latest = await fresh()
+
+    if (!latest) return
+    await navigator.clipboard.writeText(latest)
     setCopied(true)
   }
 

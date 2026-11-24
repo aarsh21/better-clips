@@ -1,29 +1,63 @@
-/* Clips API. Runs next to the R2 bucket, so the browser never sees bucket keys.
+/* Clips API.
  *
- * Sign-in is a password (APP_PASSWORD), or Cloudflare Access when ACCESS_AUD
- * is set. OBS uploads with the token from the setup code instead. Session
- * signatures and the upload token are made from APP_PASSWORD and a random
- * salt in the bucket, so neither one alone is enough to forge them.
+ * Self-hosted: one person, one bucket bound as BUCKET. Sign-in is a password
+ * (APP_PASSWORD), or Cloudflare Access when ACCESS_AUD is set. OBS uploads
+ * with a token derived from APP_PASSWORD and a random salt in the bucket.
  *
- * Bucket layout:
+ * Hosted (hosted.ts, when DB and the OAuth secrets are set): anyone signs in
+ * with Cloudflare, and each person's clips stay in their own bucket, reached
+ * with a key that only works for that bucket. Videos and thumbnails load
+ * straight from that bucket through short-lived signed links.
+ *
+ * Bucket layout (both):
  *   replays/<day>/<time>_<label>.mp4   uploaded by OBS, deleted after N days
  *   saved/<day>/<time>_<label>.mp4     kept clips, never deleted
  *   trash/<day>/<time>_<label>.mp4     deleted clips, purged after N days
- *   thumbs/<clip key>.jpg             thumbnail, metadata holds duration and size
- *   shares/<id>.json                  share link -> clip key and expiry
- *   config/salt                       random salt for sessions and the upload token
- *   config/settings.json              how long new clips and the trash are kept
- *   config/obs-seen                   written when OBS checks in; its date is shown
+ *   thumbs/<clip key>.jpg             thumbnail
+ * Self-hosted only (the hosted app keeps these in D1, see meta.ts):
+ *   shares/<id>.json, config/salt, config/settings.json, config/obs-seen
  */
 
-import { Hono, type Context } from "hono"
+import { Hono, type Context, type Next } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { createRemoteJWKSet, jwtVerify } from "jose"
 
 import { clipTitle } from "./clip-title"
+import {
+  cleanupDone,
+  currentObsToken,
+  dueTenants,
+  hostedRoutes,
+  isHosted,
+  loadTenant,
+  obsTenant,
+  rewrapStale,
+  setupCode,
+  signedIn,
+  type HostedEnv,
+  type SignedIn,
+  type Tenant,
+} from "./hosted"
+import {
+  bucketMeta,
+  bucketShare,
+  d1Share,
+  REPLAY_DAYS,
+  TRASH_DAYS,
+  type Settings,
+  type Share,
+  type ThumbMeta,
+} from "./meta"
+import {
+  bindingStore,
+  ClipChanged,
+  StorageError,
+  type Obj,
+  type Store,
+} from "./store"
 
-type Env = {
-  BUCKET: R2Bucket
+type Env = HostedEnv & {
+  BUCKET?: R2Bucket
   ASSETS: Fetcher
   LOGIN_LIMIT: RateLimit
   APP_PASSWORD?: string
@@ -37,54 +71,157 @@ const FOLDERS = ["replays", "saved", "trash"] as const
 
 type Folder = (typeof FOLDERS)[number]
 
-/* Who is uploading: OBS with its token, or you from the trim editor. */
-type App = { Bindings: Env; Variables: { uploader: "obs" | "owner" } }
+/* Who is uploading (OBS with its token, or you from the trim editor), who
+ * is signed in (hosted), and whose bucket this request works on. */
+type App = {
+  Bindings: Env
+  Variables: { uploader: "obs" | "owner"; who: SignedIn; tenant: Tenant }
+}
 
 const app = new Hono<App>()
 
+let selfTenantCache: Tenant | undefined
+
+function selfTenant(env: Env): Tenant {
+  selfTenantCache ??= {
+    id: "self",
+    store: bindingStore(env.BUCKET!),
+    meta: bucketMeta(env.BUCKET!),
+  }
+
+  return selfTenantCache
+}
+
 /* ---- Sign-in ---- */
 
+/* Routes that check who you are themselves. */
+const OPEN = new Set([
+  "/api/login",
+  "/api/auth/login",
+  "/api/auth/callback",
+  "/api/auth/setup",
+  "/api/auth/logout",
+])
+
+/* Hosted routes that work before storage is connected. */
+const ACCOUNT = new Set(["/api/me", "/api/storage"])
+
+const obsUpload = (c: Context<App>) =>
+  c.req.path.startsWith("/api/upload/") &&
+  Boolean(c.req.header("authorization"))
+
+const bearerOf = (c: Context<App>) =>
+  (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "")
+
 app.use("/api/*", async (c, next) => {
-  if (c.req.path === "/api/login") return next()
+  const hosted = isHosted(c.env)
+  const path = c.req.path
+
+  if (
+    !hosted &&
+    (path.startsWith("/api/auth/") ||
+      path === "/api/storage" ||
+      path === "/api/obs/token")
+  )
+    return c.json({ error: "Not found" }, 404)
+
+  if (hosted && path === "/api/login")
+    return c.json({ error: "Not found" }, 404)
+
+  if (OPEN.has(path)) return next()
+
+  if (hosted) return hostedAuth(c, next)
 
   /* OBS sends its upload token; every other request needs you signed in. */
-  const bearer = c.req.header("authorization")
-
-  if (c.req.path.startsWith("/api/upload/") && bearer) {
+  if (obsUpload(c)) {
     const token = await uploadToken(c.env)
 
-    if (!token || !(await sameText(bearer.replace(/^Bearer\s+/i, ""), token)))
+    if (!token || !(await sameText(bearerOf(c), token)))
       return c.json(
         { error: "Wrong upload token. Paste a new setup code." },
         401
       )
     c.set("uploader", "obs")
-
-    /* Lets the app show that OBS is connected, right after Test Upload. */
-    if (
-      c.req.path === "/api/upload/check" ||
-      c.req.path === "/api/upload/complete"
-    )
-      c.executionCtx.waitUntil(c.env.BUCKET.put("config/obs-seen", ""))
+    c.set("tenant", selfTenant(c.env))
 
     return next()
   }
 
   c.set("uploader", "owner")
+  c.set("tenant", selfTenant(c.env))
 
-  if (devNoAuth(c)) return next()
+  if (devNoAuth(c)) return selfOnly(c, next)
 
-  if (c.env.ACCESS_AUD) return (await checkAccess(c)) ?? next()
+  if (c.env.ACCESS_AUD) return (await checkAccess(c)) ?? selfOnly(c, next)
   const password = appPassword(c.env)
 
   if (!password)
     return c.json({ error: "Sign-in is not set up", auth: "none" }, 503)
 
   if (await validSession(c.env, password, getCookie(c, SESSION_COOKIE)))
-    return next()
+    return selfOnly(c, next)
 
   return c.json({ error: "Not signed in", auth: "password" }, 401)
 })
+
+/* A self-hosted app has no accounts: /api/me just says so. */
+function selfOnly(c: Context<App>, next: Next) {
+  if (c.req.path === "/api/me") return c.json({ hosted: false })
+
+  return next()
+}
+
+async function hostedAuth(c: Context<App>, next: Next) {
+  if (obsUpload(c)) {
+    const tenant = await obsTenant(c.env, bearerOf(c))
+
+    if (!tenant)
+      return c.json(
+        { error: "Wrong upload token. Copy the command from your app again." },
+        401
+      )
+    c.set("uploader", "obs")
+    c.set("tenant", tenant)
+
+    return next()
+  }
+
+  const who = await signedIn(c)
+
+  if (!who) return c.json({ error: "Not signed in", auth: "cloudflare" }, 401)
+  c.set("who", who)
+  /* Lets every open tab notice when someone else signs in, or storage
+   * changes, and start over instead of mixing two accounts. A tab sends the
+   * account it shows with each change it makes; a change meant for another
+   * account is refused before anything happens. */
+  const account = `${who.userId}:${who.tenantId ?? ""}`
+  const expected = c.req.header("x-clips-account")
+
+  c.header("x-clips-account", account)
+
+  if (
+    expected &&
+    expected !== account &&
+    !["GET", "HEAD"].includes(c.req.method)
+  )
+    return c.json(
+      {
+        error: "You signed in as someone else in another tab.",
+        account: "changed",
+      },
+      409
+    )
+  c.set("uploader", "owner")
+
+  if (ACCOUNT.has(c.req.path)) return next()
+  const entry = who.tenantId ? await loadTenant(c.env, who.tenantId) : null
+
+  if (!entry)
+    return c.json({ error: "Connect your storage first", storage: "none" }, 409)
+  c.set("tenant", entry.tenant)
+
+  return next()
+}
 
 /* DEV_NO_AUTH only works on your own machine, so copying it into a deployed
  * Worker's settings can't open the app. */
@@ -178,7 +315,7 @@ async function salt(bucket: R2Bucket) {
 /* A secret for one purpose, from the password and the salt. Changing the
  * password changes all of them: it signs you out and OBS needs a new code. */
 async function derive(env: Env, password: string, purpose: string) {
-  return hmac(password, `${purpose}:${await salt(env.BUCKET)}`)
+  return hmac(password, `${purpose}:${await salt(env.BUCKET!)}`)
 }
 
 async function signSession(env: Env, password: string, expires: number) {
@@ -283,143 +420,150 @@ function slug(text: string) {
     .slice(0, 40)
 }
 
-async function listAll(bucket: R2Bucket, prefix: string, metadata = false) {
-  const objects: R2Object[] = []
-  let cursor: string | undefined
-
-  do {
-    const page = await bucket.list({
-      prefix,
-      cursor,
-      limit: 1000,
-      include: metadata ? ["customMetadata"] : [],
-    })
-
-    objects.push(...page.objects)
-    cursor = page.truncated ? page.cursor : undefined
-  } while (cursor)
-
-  return objects
-}
-
-/* Copies an object to a new key in one stream, then deletes the original.
- * Its thumbnail and share links follow it, except into the trash, which
- * turns its links off. */
-async function move(bucket: R2Bucket, from: string, wanted: string) {
-  if (from === wanted) return from
-
-  const [to, thumb] = await Promise.all([
-    copyToFreeKey(bucket, from, wanted),
-    bucket.get(`thumbs/${from}.jpg`),
-  ])
-
-  if (thumb) {
-    await bucket.put(`thumbs/${to}.jpg`, await thumb.arrayBuffer(), {
-      httpMetadata: thumb.httpMetadata,
-      customMetadata: thumb.customMetadata,
-    })
-  }
-
-  const shares = await listAll(bucket, "shares/")
-
-  await Promise.all(
-    shares.map(async (share) => {
-      const obj = await bucket.get(share.key)
-      const data = obj ? await obj.json<ShareRecord>() : null
-
-      if (data?.key !== from) return
-
-      if (folderOf(to) === "trash") await bucket.delete(share.key)
-      else await bucket.put(share.key, JSON.stringify({ ...data, key: to }))
-    })
-  )
-
-  await bucket.delete([from, `thumbs/${from}.jpg`])
-
-  return to
-}
-
-/* Copies a clip to wanted, or wanted-2, -3 and so on when that is taken. The
- * write only succeeds on a free key, so two moves at once can't overwrite
- * each other. */
-async function copyToFreeKey(bucket: R2Bucket, from: string, wanted: string) {
-  for (let tries = 0; tries < 5; tries++) {
-    const to = await uniqueKey(bucket, wanted)
-    const src = await bucket.get(from)
-
-    if (!src) throw new Error("Clip not found")
-    const { readable, writable } = new FixedLengthStream(src.size)
-
-    const [, written] = await Promise.all([
-      src.body.pipeTo(writable),
-      bucket.put(to, readable, {
-        httpMetadata: src.httpMetadata,
-        customMetadata: src.customMetadata,
-        onlyIf: { etagDoesNotMatch: "*" },
-      }),
-    ])
-
-    if (written) return to
-  }
-
-  throw new Error("Could not find a free name for this clip")
-}
-
-async function uniqueKey(bucket: R2Bucket, key: string) {
+/* wanted, or wanted-2, -3 and so on: the first name not in the bucket and
+ * not in skip. */
+async function uniqueKey(store: Store, key: string, skip = new Set<string>()) {
   const base = key.replace(/\.mp4$/, "")
 
   for (let i = 0; ; i++) {
     const candidate = i === 0 ? key : `${base}-${i + 1}.mp4`
 
-    if (!(await bucket.head(candidate))) return candidate
+    if (!skip.has(candidate) && !(await store.head(candidate))) return candidate
   }
 }
 
-/* R2 fills in every field of the range, setting the unused ones to
- * undefined, so check values rather than which keys exist. */
-function rangeBounds(range: R2Range, size: number) {
-  if ("suffix" in range && range.suffix !== undefined)
-    return { start: Math.max(0, size - range.suffix), end: size - 1 }
+/* Copies to wanted, or wanted-2, -3…; another move can take a name between
+ * the check and the copy, so a refused copy tries the next name. */
+async function copyToFreeKey(
+  store: Store,
+  from: { key: string; etag: string },
+  wanted: string,
+  taken: Set<string>,
+  tries: number
+): Promise<{ key: string; etag: string }> {
+  if (!tries) throw new Error("Could not find a free name for this clip")
+  const candidate = await uniqueKey(store, wanted, taken)
+  const etag = await store.copy(from.key, candidate, true, from.etag)
 
-  const start = ("offset" in range ? range.offset : undefined) ?? 0
-  const length = ("length" in range ? range.length : undefined) ?? size - start
+  if (etag !== null) return { key: candidate, etag }
 
-  return { start, end: Math.min(size, start + length) - 1 }
+  return copyToFreeKey(store, from, wanted, taken.add(candidate), tries - 1)
 }
 
-/* Serves an R2 object with Range support, so video can seek. */
-async function serveObject(
-  c: Context<App>,
-  key: string,
-  extraHeaders: Record<string, string> = {}
-) {
-  const object = await c.env.BUCKET.get(key, {
-    range: c.req.raw.headers,
-    onlyIf: c.req.raw.headers,
+/* Deletes clips and their thumbnails, thumbnail first, so a failure never
+ * leaves a thumbnail behind its clip. Returns the clips that are gone. */
+async function deleteClips(store: Store, keys: string[]) {
+  const thumbs = new Set(await store.delete(keys.map((k) => `thumbs/${k}.jpg`)))
+
+  const ready = keys.filter((k) => !thumbs.has(`thumbs/${k}.jpg`))
+  const failed = new Set(await store.delete(ready))
+
+  return ready.filter((k) => !failed.has(k))
+}
+
+/* Moves a clip and its thumbnail: copy, then delete the original. The copy
+ * only happens onto a free name, and only while the clip is still the
+ * recording that was looked at. */
+async function move(t: Tenant, from: string, wanted: string) {
+  if (from === wanted) return from
+
+  const [clip, thumb] = await Promise.all([
+    t.store.head(from),
+    t.store.head(`thumbs/${from}.jpg`),
+  ])
+
+  if (!clip?.etag) throw new Error("Clip not found")
+
+  const to = await copyToFreeKey(
+    t.store,
+    { key: from, etag: clip.etag },
+    wanted,
+    new Set(),
+    5
+  )
+
+  /* A thumbnail that changed meanwhile isn't copied; the app makes a new
+   * one. */
+  const thumbEtag = thumb
+    ? await t.store
+        .copy(`thumbs/${from}.jpg`, `thumbs/${to.key}.jpg`, false, thumb.etag)
+        .catch((err) => {
+          if (err instanceof ClipChanged) return null
+          throw err
+        })
+    : null
+
+  /* R2 can't delete a file only if it's unchanged, so check right before
+   * deleting: if the clip was replaced since the copy, keep both files. */
+  if ((await t.store.head(from))?.etag !== clip.etag) throw new ClipChanged()
+
+  await t.meta.moved({
+    from,
+    to: to.key,
+    etag: [clip.etag, to.etag],
+    thumb: thumb && thumbEtag ? [thumb.etag, thumbEtag] : null,
   })
 
-  if (!object) return c.text("Not found", 404)
-  const headers = new Headers(extraHeaders)
-  object.writeHttpMetadata(headers)
-  headers.set("etag", object.httpEtag)
-  headers.set("accept-ranges", "bytes")
+  if (!(await deleteClips(t.store, [from])).length)
+    console.error("moved a clip but couldn't delete the original")
 
-  if (!headers.has("content-type")) headers.set("content-type", "video/mp4")
+  return to.key
+}
 
-  if (!("body" in object)) return new Response(null, { status: 304, headers })
+/* Sends an object. A <video>, <img> or download loads straight from the
+ * bucket when the store can sign a link, which is fastest; fetch() calls
+ * (thumbnails, the trim editor) stream through here, so the bucket needs no
+ * CORS rules. */
+async function sendObject(
+  c: Context<App>,
+  store: Store,
+  key: string,
+  opts: {
+    seconds: number
+    cache: string
+    redirectCache: string
+    type: string
+    download?: string
+    /* Only send the object while it still has this ETag. */
+    etag?: string
+    /* Changes the signed link when the object changes. */
+    version?: string
+  }
+) {
+  const mode = c.req.header("sec-fetch-mode")
 
-  if (object.range && c.req.header("range")) {
-    const { start, end } = rangeBounds(object.range, object.size)
+  /* A pinned share can't redirect: a signed link would keep working if the
+   * file were replaced. */
+  if (!opts.etag && (mode === "no-cors" || mode === "navigate")) {
+    const url = await store.signedUrl(key, {
+      seconds: opts.seconds,
+      download: opts.download,
+      version: opts.version,
+    })
 
-    headers.set("content-range", `bytes ${start}-${end}/${object.size}`)
-    headers.set("content-length", String(end - start + 1))
-
-    return new Response(object.body, { status: 206, headers })
+    if (url)
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: url,
+          "cache-control": opts.redirectCache,
+          "referrer-policy": "no-referrer",
+        },
+      })
   }
 
-  headers.set("content-length", String(object.size))
-
-  return new Response(object.body, { headers })
+  return store.serve(
+    key,
+    c.req.raw,
+    {
+      "cache-control": opts.cache,
+      "content-type": opts.type,
+      ...(opts.download && {
+        "content-disposition": `attachment; filename="${opts.download}"`,
+      }),
+    },
+    opts.etag
+  )
 }
 
 /* ---- Clips ---- */
@@ -429,36 +573,40 @@ export type Clip = {
   folder: Folder
   size: number
   uploaded: string
-  thumb?: { duration: number; width: number; height: number; v: string }
+  thumb?: ThumbMeta
 }
 
+/* One listing of the whole bucket, plus what the app knows about thumbs. */
 app.get("/api/clips", async (c) => {
-  const [clipLists, thumbs] = await Promise.all([
-    Promise.all(FOLDERS.map((f) => listAll(c.env.BUCKET, `${f}/`))),
-    listAll(c.env.BUCKET, "thumbs/", true),
+  const t = c.get("tenant")
+
+  const [objects, thumbs] = await Promise.all([
+    t.store.list(""),
+    t.meta.thumbs(),
   ])
 
-  const thumbByKey = new Map(thumbs.map((t) => [t.key.slice(7, -4), t]))
+  const hasThumb = new Set(
+    objects
+      .filter((o) => o.key.startsWith("thumbs/"))
+      .map((o) => o.key.slice(7, -4))
+  )
 
-  const clips: Clip[] = clipLists
-    .flat()
-    .filter((o) => o.key.endsWith(".mp4"))
-    .map((o) => {
-      const t = thumbByKey.get(o.key)
+  const clips: Clip[] = objects.flatMap((o) => {
+    const folder = folderOf(o.key)
 
-      return {
+    if (!folder || !o.key.endsWith(".mp4")) return []
+    const thumb = hasThumb.has(o.key) ? thumbs.get(o.key) : undefined
+
+    return [
+      {
         key: o.key,
-        folder: folderOf(o.key) ?? "replays",
+        folder,
         size: o.size,
         uploaded: o.uploaded.toISOString(),
-        thumb: t && {
-          duration: Number(t.customMetadata?.duration ?? 0),
-          width: Number(t.customMetadata?.width ?? 0),
-          height: Number(t.customMetadata?.height ?? 0),
-          v: t.etag.slice(0, 8),
-        },
-      }
-    })
+        ...(thumb && { thumb }),
+      },
+    ]
+  })
 
   return c.json({ clips }, 200, { "cache-control": "no-store" })
 })
@@ -467,13 +615,20 @@ app.get("/api/media/*", async (c) => {
   const clip = pathClip(c, "/api/media/")
 
   if (!clip) return c.text("Bad key", 400)
-  const name = clip.key.split("/").pop()!
 
-  return serveObject(c, clip.key, {
-    "cache-control": "private, max-age=3600",
-    ...(c.req.query("download") !== undefined && {
-      "content-disposition": `attachment; filename="${name}"`,
-    }),
+  /* /api/media/<key> is the same URL for every account, so the browser
+   * mustn't keep the answer: after switching accounts it would show the
+   * last one's clip. The signed bucket URL it redirects to is per account
+   * and is cached instead. */
+  return sendObject(c, c.get("tenant").store, clip.key, {
+    seconds: 3600,
+    cache: "no-store",
+    redirectCache: "no-store",
+    type: "video/mp4",
+    download:
+      c.req.query("download") !== undefined
+        ? clip.key.split("/").pop()
+        : undefined,
   })
 })
 
@@ -482,12 +637,16 @@ app.get("/api/thumb/*", async (c) => {
 
   if (!clip) return c.text("Bad key", 400)
 
-  const res = await serveObject(c, `thumbs/${clip.key}.jpg`, {
-    "cache-control": "private, max-age=31536000, immutable",
-    "content-type": "image/jpeg",
-  })
+  /* Self-hosted has one account, so its thumbnails cache for good. */
+  const hosted = isHosted(c.env)
 
-  return res
+  return sendObject(c, c.get("tenant").store, `thumbs/${clip.key}.jpg`, {
+    seconds: 3600,
+    cache: hosted ? "no-store" : "private, max-age=31536000, immutable",
+    redirectCache: "no-store",
+    type: "image/jpeg",
+    version: c.req.query("v") || undefined,
+  })
 })
 
 app.put("/api/thumb/*", async (c) => {
@@ -497,14 +656,23 @@ app.put("/api/thumb/*", async (c) => {
   const body = await c.req.arrayBuffer()
 
   if (body.byteLength > 2_000_000) return c.text("Too large", 413)
-  await c.env.BUCKET.put(`thumbs/${clip.key}.jpg`, body, {
-    httpMetadata: { contentType: "image/jpeg" },
-    customMetadata: {
-      duration: c.req.header("x-duration") ?? "0",
-      width: c.req.header("x-width") ?? "0",
-      height: c.req.header("x-height") ?? "0",
+  const t = c.get("tenant")
+
+  const meta = {
+    duration: Math.max(0, Number(c.req.header("x-duration")) || 0),
+    width: Math.max(0, Math.round(Number(c.req.header("x-width")) || 0)),
+    height: Math.max(0, Math.round(Number(c.req.header("x-height")) || 0)),
+  }
+
+  await t.store.put(`thumbs/${clip.key}.jpg`, body, {
+    contentType: "image/jpeg",
+    meta: {
+      duration: String(meta.duration),
+      width: String(meta.width),
+      height: String(meta.height),
     },
   })
+  await t.meta.putThumb(clip.key, meta)
 
   return c.json({ ok: true })
 })
@@ -534,7 +702,12 @@ app.post("/api/move", async (c) => {
   }
 
   parts[0] = folder
-  const target = await move(c.env.BUCKET, clip.key, [...parts, file].join("/"))
+
+  const target = await move(
+    c.get("tenant"),
+    clip.key,
+    [...parts, file].join("/")
+  )
 
   return c.json({ key: target })
 })
@@ -544,14 +717,19 @@ app.delete("/api/clips/*", async (c) => {
 
   if (!clip || clip.folder !== "trash")
     return c.json({ error: "Only clips in the trash can be deleted" }, 400)
-  await c.env.BUCKET.delete([clip.key, `thumbs/${clip.key}.jpg`])
+  const t = c.get("tenant")
+
+  const gone = await deleteClips(t.store, [clip.key])
+
+  await t.meta.forget(gone)
+
+  if (!gone.length)
+    return c.json({ error: "Couldn't delete it. Try again." }, 500)
 
   return c.json({ ok: true })
 })
 
 /* ---- Sharing ---- */
-
-type ShareRecord = { key: string; expires: number | null }
 
 app.post("/api/share", async (c) => {
   const { key, days } = await c.req.json<{ key: string; days: number | null }>()
@@ -559,25 +737,35 @@ app.post("/api/share", async (c) => {
 
   if (!clip) return c.json({ error: "Bad key" }, 400)
 
-  /* Shared clips are kept, so the link doesn't die with the 30-day cleanup. */
+  if (days !== null && !(Number.isInteger(days) && days > 0 && days <= 365))
+    return c.json({ error: "Bad expiry" }, 400)
+  const t = c.get("tenant")
+
+  /* Shared clips are kept, so the link doesn't die with the cleanup. */
   if (clip.folder !== "saved") {
-    const target = await move(
-      c.env.BUCKET,
-      clip.key,
-      clip.key.replace(/^[^/]+/, "saved")
-    )
+    const target = await move(t, clip.key, clip.key.replace(/^[^/]+/, "saved"))
 
     clip = { key: target, folder: "saved" }
   }
 
   const id = randomId(10)
+  const hosted = isHosted(c.env)
 
-  const record: ShareRecord = {
+  const [object, thumb] = await Promise.all([
+    t.store.head(clip.key),
+    t.store.head(`thumbs/${clip.key}.jpg`),
+  ])
+
+  if (!object || (hosted && !object.etag))
+    return c.json({ error: "Clip not found" }, 404)
+
+  /* The hosted app pins the link to this recording and this thumbnail. */
+  await t.meta.createShare(id, {
     key: clip.key,
     expires: days ? Date.now() + days * 86_400_000 : null,
-  }
-
-  await c.env.BUCKET.put(`shares/${id}.json`, JSON.stringify(record))
+    etag: hosted ? object.etag : undefined,
+    thumbEtag: hosted ? thumb?.etag || undefined : undefined,
+  })
   const url = new URL(`/s/${id}`, c.req.url).toString()
 
   return c.json({ url, key: clip.key })
@@ -590,61 +778,90 @@ function randomId(length: number) {
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("")
 }
 
-async function getShare(env: Env, id: string) {
+async function findShare(env: Env, id: string) {
   if (!/^[A-Za-z0-9]{6,20}$/.test(id)) return null
-  const obj = await env.BUCKET.get(`shares/${id}.json`)
 
-  if (!obj) return null
-  const record = await obj.json<ShareRecord>()
+  if (isHosted(env)) {
+    const share = await d1Share(env.DB!, id)
 
-  if (!clipKey(record.key) || (record.expires && record.expires < Date.now()))
-    return null
+    const entry =
+      share && clipKey(share.key) ? await loadTenant(env, share.tenant) : null
 
-  return record
+    return entry && share ? { share, tenant: entry.tenant } : null
+  }
+
+  const share = await bucketShare(env.BUCKET!, id)
+
+  return share && clipKey(share.key) ? { share, tenant: selfTenant(env) } : null
+}
+
+/* Seconds a share's files may be cached or signed for: up to max, but never
+ * past the link's expiry. */
+function shareSeconds(share: Share, max: number) {
+  const left = share.expires
+    ? Math.floor((share.expires - Date.now()) / 1000)
+    : max
+
+  return Math.max(0, Math.min(max, left))
 }
 
 app.get("/s/:id/clip.mp4", async (c) => {
-  const share = await getShare(c.env, c.req.param("id"))
+  const found = await findShare(c.env, c.req.param("id"))
 
-  if (!share) return c.text("This link has expired.", 404)
+  if (!found) return c.text("This link has expired.", 404)
 
-  return serveObject(c, share.key, { "cache-control": shareCache(share, 300) })
+  return sendObject(c, found.tenant.store, found.share.key, {
+    seconds: Math.max(1, shareSeconds(found.share, 3600)),
+    cache: `public, max-age=${shareSeconds(found.share, 300)}`,
+    redirectCache: "no-store",
+    type: "video/mp4",
+    etag: found.share.etag,
+  })
 })
 
 app.get("/s/:id", async (c) => {
   const id = c.req.param("id")
-  const share = await getShare(c.env, id)
+  const found = await findShare(c.env, id)
 
-  if (!share) return c.html(sharePage(null, ""), 404)
-  const thumb = await c.env.BUCKET.head(`thumbs/${share.key}.jpg`)
+  if (!found) return c.html(sharePage(null, ""), 404)
+  const { share, tenant } = found
+
+  const [thumb, thumbFile] = await Promise.all([
+    tenant.meta.thumb(share.key),
+    tenant.store.head(`thumbs/${share.key}.jpg`),
+  ])
+
+  /* A pinned link only shows the thumbnail it was shared with. */
+  const hasThumb = isHosted(c.env)
+    ? Boolean(share.thumbEtag) && thumbFile?.etag === share.thumbEtag
+    : Boolean(thumbFile)
 
   return c.html(
-    sharePage(share.key, new URL(`/s/${id}`, c.req.url).toString(), thumb)
+    sharePage(
+      share.key,
+      new URL(`/s/${id}`, c.req.url).toString(),
+      hasThumb ? (thumb ?? { duration: 0, width: 0, height: 0, v: "" }) : null
+    )
   )
 })
 
 app.get("/s/:id/thumb.jpg", async (c) => {
-  const share = await getShare(c.env, c.req.param("id"))
+  const found = await findShare(c.env, c.req.param("id"))
 
-  if (!share) return c.text("Not found", 404)
+  if (!found || (isHosted(c.env) && !found.share.thumbEtag))
+    return c.text("Not found", 404)
 
-  return serveObject(c, `thumbs/${share.key}.jpg`, {
-    "content-type": "image/jpeg",
-    "cache-control": shareCache(share, 3600),
+  return sendObject(c, found.tenant.store, `thumbs/${found.share.key}.jpg`, {
+    seconds: Math.max(1, shareSeconds(found.share, 3600)),
+    cache: `public, max-age=${shareSeconds(found.share, 3600)}`,
+    redirectCache: "no-store",
+    type: "image/jpeg",
+    etag: found.share.thumbEtag,
   })
 })
 
-/* Caches for up to maxAge seconds, but not past the link's expiry. */
-function shareCache(share: ShareRecord, maxAge: number) {
-  const left = share.expires
-    ? Math.floor((share.expires - Date.now()) / 1000)
-    : maxAge
-
-  return `public, max-age=${Math.max(0, Math.min(maxAge, left))}`
-}
-
 /* A pixel size from thumbnail metadata, as a plain number. */
-function dimension(value: string | undefined, fallback: number) {
+function dimension(value: number | undefined, fallback: number) {
   const n = Math.round(Number(value))
 
   return n > 0 && n <= 16_384 ? n : fallback
@@ -655,7 +872,7 @@ function escapeHtml(s: string) {
 }
 
 /* A bare page with Open Graph video tags, so Discord and others embed it. */
-function sharePage(key: string | null, url: string, thumb?: R2Object | null) {
+function sharePage(key: string | null, url: string, thumb?: ThumbMeta | null) {
   if (!key) {
     return `<!doctype html><meta name=viewport content="width=device-width"><title>Link expired</title>
 <body style="margin:0;display:grid;place-items:center;height:100vh;background:#0b0b0b;color:#888;font:13px ui-monospace,monospace">This link has expired.</body>`
@@ -668,8 +885,8 @@ function sharePage(key: string | null, url: string, thumb?: R2Object | null) {
 
   const label = file.match(/^\d{2}-\d{2}-\d{2}_?(.*)$/)?.[1] ?? file
   const title = escapeHtml(clipTitle(label).title || "Clip")
-  const width = dimension(thumb?.customMetadata?.width, 1280)
-  const height = dimension(thumb?.customMetadata?.height, 720)
+  const width = dimension(thumb?.width, 1280)
+  const height = dimension(thumb?.height, 720)
   const video = `${url}/clip.mp4`
 
   return `<!doctype html><html lang=en><head><meta charset=utf-8>
@@ -704,7 +921,10 @@ async function uploadToken(env: Env) {
 /* The plugin's names: 2026-11-24/14-35-07_Valorant.mp4 */
 const UPLOAD_NAME = /^\d{4}-\d{2}-\d{2}\/[A-Za-z0-9_-]{1,100}\.mp4$/
 
-function uploadTarget(c: Context<App>) {
+const MAX_PART = 100 * 1024 * 1024
+
+/* The upload a part or complete call is about, if this caller may touch it. */
+async function uploadTarget(c: Context<App>) {
   const clip = clipKey(c.req.query("key") ?? "")
   const uploadId = c.req.query("uploadId")
 
@@ -713,17 +933,21 @@ function uploadTarget(c: Context<App>) {
     (clip?.folder === "saved" && c.get("uploader") === "owner")
 
   if (!clip || !allowed || !uploadId) return null
+  const t = c.get("tenant")
 
-  return c.env.BUCKET.resumeMultipartUpload(clip.key, uploadId)
+  if (!(await t.meta.ownsUpload(uploadId, clip.key))) return null
+
+  return { t, key: clip.key, uploadId }
 }
 
 /* Where an upload goes: OBS names a new replay; the trim editor saves next
  * to its source. */
-function uploadKey(c: Context<App>) {
+async function uploadKey(c: Context<App>) {
   const name = c.req.query("name") ?? ""
   const from = clipKey(c.req.query("from") ?? "")
 
-  if (from && c.get("uploader") === "owner") return trimKey(c.env.BUCKET, from)
+  if (from && c.get("uploader") === "owner")
+    return trimKey(c.get("tenant").store, from)
 
   return UPLOAD_NAME.test(name) ? `replays/${name}` : null
 }
@@ -732,10 +956,7 @@ function uploadKey(c: Context<App>) {
  * -trim-2. A trim of a trim takes the original's next number, so names
  * never stack up. Numbers already used in any folder are skipped, so a kept
  * or trashed trim doesn't share its number with a new one. */
-async function trimKey(
-  bucket: R2Bucket,
-  from: { key: string; folder: Folder }
-) {
+async function trimKey(store: Store, from: { key: string; folder: Folder }) {
   const folder = from.folder === "trash" ? "replays" : from.folder
 
   const path = from.key
@@ -746,61 +967,113 @@ async function trimKey(
     const file = `${path}-trim-${n}.mp4`
 
     const taken = await Promise.all(
-      FOLDERS.map((f) => bucket.head(`${f}/${file}`))
+      FOLDERS.map((f) => store.head(`${f}/${file}`))
     )
 
     if (!taken.some(Boolean)) return `${folder}/${file}`
   }
 }
 
-app.get("/api/upload/check", (c) => c.json({ ok: true }))
+/* Lets the app show that OBS is connected, right after Test Upload. */
+function obsCheckedIn(c: Context<App>) {
+  if (c.get("uploader") === "obs")
+    c.executionCtx.waitUntil(
+      c
+        .get("tenant")
+        .meta.markObsSeen()
+        .catch(() => {})
+    )
+}
 
+app.get("/api/upload/check", (c) => {
+  obsCheckedIn(c)
+
+  return c.json({ ok: true })
+})
+
+/* Reserves the key before uploading, so two saves of the same second get
+ * two names instead of one overwriting the other. */
 app.post("/api/upload/start", async (c) => {
   const wanted = await uploadKey(c)
 
   if (!wanted) return c.json({ error: "Bad clip name" }, 400)
-  const key = await uniqueKey(c.env.BUCKET, wanted)
+  const t = c.get("tenant")
+  const taken = new Set<string>()
 
-  const upload = await c.env.BUCKET.createMultipartUpload(key, {
-    httpMetadata: { contentType: "video/mp4" },
-  })
+  for (let tries = 0; tries < 5; tries++) {
+    const key = await uniqueKey(t.store, wanted, taken)
+    const uploadId = await t.store.createUpload(key)
 
-  return c.json({ key, uploadId: upload.uploadId })
+    if (await t.meta.startUpload(uploadId, key))
+      return c.json({ key, uploadId })
+    await t.store.abortUpload(key, uploadId)
+    taken.add(key)
+  }
+
+  return c.json({ error: "Could not find a free name for this clip" }, 409)
 })
 
 app.put("/api/upload/part", async (c) => {
-  const upload = uploadTarget(c)
+  const target = await uploadTarget(c)
   const part = Number(c.req.query("part"))
+  const length = Number(c.req.header("content-length"))
   const body = c.req.raw.body
 
-  if (!upload || !body || !Number.isInteger(part) || part < 1 || part > 10_000)
+  if (!target || !body || !Number.isInteger(part) || part < 1 || part > 10_000)
     return c.json({ error: "Bad upload" }, 400)
 
-  const uploaded = await upload.uploadPart(part, body)
+  if (!(Number.isInteger(length) && length > 0 && length <= MAX_PART))
+    return c.json({ error: "Send each part with its Content-Length" }, 411)
 
-  return c.json({ etag: uploaded.etag })
+  const etag = await target.t.store.uploadPart(
+    target.key,
+    target.uploadId,
+    part,
+    body,
+    length
+  )
+
+  return c.json({ etag })
 })
 
 app.post("/api/upload/complete", async (c) => {
-  const upload = uploadTarget(c)
+  const [target, body] = await Promise.all([
+    uploadTarget(c),
+    c.req
+      .json<{ parts?: { partNumber: number; etag: string }[] }>()
+      .catch(() => null),
+  ])
 
-  const body = await c.req
-    .json<{ parts?: R2UploadedPart[] }>()
-    .catch(() => null)
-
-  if (!upload || !body?.parts?.length)
+  if (!target || !body?.parts?.length)
     return c.json({ error: "Bad upload" }, 400)
-  const object = await upload.complete(body.parts)
 
-  return c.json({ key: object.key })
+  const done = await target.t.store.completeUpload(
+    target.key,
+    target.uploadId,
+    body.parts
+  )
+
+  /* Something took the name meanwhile; it's never overwritten. */
+  if (!done) {
+    await target.t.store.abortUpload(target.key, target.uploadId)
+    await target.t.meta.endUpload(target.uploadId)
+
+    return c.json({ error: "A clip with this name appeared. Save again." }, 409)
+  }
+
+  await target.t.meta.endUpload(target.uploadId)
+  obsCheckedIn(c)
+
+  return c.json({ key: target.key })
 })
 
 /* Throws away the parts of an upload that failed. */
 app.post("/api/upload/abort", async (c) => {
-  const upload = uploadTarget(c)
+  const target = await uploadTarget(c)
 
-  if (!upload) return c.json({ error: "Bad upload" }, 400)
-  await upload.abort()
+  if (!target) return c.json({ error: "Bad upload" }, 400)
+  await target.t.store.abortUpload(target.key, target.uploadId)
+  await target.t.meta.endUpload(target.uploadId)
 
   return c.json({ ok: true })
 })
@@ -808,7 +1081,10 @@ app.post("/api/upload/abort", async (c) => {
 /* ---- OBS setup code ---- */
 
 app.get("/api/setup", async (c) => {
-  const token = await uploadToken(c.env)
+  let token: string | null
+
+  if (isHosted(c.env)) token = await currentObsToken(c.env, c.get("tenant").id)
+  else token = await uploadToken(c.env)
 
   if (!token)
     return c.json(
@@ -817,43 +1093,29 @@ app.get("/api/setup", async (c) => {
       },
       500
     )
-  const config = { a: new URL(c.req.url).origin, t: token }
 
-  return c.json({ code: "r2obs2:" + btoa(JSON.stringify(config)) })
+  return c.json({ code: setupCode(new URL(c.req.url).origin, token) }, 200, {
+    "cache-control": "no-store",
+  })
 })
 
 /* ---- Settings ---- */
 
-type Settings = { replaysDays: number | null; trashDays: number }
-
-const DEFAULT_SETTINGS: Settings = { replaysDays: 30, trashDays: 7 }
-const REPLAY_DAYS = [7, 14, 30, 60, 90, null]
-const TRASH_DAYS = [1, 3, 7, 14, 30]
-
-async function readSettings(bucket: R2Bucket): Promise<Settings> {
-  const stored = await bucket.get("config/settings.json")
-
-  return stored
-    ? { ...DEFAULT_SETTINGS, ...(await stored.json<Partial<Settings>>()) }
-    : DEFAULT_SETTINGS
-}
-
 app.get("/api/settings", async (c) => {
-  const [settings, seen] = await Promise.all([
-    readSettings(c.env.BUCKET),
-    c.env.BUCKET.head("config/obs-seen"),
+  const t = c.get("tenant")
+
+  const [settings, obsSeen] = await Promise.all([
+    t.meta.settings(),
+    t.meta.obsSeen(),
   ])
 
-  return c.json(
-    { ...settings, obsSeen: seen?.uploaded.toISOString() ?? null },
-    200,
-    { "cache-control": "no-store" }
-  )
+  return c.json({ ...settings, obsSeen }, 200, { "cache-control": "no-store" })
 })
 
 app.put("/api/settings", async (c) => {
+  const t = c.get("tenant")
   const body = await c.req.json<Partial<Settings>>().catch(() => null)
-  const next = { ...(await readSettings(c.env.BUCKET)), ...body }
+  const next = { ...(await t.meta.settings()), ...body }
 
   if (
     !REPLAY_DAYS.includes(next.replaysDays) ||
@@ -866,50 +1128,99 @@ app.put("/api/settings", async (c) => {
     trashDays: next.trashDays,
   }
 
-  await c.env.BUCKET.put("config/settings.json", JSON.stringify(settings))
+  await t.meta.saveSettings(settings)
 
   return c.json(settings)
 })
 
+hostedRoutes(app)
+
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404))
 
-/* JSON errors, so OBS and the app can show what went wrong. */
-app.onError((err, c) => c.json({ error: err.message }, 500))
+/* JSON errors, so OBS and the app can show what went wrong. A bucket key
+ * that stopped working (deleted, or the bucket is gone) says so. */
+app.onError((err, c) => {
+  if (err instanceof ClipChanged) return c.json({ error: err.message }, 409)
+
+  if (err instanceof StorageError && [401, 403].includes(err.status))
+    return c.json(
+      {
+        error:
+          "Your bucket's key stopped working. Disconnect storage in Settings and connect it again.",
+        storage: "broken",
+      },
+      502
+    )
+
+  if (!(err instanceof StorageError)) console.error(err)
+
+  return c.json({ error: err.message }, 500)
+})
 
 /* ---- Daily cleanup ----
- * Clears new clips and the trash after the days set in Settings, so the
- * bucket needs no lifecycle rules. Kept clips stay. */
+ * Clears new clips and the trash after the days set in Settings. Kept clips
+ * stay. The hosted app does this for every connected bucket. */
 
-async function cleanup(bucket: R2Bucket) {
+/* At most this many clips per folder per run, so a huge bucket is cleared
+ * over several runs. Keys start with the day, so the oldest come first. */
+const CLEANUP_BATCH = 2000
+
+/* Clears old clips. Returns "more" when there's more to clear. */
+async function cleanup(t: Tenant) {
   const now = Date.now()
-  const settings = await readSettings(bucket)
+  const settings = await t.meta.settings()
+
+  if (settings.paused) return "done"
 
   const maxAge = [
     ["replays", settings.replaysDays],
     ["trash", settings.trashDays],
   ] as const
 
-  const old = await Promise.all(
-    maxAge.map(async ([folder, days]) =>
-      days === null
-        ? []
-        : (await listAll(bucket, `${folder}/`)).flatMap((object) =>
-            now - object.uploaded.getTime() > days * 86_400_000
-              ? [object.key, `thumbs/${object.key}.jpg`]
-              : []
-          )
-    )
+  const found = await Promise.all(
+    maxAge.map(async ([folder, days]) => {
+      if (days === null) return { keys: [], more: false }
+      const old = (o: Obj) => now - o.uploaded.getTime() > days * 86_400_000
+      const objects = await t.store.list(`${folder}/`, CLEANUP_BATCH)
+
+      return {
+        keys: objects.filter((o) => clipKey(o.key) && old(o)).map((o) => o.key),
+        more: objects.length === CLEANUP_BATCH && old(objects.at(-1)!),
+      }
+    })
   )
 
-  const keys = old.flat()
-  const batches = []
+  const keys = found.flatMap((f) => f.keys)
 
-  for (let i = 0; i < keys.length; i += 1000)
-    batches.push(keys.slice(i, i + 1000))
-  await Promise.all(batches.map((batch) => bucket.delete(batch)))
+  if (keys.length) await t.meta.forget(await deleteClips(t.store, keys))
+
+  return found.some((f) => f.more) ? "more" : "done"
+}
+
+/* The hosted app cleans a few buckets per run, the ones waiting longest,
+ * so one run never has more work than a Worker may do. A bucket that fails
+ * waits longer each time before it's tried again. */
+const CLEANUPS_PER_RUN = 10
+
+async function cleanupAll(env: Env) {
+  if (!isHosted(env)) return void (await cleanup(selfTenant(env)))
+
+  await Promise.all(
+    (await dueTenants(env, CLEANUPS_PER_RUN)).map(async (id) => {
+      try {
+        const entry = await loadTenant(env, id)
+
+        await cleanupDone(env, id, entry ? await cleanup(entry.tenant) : "done")
+      } catch (err) {
+        console.error("cleanup failed for one bucket", id, err)
+        await cleanupDone(env, id, "failed").catch(() => {})
+      }
+    })
+  )
+  await rewrapStale(env, 25)
 }
 
 export default {
   fetch: app.fetch,
-  scheduled: (_event, env, ctx) => ctx.waitUntil(cleanup(env.BUCKET)),
+  scheduled: (_event, env, ctx) => ctx.waitUntil(cleanupAll(env)),
 } satisfies ExportedHandler<Env>

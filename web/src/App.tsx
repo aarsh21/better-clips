@@ -10,8 +10,10 @@ import {
   TrashIcon,
 } from "@phosphor-icons/react"
 import { cn } from "cn"
+import { toast } from "sonner"
 
 import { ClipGrid } from "@/components/clip-grid"
+import { ConnectStorage } from "@/components/connect-storage"
 import type { SettingsTab } from "@/components/settings-dialog"
 import { ObsConnect } from "@/components/setup-steps"
 import { SignIn } from "@/components/sign-in"
@@ -19,7 +21,13 @@ import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatBytes, SignInError, type Clip, type Settings } from "@/lib/api"
+import {
+  formatBytes,
+  NoStorageError,
+  SignInError,
+  type Clip,
+  type Settings,
+} from "@/lib/api"
 import { useClips, useNewClipToasts, useThumbnailWorker } from "@/lib/clips"
 import { retentionText, useSettings } from "@/lib/settings"
 import {
@@ -105,6 +113,26 @@ function usePreload() {
   }, [])
 }
 
+/* The hosted app's sign-in and storage setup come back to /?auth_error=…
+ * or /?connected=1. Show it once and tidy the address bar. */
+function useAuthFlash() {
+  React.useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const error = params.get("auth_error")
+    const connected = params.has("connected")
+
+    if (error) toast.error(error, { id: "auth" })
+
+    if (connected)
+      toast.success("Storage connected", {
+        id: "auth",
+        description: "Now connect OBS with the command below.",
+      })
+
+    if (error || connected) history.replaceState(null, "", location.pathname)
+  }, [])
+}
+
 export default function App() {
   const { data: clips, isPending, error } = useClips()
   const [view, setView] = React.useState<View>("all")
@@ -124,8 +152,11 @@ export default function App() {
   useNewClipToasts(clips, openClip)
   useGlobalKeys(!clip && !settingsOpen, openSearch, setView)
   usePreload()
+  useAuthFlash()
 
-  if (error instanceof SignInError) return <SignIn setUp={error.setUp} />
+  if (error instanceof SignInError) return <SignIn kind={error.kind} />
+
+  if (error instanceof NoStorageError) return <ConnectStorage />
 
   const index = clip ? visible.findIndex((c) => c.key === clip.key) : -1
 

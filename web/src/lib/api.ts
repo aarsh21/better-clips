@@ -78,6 +78,8 @@ export type Settings = {
   trashDays: number
   /** When OBS last checked in, or null if it never has. */
   obsSeen: string | null
+  /** Hosted, own bucket: cleanup waits until you confirm the lengths. */
+  paused?: boolean
 }
 
 /* Days left before the daily cleanup removes a clip, or null if it stays. */
@@ -125,24 +127,101 @@ export const downloadUrl = (key: string) => `/api/media/${enc(key)}?download`
 export const thumbUrl = (clip: ApiClip) =>
   `/api/thumb/${enc(clip.key)}?v=${clip.thumb?.v ?? ""}`
 
-/* Thrown when the app needs a password ("password") or has none set ("none"). */
-export class SignInError extends Error {
-  readonly setUp: boolean
+/* Thrown when you need to sign in: with the app's password ("password"),
+ * with Cloudflare on the hosted app ("cloudflare"), or when a self-hosted
+ * app has no password set yet ("none"). */
+export type SignInKind = "password" | "cloudflare" | "none"
 
-  constructor(setUp: boolean) {
+export class SignInError extends Error {
+  readonly kind: SignInKind
+
+  constructor(kind: SignInKind) {
     super("Sign in to see your clips")
-    this.setUp = setUp
+    this.kind = kind
+  }
+}
+
+/* Thrown on the hosted app until you connect a bucket. */
+export class NoStorageError extends Error {
+  constructor() {
+    super("Connect your storage first")
+  }
+}
+
+/* Who is signed in. A self-hosted app has no accounts. */
+export type Me =
+  | { hosted: false }
+  | {
+      hosted?: true
+      email: string
+      storage: { id: string; bucket: string; auto: boolean } | null
+    }
+
+/* The account this tab started with (hosted app). If a request answers for
+ * another one, someone signed in or out in another tab: start over, so
+ * nothing cached for the old account is shown or used. Every change this
+ * tab makes names the account, and the server refuses it for another. */
+let account: string | null = null
+
+const tabs =
+  typeof BroadcastChannel === "undefined"
+    ? null
+    : new BroadcastChannel("clips-account")
+
+/* Another tab signed in, out, or changed storage: start over now. */
+if (tabs)
+  tabs.onmessage = (e) => {
+    if (e.origin !== location.origin) return
+
+    if (account !== null && e.data !== account) location.reload()
+  }
+
+/* Tells the other tabs this one's account changed. */
+export function announceAccountChange() {
+  tabs?.postMessage(null)
+}
+
+function checkAccount(res: Response) {
+  const now = res.headers.get("x-clips-account")
+
+  if (!now) return
+
+  if (account === null) {
+    account = now
+    tabs?.postMessage(now)
+  }
+
+  if (now !== account) {
+    tabs?.postMessage(now)
+    location.reload()
   }
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
+  const method = init?.method ?? "GET"
+  const headers = new Headers(init?.headers)
+
+  if (account && method !== "GET") headers.set("x-clips-account", account)
+  const res = await fetch(url, { ...init, headers })
+
+  checkAccount(res)
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
 
-    if (data.auth === "password" || data.auth === "none")
-      throw new SignInError(data.auth === "password")
+    if (
+      data.auth === "password" ||
+      data.auth === "none" ||
+      data.auth === "cloudflare"
+    )
+      throw new SignInError(data.auth)
+
+    if (data.storage === "none") throw new NoStorageError()
+
+    if (data.account === "changed") {
+      location.reload()
+      throw new Error(data.error)
+    }
 
     /* The Cloudflare Access session expired: reload so Access signs you in
      * again, but only once, in case the app's Access settings are wrong. */
@@ -245,6 +324,22 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }),
+  me: () => request<Me>("/api/me"),
+  connectStorage: (body: {
+    s3Url: string
+    accessKeyId: string
+    secretAccessKey: string
+  }) =>
+    request<{ ok: true }>("/api/storage", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  disconnectStorage: () =>
+    request<{ ok: true }>("/api/storage", { method: "DELETE" }),
+  logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
+  resetObsToken: () =>
+    request<{ code: string }>("/api/obs/token", { method: "POST" }),
   login: (password: string) =>
     request<{ ok: true }>("/api/login", {
       method: "POST",
