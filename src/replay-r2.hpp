@@ -69,7 +69,9 @@ struct VideoTrack {
 	uint32_t width = 0, height = 0;
 	uint32_t fps_num = 0, fps_den = 1;
 	int64_t bitrate_kbps = 0;
-	int color_primaries = 2, color_trc = 2, colorspace = 2, color_range = 0; /* FFmpeg enums */
+	/* ITU-T H.273 codes, as an MP4 colr box takes them; 2 is unspecified.
+	 * color_range is 1 for limited (TV) range and 2 for full range. */
+	int color_primaries = 2, color_trc = 2, colorspace = 2, color_range = 1;
 };
 
 struct AudioTrack {

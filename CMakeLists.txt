@@ -34,21 +34,8 @@ if(ENABLE_QT)
   )
 endif()
 
-# FFmpeg muxes clips into MP4 in memory; libcurl uploads them. On Windows and
-# macOS both come from the obs-deps package the build scripts download.
-if(OS_LINUX)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE PkgConfig::FFMPEG)
-else()
-  find_path(FFMPEG_INCLUDE_DIR libavformat/avformat.h REQUIRED)
-  find_library(AVFORMAT_LIBRARY avformat REQUIRED)
-  find_library(AVCODEC_LIBRARY avcodec REQUIRED)
-  find_library(AVUTIL_LIBRARY avutil REQUIRED)
-  target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIR})
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${AVFORMAT_LIBRARY} ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY})
-endif()
-
+# libcurl uploads clips. The plugin writes MP4s itself (src/memory-mux.cpp)
+# and doesn't link FFmpeg, whose version changes between OBS releases.
 find_package(CURL REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CURL::libcurl)
 

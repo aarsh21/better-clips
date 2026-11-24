@@ -11,10 +11,6 @@
 
 #include <util/platform.h>
 
-extern "C" {
-#include <libavutil/pixfmt.h>
-}
-
 #include <algorithm>
 #include <cctype>
 #include <atomic>
@@ -119,36 +115,39 @@ void fill_video_track(VideoTrack &track, obs_encoder_t *encoder)
 	track.fps_num = info->fps_num;
 	track.fps_den = info->fps_den;
 
-	/* Same color tags OBS writes into its own recordings. */
+	/* Same color tags OBS writes into its own recordings, as H.273 codes:
+	 * primaries 1 BT.709, 6 SMPTE 170M, 9 BT.2020; transfer 1 BT.709,
+	 * 6 SMPTE 170M, 13 sRGB, 16 PQ, 18 HLG; matrix 1 BT.709, 6 SMPTE 170M,
+	 * 9 BT.2020 non-constant. */
 	switch (info->colorspace) {
 	case VIDEO_CS_601:
-		track.color_primaries = AVCOL_PRI_SMPTE170M;
-		track.color_trc = AVCOL_TRC_SMPTE170M;
-		track.colorspace = AVCOL_SPC_SMPTE170M;
+		track.color_primaries = 6;
+		track.color_trc = 6;
+		track.colorspace = 6;
 		break;
 	case VIDEO_CS_DEFAULT:
 	case VIDEO_CS_709:
-		track.color_primaries = AVCOL_PRI_BT709;
-		track.color_trc = AVCOL_TRC_BT709;
-		track.colorspace = AVCOL_SPC_BT709;
+		track.color_primaries = 1;
+		track.color_trc = 1;
+		track.colorspace = 1;
 		break;
 	case VIDEO_CS_SRGB:
-		track.color_primaries = AVCOL_PRI_BT709;
-		track.color_trc = AVCOL_TRC_IEC61966_2_1;
-		track.colorspace = AVCOL_SPC_BT709;
+		track.color_primaries = 1;
+		track.color_trc = 13;
+		track.colorspace = 1;
 		break;
 	case VIDEO_CS_2100_PQ:
-		track.color_primaries = AVCOL_PRI_BT2020;
-		track.color_trc = AVCOL_TRC_SMPTE2084;
-		track.colorspace = AVCOL_SPC_BT2020_NCL;
+		track.color_primaries = 9;
+		track.color_trc = 16;
+		track.colorspace = 9;
 		break;
 	case VIDEO_CS_2100_HLG:
-		track.color_primaries = AVCOL_PRI_BT2020;
-		track.color_trc = AVCOL_TRC_ARIB_STD_B67;
-		track.colorspace = AVCOL_SPC_BT2020_NCL;
+		track.color_primaries = 9;
+		track.color_trc = 18;
+		track.colorspace = 9;
 		break;
 	}
-	track.color_range = info->range == VIDEO_RANGE_FULL ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+	track.color_range = info->range == VIDEO_RANGE_FULL ? 2 : 1;
 }
 
 void fill_audio_track(AudioTrack &track, obs_encoder_t *encoder, size_t idx)

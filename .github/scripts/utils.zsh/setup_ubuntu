@@ -42,9 +42,6 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
     build-essential \
     libgles2-mesa-dev \
     libsimde-dev \
-    libavcodec-dev \
-    libavformat-dev \
-    libavutil-dev \
     libcurl4-openssl-dev \
     obs-studio
 

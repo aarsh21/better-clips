@@ -82,13 +82,13 @@ ID** and **Secret Access Key** in the settings, and leave **Clips app** empty.
 
 This project is based on
 [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate). It
-needs libobs, obs-frontend-api, Qt 6, FFmpeg (libavformat, libavcodec,
-libavutil), and libcurl.
+needs libobs, obs-frontend-api, Qt 6, and libcurl. It writes MP4s itself, so
+it doesn't link FFmpeg and one build works across OBS versions.
 
 Linux (Debian/Ubuntu):
 
 ```sh
-sudo apt install obs-studio libobs-dev qt6-base-dev libavformat-dev libavcodec-dev libavutil-dev libcurl4-openssl-dev cmake ninja-build pkg-config
+sudo apt install obs-studio libobs-dev qt6-base-dev libcurl4-openssl-dev cmake ninja-build pkg-config
 cmake --preset ubuntu-x86_64
 cmake --build build_x86_64
 ```
