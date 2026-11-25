@@ -30,6 +30,7 @@ const callback = (c: Context) =>
 const cookie = "clips_youtube_oauth"
 const path = "/api/youtube"
 const day = 86400000
+const editWindowMs = 5000 // videos.list can lag a successful videos.update.
 
 type Account = {
   user_id: string
@@ -245,6 +246,8 @@ async function sync(env: HostedEnv, a: Account, token: string, ids: string[]) {
   for (let i = 0; i < ids.length; i += 50) batches.push(ids.slice(i, i + 50))
   await Promise.all(
     batches.map(async (batch) => {
+      // Judge freshness when the read starts, even if a PATCH lands mid-request.
+      const cutoff = Date.now() - editWindowMs
       const found = await videos(env, token, batch)
       await env.DB!.batch(
         batch.map((id) => {
@@ -255,17 +258,27 @@ async function sync(env: HostedEnv, a: Account, token: string, ids: string[]) {
           if (!v)
             return env
               .DB!.prepare(
-                "DELETE FROM youtube_clips WHERE user_id=? AND videoId=? AND (status!='processing' OR uploaded<?)"
+                "DELETE FROM youtube_clips WHERE user_id=? AND videoId=? AND editedAt<=? AND (status!='processing' OR uploaded<?)"
               )
-              .bind(a.user_id, id, new Date(Date.now() - 60000).toISOString())
+              .bind(
+                a.user_id,
+                id,
+                cutoff,
+                new Date(Date.now() - 60000).toISOString()
+              )
           const thumbs = v.snippet.thumbnails
           const status = v.status.uploadStatus
 
           return env
             .DB!.prepare(
-              "UPDATE youtube_clips SET title=?,description=?,privacy=?,durationSeconds=?,thumbnail=?,status=? WHERE user_id=? AND videoId=?"
+              `UPDATE youtube_clips SET
+                title=CASE WHEN editedAt<=?1 THEN ?2 ELSE title END,
+                description=CASE WHEN editedAt<=?1 THEN ?3 ELSE description END,
+                privacy=CASE WHEN editedAt<=?1 THEN ?4 ELSE privacy END,
+                durationSeconds=?5,thumbnail=?6,status=?7 WHERE user_id=?8 AND videoId=?9`
             )
             .bind(
+              cutoff,
               v.snippet.title,
               v.snippet.description,
               v.status.privacyStatus,
@@ -809,10 +822,17 @@ export function youtubeRoutes(app: Hono<any>) {
 
       const clip = await db
         .prepare(
-          "SELECT videoId,durationSeconds FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
+          "SELECT videoId,durationSeconds,title,description,privacy,editedAt FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
         )
         .bind(id, user)
-        .first<{ videoId: string; durationSeconds: number | null }>()
+        .first<{
+          videoId: string
+          durationSeconds: number | null
+          title: string
+          description: string
+          privacy: string
+          editedAt: number
+        }>()
 
       if (!clip) return c.json({ error: "Clip not found" }, 404)
 
@@ -860,6 +880,7 @@ export function youtubeRoutes(app: Hono<any>) {
           return c.json({ error: "Invalid clip details" }, 400)
 
         const token = await access(env, a),
+          recent = clip.editedAt > Date.now() - editWindowMs,
           [v] = await videos(env, token, [clip.videoId])
 
         if (!v || v.snippet.channelId !== a.channel_id)
@@ -872,10 +893,16 @@ export function youtubeRoutes(app: Hono<any>) {
 
         const parts: UpdateParts = {}
 
+        // A partial edit must not send a stale sibling field back to YouTube.
+        const nextTitle = title ?? (recent ? clip.title : v.snippet.title)
+
+        const nextDescription =
+          description ?? (recent ? clip.description : v.snippet.description)
+
         if (title !== undefined || description !== undefined)
           parts.snippet = {
-            title: title ?? v.snippet.title,
-            description: description ?? v.snippet.description,
+            title: nextTitle,
+            description: nextDescription,
             categoryId: v.snippet.categoryId,
             tags: v.snippet.tags,
             defaultLanguage: v.snippet.defaultLanguage,
@@ -914,12 +941,13 @@ export function youtubeRoutes(app: Hono<any>) {
         )
         await db
           .prepare(
-            "UPDATE youtube_clips SET title=?,description=?,privacy=? WHERE id=? AND user_id=?"
+            "UPDATE youtube_clips SET title=?,description=?,privacy=?,editedAt=? WHERE id=? AND user_id=?"
           )
           .bind(
-            title ?? v.snippet.title,
-            description ?? v.snippet.description,
-            privacy ?? v.status.privacyStatus,
+            nextTitle,
+            nextDescription,
+            privacy ?? (recent ? clip.privacy : v.status.privacyStatus),
+            Date.now(),
             id,
             user
           )

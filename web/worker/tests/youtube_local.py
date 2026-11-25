@@ -7,6 +7,7 @@ Pass --serve instead for an interactive fake (one disposable test channel).
 """
 
 import base64
+import copy
 import hashlib
 import http.client
 import json
@@ -18,6 +19,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,6 +35,7 @@ grants = set()
 quota = False
 revoked = False
 reads = []
+stale_reads = {}
 processing_result = "processed"
 
 
@@ -171,15 +174,19 @@ class Google(BaseHTTPRequestHandler):
                 reads.append(q["id"])
                 if reads.count(q["id"]) >= 2 and q["id"] in videos:
                     videos[q["id"]]["status"]["uploadStatus"] = processing_result
-                return self.reply(
-                    200,
-                    {"items": [videos[i] for i in q["id"].split(",") if i in videos]},
-                )
+                items = []
+                for i in q["id"].split(","):
+                    if i in videos:
+                        items.append(
+                            stale_reads[i].pop() if stale_reads.get(i) else videos[i]
+                        )
+                return self.reply(200, {"items": items})
             assert PREFIX + "force-ssl" in access
             if self.command == "DELETE":
                 del videos[q["id"]]
                 return self.reply(204)
             v = json.loads(body)
+            stale_reads[v["id"]] = [copy.deepcopy(videos[v["id"]])] * 2
             for part in q["part"].split(","):
                 videos[v["id"]][part].update(v[part])
             return self.reply(200, videos[v["id"]])
@@ -351,12 +358,29 @@ def exercise():
         videos[vid]["snippet"]["title"] == "New title"
         and videos[vid]["status"]["privacyStatus"] == "private"
     )
+
+    def metadata():
+        row = call("/api/clips")["youtube"][0]
+        return row["title"], row["description"], row["privacy"]
+
+    actual = metadata()
+    assert actual == ("New title", "New description", "private"), actual
+    call(endpoint, "PATCH", {"description": "Second edit"})
+    assert videos[vid]["snippet"]["title"] == "New title"
+    for _ in range(2):
+        actual = metadata()
+        assert actual == ("New title", "Second edit", "private"), actual
+    assert not stale_reads[vid]
+    print("Repeated stale reads and a description-only follow-up PATCH: OK")
     call(endpoint + "/cut", "PUT", {"start": 2.5, "end": 7}, 400)
     call(endpoint + "/cut", "PUT", {"start": 2, "end": 7})
     assert call("/api/clips")["youtube"][0]["cut"] == {"start": 2, "end": 7}
     call(endpoint + "/cut", "PUT", None)
     videos[vid]["snippet"]["title"] = "Renamed on YouTube"
-    assert call("/api/clips")["youtube"][0]["title"] == "Renamed on YouTube"
+    videos[vid]["status"]["privacyStatus"] = "unlisted"
+    time.sleep(6)  # Past the Worker's five-second edit window.
+    assert metadata() == ("Renamed on YouTube", "Second edit", "unlisted")
+    print("Studio rename and visibility after the edit window: OK")
     del videos[vid]
     assert call("/api/clips")["youtube"] == []
     processing_result = "failed"
