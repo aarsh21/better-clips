@@ -2,7 +2,6 @@
 
 #include <QCoreApplication>
 #include <QDesktopServices>
-#include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -12,8 +11,11 @@
 #include <QTimer>
 #include <QUrlQuery>
 #include <QUuid>
+#include <memory>
 
 namespace {
+std::unique_ptr<QNetworkAccessManager> disconnect_net;
+
 QNetworkRequest app_request(QUrl url)
 {
 	QNetworkRequest req(url);
@@ -105,24 +107,34 @@ void youtube_connect_async(const std::string &app_url, std::function<void(bool, 
 	}
 }
 
-void youtube_disconnect()
+void youtube_disconnect(std::function<void(bool)> done)
 {
 	auto yt = get_youtube_settings();
-	QNetworkAccessManager net;
+	if (!disconnect_net)
+		disconnect_net = std::make_unique<QNetworkAccessManager>();
 	auto req = app_request(QUrl(QString::fromStdString(yt.app_url)).resolved(QUrl("/api/youtube/disconnect")));
 	req.setRawHeader("Authorization", "Bearer " + QByteArray::fromStdString(yt.upload_token));
-	auto *r = net.post(req, "{}");
-	QEventLoop loop;
-	QObject::connect(r, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-	if (!r->isFinished())
-		loop.exec(QEventLoop::ExcludeUserInputEvents);
-	const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-	if (status != 401 && (status / 100 != 2 || r->error() != QNetworkReply::NoError)) {
-		notify_user("Could not disconnect YouTube. Try again.");
-		return;
-	}
-	yt.upload_token.clear();
-	yt.channel_title.clear();
-	yt.channel_id.clear();
-	set_youtube_settings(yt);
+	auto *r = disconnect_net->post(req, "{}");
+	QObject::connect(r, &QNetworkReply::finished, r, [r, token = yt.upload_token, done = std::move(done)] {
+		const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		bool ok = status == 401 || (status / 100 == 2 && r->error() == QNetworkReply::NoError);
+		r->deleteLater();
+		if (ok) {
+			auto current = get_youtube_settings();
+			if (current.upload_token == token) {
+				current.upload_token.clear();
+				current.channel_id.clear();
+				current.channel_title.clear();
+				set_youtube_settings(current);
+			}
+		} else {
+			notify_user("Could not disconnect YouTube. Try again.");
+		}
+		done(ok);
+	});
+}
+
+void stop_youtube_disconnect()
+{
+	disconnect_net.reset();
 }

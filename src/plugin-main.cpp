@@ -296,6 +296,7 @@ void on_frontend_event(enum obs_frontend_event event, void *)
 		update_save_dock();
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:
+		stop_youtube_disconnect();
 		stop_replay_output();
 		dock_placed = true; /* OBS saves its layout, with the dock, as it exits */
 		save_config();
@@ -457,6 +458,7 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
+	stop_youtube_disconnect();
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
 	obs_frontend_remove_save_callback(on_frontend_save, nullptr);
 	stop_replay_output();

@@ -29,8 +29,10 @@ void set_youtube_settings(const YouTubeSettings &settings);
  * port. done runs on the UI thread with a user-facing error when !ok. */
 void youtube_connect_async(const std::string &app_url, std::function<void(bool ok, const std::string &error)> done);
 
-/* Revokes access through the app and clears the channel and token. */
-void youtube_disconnect();
+/* Revokes access through the app. done runs on the UI thread after the settings update,
+ * unless OBS shuts down first. */
+void youtube_disconnect(std::function<void(bool ok)> done);
+void stop_youtube_disconnect();
 
 /* {game}, {date} (YYYY-MM-DD) and {time} (HH:MM), at most 100 characters,
  * without < or >. */

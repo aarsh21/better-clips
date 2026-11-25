@@ -103,6 +103,28 @@ void align_labels(std::initializer_list<QFormLayout *> forms)
 		label->setMinimumWidth(width);
 }
 
+/* Settings can be closed and reopened while the server is revoking access. */
+class DisconnectState : public QObject {
+	Q_OBJECT
+public:
+	bool pending = false;
+	void start()
+	{
+		if (pending)
+			return;
+		pending = true;
+		emit started();
+		youtube_disconnect([this](bool ok) {
+			pending = false;
+			emit finished(ok);
+		});
+	}
+
+signals:
+	void started();
+	void finished(bool ok);
+};
+
 /* The YouTube page of the settings: the channel, and the upload defaults
  * YouTube asks that people control. */
 class YouTubePage : public QWidget {
@@ -117,7 +139,23 @@ public:
 		sign_in = new QPushButton("Sign in with YouTube");
 		disconnect_button = new QPushButton("Disconnect");
 		connect(sign_in, &QPushButton::clicked, this, [this]() { start_sign_in(); });
-		connect(disconnect_button, &QPushButton::clicked, this, [this]() { disconnect_channel(); });
+		static DisconnectState disconnect;
+		connect(disconnect_button, &QPushButton::clicked, &disconnect, &DisconnectState::start);
+		disconnect_button->setDisabled(disconnect.pending);
+		connect(&disconnect, &DisconnectState::started, this, [this] { disconnect_button->setEnabled(false); });
+		connect(&disconnect, &DisconnectState::finished, this, [this](bool ok) {
+			disconnect_button->setEnabled(true);
+			auto current = get_youtube_settings();
+			show_account(current);
+			if (!ok)
+				show_status("Could not disconnect YouTube. Try again.", true);
+			else if (current.upload_token.empty())
+				show_status(
+					"Disconnected. The app no longer has access to your channel, and its YouTube "
+					"clips are gone from your library. Your videos stay on YouTube.");
+			else
+				show_status("");
+		});
 		auto *account = new QHBoxLayout();
 		account->addWidget(channel, 1);
 		account->addWidget(sign_in);
@@ -263,16 +301,6 @@ private:
 					     : QString("Couldn't sign in: %1").arg(QString::fromStdString(error)),
 					  !ok);
 		});
-	}
-
-	void disconnect_channel()
-	{
-		disconnect_button->setEnabled(false);
-		youtube_disconnect();
-		disconnect_button->setEnabled(true);
-		show_account(get_youtube_settings());
-		show_status("Disconnected. The app no longer has access to your channel, and its YouTube "
-			    "clips are gone from your library. Your videos stay on YouTube.");
 	}
 };
 
@@ -714,3 +742,5 @@ bool youtube_review(YouTubeUpload &upload, const std::string &channel_title)
 		upload = review->fields;
 	return review->upload;
 }
+
+#include "settings-dialog.moc"
