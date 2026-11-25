@@ -289,7 +289,7 @@ Clip *snapshot(ReplayR2 *r)
 
 const char *get_name(void *)
 {
-	return "Replay to R2 (in-memory replay buffer)";
+	return "Better Clips (in-memory replay buffer)";
 }
 
 void *create(obs_data_t *, obs_output_t *output)

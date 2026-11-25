@@ -32,6 +32,13 @@ the web app ships from `main`.
   bucket clips: play, rename, change visibility, cut and delete them. Google
   asks once for every permission. New **FAQ** and **Privacy** pages.
 
+## [0.3.0] - 2026-11-25
+
+- Replay to R2 is now **Better Clips**. The installer removes the old plugin,
+  but leaves its settings intact. Better Clips copies them on first launch,
+  including your destination and sign-ins. Your hotkey, dock layout and
+  existing setup codes still work.
+
 ## [0.2.0] - 2026-11-25
 
 ### Plugin
@@ -116,11 +123,12 @@ the web app ships from `main`.
   clips to Cloudflare R2 without writing them to disk.
 - The clips web app to browse, preview, trim, keep, delete and share clips.
 
-[0.1.7]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.7
-[0.1.6]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.6
-[0.1.5]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.5
-[0.1.4]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.4
-[0.1.3]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.3
-[0.1.2]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.2
-[0.1.1]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.1
-[0.1.0]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.0
+[0.3.0]: https://github.com/aarsh21/better-clips/releases/tag/0.3.0
+[0.1.7]: https://github.com/aarsh21/better-clips/releases/tag/0.1.7
+[0.1.6]: https://github.com/aarsh21/better-clips/releases/tag/0.1.6
+[0.1.5]: https://github.com/aarsh21/better-clips/releases/tag/0.1.5
+[0.1.4]: https://github.com/aarsh21/better-clips/releases/tag/0.1.4
+[0.1.3]: https://github.com/aarsh21/better-clips/releases/tag/0.1.3
+[0.1.2]: https://github.com/aarsh21/better-clips/releases/tag/0.1.2
+[0.1.1]: https://github.com/aarsh21/better-clips/releases/tag/0.1.1
+[0.1.0]: https://github.com/aarsh21/better-clips/releases/tag/0.1.0

@@ -1,13 +1,14 @@
 #!/bin/sh
-# Installs Replay to R2 for OBS on macOS or Linux and connects it to your
+# Installs Better Clips for OBS on macOS or Linux and connects it to your
 # clips app. Copy the command from your app (Settings > OBS), or run:
 #
-#   curl -fsSL https://raw.githubusercontent.com/aarsh21/obs-replay-r2/main/install.sh | sh -s -- '<setup code>'
+#   curl -fsSL https://raw.githubusercontent.com/aarsh21/better-clips/main/install.sh | sh -s -- '<setup code>'
 #
-# Without a setup code it only installs the plugin. Nothing needs sudo.
+# Without a setup code it only installs the plugin. Only removing an old
+# system-wide install may need sudo.
 set -eu
 
-REPO="aarsh21/obs-replay-r2"
+REPO="aarsh21/better-clips"
 CODE="${1:-${CLIPS_SETUP_CODE:-}}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
@@ -57,10 +58,10 @@ else
 	TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")
 	VERSION=${TAG##*/}
 	case "$OS" in
-	macos) ASSET="obs-replay-r2-$VERSION-macos-universal.pkg" ;;
-	linux) ASSET="obs-replay-r2-$VERSION-x86_64-linux-gnu.deb" ;;
+	macos) ASSET="better-clips-$VERSION-macos-universal.pkg" ;;
+	linux) ASSET="better-clips-$VERSION-x86_64-linux-gnu.deb" ;;
 	esac
-	say "Downloading Replay to R2 $VERSION..."
+	say "Downloading Better Clips $VERSION..."
 	PACKAGE="$TMP/$ASSET"
 	curl -fsSL -o "$PACKAGE" "https://github.com/$REPO/releases/download/$VERSION/$ASSET" ||
 		fail "Could not download $ASSET."
@@ -71,8 +72,9 @@ if [ "$OS" = macos ]; then
 	say "Installing the plugin..."
 	installer -pkg "$PACKAGE" -target CurrentUserHomeDirectory >/dev/null ||
 		fail "The installer failed."
-	PLUGIN="$OBS_CONFIG/plugins/obs-replay-r2.plugin"
+	PLUGIN="$OBS_CONFIG/plugins/better-clips.plugin"
 	[ -d "$PLUGIN" ] || fail "The plugin wasn't installed to $PLUGIN."
+	rm -rf "$OBS_CONFIG/plugins/obs-replay-r2.plugin"
 else
 	# OBS loads plugins from ~/.config/obs-studio/plugins too, so unpack the
 	# .deb there instead of installing it system-wide.
@@ -87,34 +89,43 @@ else
 	else
 		fail "Need dpkg-deb, ar or bsdtar to unpack the plugin."
 	fi
-	SO=$(find "$TMP/deb" -path '*/obs-plugins/obs-replay-r2.so' | head -n 1)
-	LOCALE=$(find "$TMP/deb" -path '*/obs-plugins/obs-replay-r2/locale' -type d | head -n 1)
+	SO=$(find "$TMP/deb" -path '*/obs-plugins/better-clips.so' | head -n 1)
+	LOCALE=$(find "$TMP/deb" -path '*/obs-plugins/better-clips/locale' -type d | head -n 1)
 	[ -n "$SO" ] || fail "The package has no plugin in it."
 
-	PLUGIN="$OBS_CONFIG/plugins/obs-replay-r2"
+	PLUGIN="$OBS_CONFIG/plugins/better-clips"
 	mkdir -p "$PLUGIN/bin/64bit" "$PLUGIN/data"
 	# Copy, then rename, so a crashed copy never leaves half a plugin.
-	cp "$SO" "$PLUGIN/bin/64bit/.obs-replay-r2.so.new"
-	mv -f "$PLUGIN/bin/64bit/.obs-replay-r2.so.new" "$PLUGIN/bin/64bit/obs-replay-r2.so"
+	cp "$SO" "$PLUGIN/bin/64bit/.better-clips.so.new"
+	mv -f "$PLUGIN/bin/64bit/.better-clips.so.new" "$PLUGIN/bin/64bit/better-clips.so"
 	if [ -n "$LOCALE" ]; then
 		rm -rf "$PLUGIN/data/locale"
 		cp -R "$LOCALE" "$PLUGIN/data/locale"
 	fi
 
-	MISSING=$(ldd "$PLUGIN/bin/64bit/obs-replay-r2.so" 2>/dev/null | awk '/not found/ {print $1}' | tr '\n' ' ')
+	MISSING=$(ldd "$PLUGIN/bin/64bit/better-clips.so" 2>/dev/null | awk '/not found/ {print $1}' | tr '\n' ' ')
 	if [ -n "$MISSING" ]; then
 		say "Warning: these libraries are missing, so OBS may not load the plugin: $MISSING"
 	fi
-	for old in /usr/lib/*/obs-plugins/obs-replay-r2.so /usr/lib/obs-plugins/obs-replay-r2.so; do
-		if [ -e "$old" ]; then
-			say "Warning: another copy is installed at $old. Remove it with: sudo apt remove obs-replay-r2"
-		fi
+	rm -rf "$OBS_CONFIG/plugins/obs-replay-r2"
+	as_root() {
+		if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi
+	}
+	if [ "$(dpkg-query -W -f='${db:Status-Status}' obs-replay-r2 2>/dev/null || :)" = installed ]; then
+		say "Removing the old system-wide plugin..."
+		as_root dpkg --remove obs-replay-r2
+	fi
+	for prefix in /usr /usr/local; do
+		for old in "$prefix"/lib/*/obs-plugins/obs-replay-r2.so "$prefix/lib/obs-plugins/obs-replay-r2.so" \
+			"$prefix/share/obs/obs-plugins/obs-replay-r2"; do
+			[ ! -e "$old" ] || as_root rm -rf -- "$old"
+		done
 	done
 fi
 
 if [ -n "$CODE" ]; then
 	# The plugin reads this on OBS's next start, then deletes it.
-	DIR="$OBS_CONFIG/plugin_config/obs-replay-r2"
+	DIR="$OBS_CONFIG/plugin_config/better-clips"
 	mkdir -p "$DIR"
 	(umask 077 && printf '%s' "$CODE" >"$DIR/setup-code.txt")
 fi
@@ -124,7 +135,7 @@ if [ -n "$CODE" ]; then
 	say "When OBS opens, it connects to your clips app and starts the Replay Buffer."
 	say "Press Ctrl+Alt+R to save a replay (change it in Settings > Hotkeys)."
 else
-	say "In OBS, open Tools > Replay to R2 Settings and paste the setup code from your clips app."
+	say "In OBS, open Tools > Better Clips Settings and paste the setup code from your clips app."
 fi
 
 # Open OBS, if this is a desktop session.

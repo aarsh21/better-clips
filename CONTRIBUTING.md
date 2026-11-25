@@ -13,8 +13,8 @@ src/                  the OBS plugin (C++17, libobs, Qt 6, libcurl)
   uploader.cpp          upload queue and retries
   app-upload.cpp        multipart upload through the clips app
   s3-upload.cpp         direct SigV4 upload to an S3-compatible bucket
-  save-dock.cpp         the Replay to R2 dock
-  settings-dialog.cpp   Tools → Replay to R2 Settings
+  save-dock.cpp         the Better Clips dock
+  settings-dialog.cpp   Tools → Better Clips Settings
 web/                  the clips app (Cloudflare Worker + React), see web/README.md
   worker/               API: index.ts (routes), hosted.ts (accounts, OAuth),
                         store.ts (R2 access), meta.ts (shares, settings)
@@ -34,9 +34,9 @@ cmake --preset ubuntu-x86_64
 cmake --build build_x86_64
 ```
 
-Then copy `build_x86_64/obs-replay-r2.so` into
-`~/.config/obs-studio/plugins/obs-replay-r2/bin/64bit/` and the `data/` folder
-into `~/.config/obs-studio/plugins/obs-replay-r2/data/`, and start OBS. On
+Then copy `build_x86_64/better-clips.so` into
+`~/.config/obs-studio/plugins/better-clips/bin/64bit/` and the `data/` folder
+into `~/.config/obs-studio/plugins/better-clips/data/`, and start OBS. On
 Windows and macOS use the `windows-x64` and `macos` presets, or push to your
 fork and download the builds from GitHub Actions.
 

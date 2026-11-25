@@ -1,5 +1,5 @@
 /*
-Replay to R2 for OBS
+Better Clips for OBS
 Keeps an in-memory replay buffer and uploads saved clips straight to
 Cloudflare R2, without writing them to disk.
 
@@ -28,6 +28,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QApplication>
 #include <QClipboard>
+#include <QDir>
+#include <QFileInfo>
 #include <QMainWindow>
 #include <QMetaObject>
 #include <QStatusBar>
@@ -48,6 +50,7 @@ YouTubeSettings youtube;
 obs_hotkey_id save_hotkey = OBS_INVALID_HOTKEY_ID;
 obs_output_t *replay_output = nullptr; /* our in-memory replay buffer */
 bool ui_alive = true;
+bool initialized = false;
 bool just_set_up = false; /* the install script's setup code was applied */
 bool dock_placed = false; /* the dock was put next to Controls once */
 
@@ -57,6 +60,16 @@ std::string config_path()
 	std::string result = path ? path : "";
 	bfree(path);
 	return result;
+}
+
+bool migrate_config()
+{
+	const QFileInfo target(QString::fromStdString(config_path()));
+	const QDir dir = target.dir();
+	const QString legacy = QDir::cleanPath(dir.filePath("../obs-replay-r2/config.json"));
+	if (target.exists() || QFile::exists(target.filePath() + ".bak") || !QFile::exists(legacy))
+		return true;
+	return dir.mkpath(".") && QFile::copy(legacy, target.filePath());
 }
 
 void load_config()
@@ -147,7 +160,7 @@ void start_replay_output()
 		return;
 
 	obs_output_release(replay_output);
-	replay_output = obs_output_create("replay_r2_output", "Replay to R2", nullptr, nullptr);
+	replay_output = obs_output_create("replay_r2_output", "Better Clips", nullptr, nullptr);
 
 	obs_data_t *obs_settings = obs_output_get_settings(obs_replay);
 	int max_time_sec = (int)obs_data_get_int(obs_settings, "max_time_sec");
@@ -250,7 +263,7 @@ void start_obs_replay_buffer()
 		return;
 	obs_output_t *output = obs_frontend_get_replay_buffer_output();
 	if (!output) {
-		notify_user("Replay to R2: turn on the Replay Buffer in Settings > Output");
+		notify_user("Better Clips: turn on the Replay Buffer in Settings > Output");
 		return;
 	}
 	obs_output_release(output);
@@ -330,7 +343,7 @@ bool replay_r2_running()
 void save_replay_to_r2()
 {
 	if (!replay_r2_running()) {
-		notify_user("Replay to R2: start the Replay Buffer first");
+		notify_user("Better Clips: start the Replay Buffer first");
 		return;
 	}
 	R2Config current = get_config();
@@ -338,12 +351,12 @@ void save_replay_to_r2()
 	if (yt.destination == Destination::YouTube &&
 	    (yt.route == YouTubeRoute::Direct ? !youtube_direct_available() || yt.refresh_token.empty()
 					      : yt.app_url.empty() || yt.upload_token.empty())) {
-		notify_user("Sign in with YouTube in Tools > Replay to R2 Settings");
+		notify_user("Sign in with YouTube in Tools > Better Clips Settings");
 		return;
 	}
 	if ((yt.destination == Destination::ClipsApp && current.app_url.empty()) ||
 	    (yt.destination == Destination::S3 && current.s3_url.empty())) {
-		notify_user("Replay to R2: connect your clips app in Tools > Replay to R2 Settings");
+		notify_user("Better Clips: connect your clips app in Tools > Better Clips Settings");
 		return;
 	}
 	replay_r2_request_save(replay_output);
@@ -444,6 +457,25 @@ void notify_user(const std::string &message, const std::string &link)
 
 bool obs_module_load(void)
 {
+	return true;
+}
+
+void obs_module_post_load(void)
+{
+	/* Wait until OBS has opened every module; either filename can load first. */
+	const char *problem = nullptr;
+	if (obs_get_module("obs-replay-r2"))
+		problem =
+			"Better Clips: remove the old obs-replay-r2 plugin and restart OBS. Better Clips is disabled.";
+	else if (!migrate_config())
+		problem =
+			"Better Clips: could not copy your previous settings. Check file permissions and restart OBS.";
+	if (problem) {
+		obs_log(LOG_WARNING, "%s", problem);
+		notify_user(problem);
+		return;
+	}
+	initialized = true;
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 	register_replay_r2_output();
 
@@ -461,11 +493,12 @@ bool obs_module_load(void)
 	start_youtube_reviews();
 	uploader_start();
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
-	return true;
 }
 
 void obs_module_unload(void)
 {
+	if (!initialized)
+		return;
 	stop_youtube_reviews();
 	stop_youtube_disconnect();
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);

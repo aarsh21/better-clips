@@ -52,7 +52,7 @@ bool build(Clip &clip, std::vector<uint8_t> &mp4)
 	auto mux_start = std::chrono::steady_clock::now();
 	if (!mux_clip_to_mp4(clip, mp4, error)) {
 		obs_log(LOG_ERROR, "Could not build %s: %s", clip.name.c_str(), error.c_str());
-		notify_user("Replay to R2: could not build the clip (" + error + ")");
+		notify_user("Better Clips: could not build the clip (" + error + ")");
 		return false;
 	}
 	auto mux_ms =
@@ -108,11 +108,11 @@ void keep_on_disk(const Clip &clip, const std::vector<uint8_t> &mp4, const std::
 	if (path.empty()) {
 		obs_log(LOG_ERROR, "%s: %s, and it couldn't be saved to the recording folder", clip.name.c_str(),
 			why.c_str());
-		notify_user("Replay to R2: " + why + ", and it couldn't be saved to disk. Clip lost.");
+		notify_user("Better Clips: " + why + ", and it couldn't be saved to disk. Clip lost.");
 		return;
 	}
 	obs_log(LOG_INFO, "%s: %s, saved to %s", clip.name.c_str(), why.c_str(), path.c_str());
-	notify_user("Replay to R2: " + why + ". Saved it to " + path);
+	notify_user("Better Clips: " + why + ". Saved it to " + path);
 }
 
 void upload_clip(Clip &clip)
@@ -143,7 +143,7 @@ void upload_clip(Clip &clip)
 	}
 	const bool via_app = clip.youtube.destination == Destination::ClipsApp;
 	std::string key = via_app ? clip.name : object_key(clip.config, clip.name);
-	notify_user("Replay to R2: uploading " + clip.name + " (" + format_mb(mp4.size()) + ")...");
+	notify_user("Better Clips: uploading " + clip.name + " (" + format_mb(mp4.size()) + ")...");
 
 	for (size_t attempt = 0;; attempt++) {
 		auto upload_start = std::chrono::steady_clock::now();
@@ -167,8 +167,8 @@ void upload_clip(Clip &clip)
 					link.pop_back();
 				link += "/" + key;
 			}
-			notify_user(link.empty() ? "Replay to R2: uploaded " + key
-						 : "Replay to R2: uploaded, link copied: " + link,
+			notify_user(link.empty() ? "Better Clips: uploaded " + key
+						 : "Better Clips: uploaded, link copied: " + link,
 				    link);
 			if (yt)
 				youtube_watch(processing, clip.youtube, session.clip_id, details.title);
@@ -180,7 +180,7 @@ void upload_clip(Clip &clip)
 		std::unique_lock<std::mutex> lock(mutex);
 		if (attempt >= std::size(RETRY_DELAYS) || stopping || session.permanent_failure)
 			break;
-		notify_user("Replay to R2: upload failed (" + error + "), retrying in " +
+		notify_user("Better Clips: upload failed (" + error + "), retrying in " +
 			    std::to_string(RETRY_DELAYS[attempt]) + "s");
 		wake.wait_for(lock, std::chrono::seconds(RETRY_DELAYS[attempt]), [] { return stopping.load(); });
 	}
@@ -262,7 +262,7 @@ void uploader_enqueue(Clip *clip)
 			to_disk.emplace_back(clip);
 		} else {
 			obs_log(LOG_WARNING, "Dropped %s: uploads and disk writes are both behind", clip->name.c_str());
-			notify_user("Replay to R2: still saving earlier clips, this one was not saved");
+			notify_user("Better Clips: still saving earlier clips, this one was not saved");
 			delete clip;
 			return;
 		}

@@ -1,6 +1,6 @@
 # Clips
 
-The web app for [Replay to R2](../README.md): browse, trim, keep, delete and
+The web app for [Better Clips](../README.md): browse, trim, keep, delete and
 share the clips OBS uploads to your Cloudflare R2 bucket. It's one Cloudflare
 Worker (Hono) serving a React app, so the browser never sees bucket keys.
 
@@ -72,7 +72,7 @@ Some guarantees the hosted app keeps:
 
 ## Deploy
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/aarsh21/obs-replay-r2/tree/main/web)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/aarsh21/better-clips/tree/main/web)
 
 The button copies this folder into your GitHub account, creates the `clips`
 bucket, and asks for `APP_PASSWORD`, the password you sign in with (12 or more

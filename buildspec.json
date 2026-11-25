@@ -33,13 +33,13 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.aarsh21.obs-replay-r2"
+            "bundleId": "com.aarsh21.better-clips"
         }
     },
-    "name": "obs-replay-r2",
-    "displayName": "Replay to R2",
-    "version": "0.2.0",
+    "name": "better-clips",
+    "displayName": "Better Clips",
+    "version": "0.3.0",
     "author": "aarsh",
-    "website": "https://github.com/aarsh21/obs-replay-r2",
+    "website": "https://github.com/aarsh21/better-clips",
     "email": "aarshpersonal@proton.me"
 }

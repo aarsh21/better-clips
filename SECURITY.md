@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please don't open a public issue for security problems. Report them privately
-through [GitHub's security advisories](https://github.com/aarsh21/obs-replay-r2/security/advisories/new),
+through [GitHub's security advisories](https://github.com/aarsh21/better-clips/security/advisories/new),
 or by email to aarshpersonal@proton.me.
 
 Include what's affected (the plugin, the self-hosted app or the hosted app),

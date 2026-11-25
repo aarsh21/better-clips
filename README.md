@@ -1,6 +1,6 @@
 <div align="center">
 
-# Replay to R2
+# Better Clips
 
 **Press a hotkey in a game. The last 30 seconds are in your browser a moment later.**
 
@@ -8,11 +8,11 @@ An OBS plugin that sends your replay buffer straight to Cloudflare R2, without
 ever writing the clip to disk, and a fast web app to watch, trim, keep and share
 what it uploads.
 
-[![Latest release](https://img.shields.io/github/v/release/aarsh21/obs-replay-r2?label=release&color=f0a640)](https://github.com/aarsh21/obs-replay-r2/releases/latest)
-[![Build](https://img.shields.io/github/actions/workflow/status/aarsh21/obs-replay-r2/push.yaml?branch=main&label=plugin%20build)](https://github.com/aarsh21/obs-replay-r2/actions/workflows/push.yaml)
-[![Web app](https://img.shields.io/github/actions/workflow/status/aarsh21/obs-replay-r2/web.yaml?branch=main&label=web%20app)](https://github.com/aarsh21/obs-replay-r2/actions/workflows/web.yaml)
+[![Latest release](https://img.shields.io/github/v/release/aarsh21/better-clips?label=release&color=f0a640)](https://github.com/aarsh21/better-clips/releases/latest)
+[![Build](https://img.shields.io/github/actions/workflow/status/aarsh21/better-clips/push.yaml?branch=main&label=plugin%20build)](https://github.com/aarsh21/better-clips/actions/workflows/push.yaml)
+[![Web app](https://img.shields.io/github/actions/workflow/status/aarsh21/better-clips/web.yaml?branch=main&label=web%20app)](https://github.com/aarsh21/better-clips/actions/workflows/web.yaml)
 [![OBS 31–33](https://img.shields.io/badge/OBS-31%20%E2%80%93%2033-302e31?logo=obsstudio)](https://obsproject.com)
-[![License: GPL-2.0](https://img.shields.io/github/license/aarsh21/obs-replay-r2?color=blue)](LICENSE)
+[![License: GPL-2.0](https://img.shields.io/github/license/aarsh21/better-clips?color=blue)](LICENSE)
 
 [Install](#install) · [How it works](#how-it-works) · [The web app](web/README.md) · [FAQ](#faq) · [Contributing](CONTRIBUTING.md)
 
@@ -23,7 +23,7 @@ what it uploads.
 ## Why
 
 OBS's Replay Buffer writes every clip to disk, and then you still have to find
-the file, upload it somewhere and copy a link. Replay to R2 skips all of that:
+the file, upload it somewhere and copy a link. Better Clips skips all of that:
 
 - **Skips the disk.** The plugin keeps its own replay buffer in memory,
   packages the clip as an MP4 in memory and uploads it in the background. A
@@ -43,7 +43,7 @@ the file, upload it somewhere and copy a link. Replay to R2 skips all of that:
 
 **In OBS**
 
-- **Save Replay to R2** hotkey and a dock next to Controls
+- **Save Replay and Upload** hotkey and a dock next to Controls
 - Change the replay length live, without restarting the buffer
 - Retries failed uploads, then saves the clip to your recording folder
 - H.264, HEVC and AV1 video, AAC and Opus audio, every audio track
@@ -68,7 +68,7 @@ the file, upload it somewhere and copy a link. Replay to R2 skips all of that:
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/obs-dock.webp" alt="The Replay to R2 dock in OBS, after an upload"></td>
+<td width="50%"><img src="docs/images/obs-dock.webp" alt="The Better Clips dock in OBS, after an upload"></td>
 <td width="50%"><img src="docs/images/trim.webp" alt="Trimming a clip in the browser"></td>
 </tr>
 <tr>
@@ -84,24 +84,25 @@ Setup takes about two minutes and needs no R2 API keys.
 **1. Deploy your clips app.** It runs free on Cloudflare Workers, and Cloudflare
 creates the R2 bucket for you. Pick a password when it asks for `APP_PASSWORD`.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/aarsh21/obs-replay-r2/tree/main/web)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/aarsh21/better-clips/tree/main/web)
 
 **2. Connect OBS.** Open your app, sign in and click **Connect OBS**. Copy the
 command for your system into a terminal:
 
 ```sh
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/aarsh21/obs-replay-r2/main/install.sh | sh -s -- '<setup code>'
+curl -fsSL https://raw.githubusercontent.com/aarsh21/better-clips/main/install.sh | sh -s -- '<setup code>'
 ```
 
 ```powershell
 # Windows (PowerShell)
-$env:CLIPS_SETUP_CODE='<setup code>'; irm https://raw.githubusercontent.com/aarsh21/obs-replay-r2/main/install.ps1 | iex
+$env:CLIPS_SETUP_CODE='<setup code>'; irm https://raw.githubusercontent.com/aarsh21/better-clips/main/install.ps1 | iex
 ```
 
 The script waits for OBS to close, installs the latest release, connects it to
 your app, turns on the Replay Buffer, binds **Ctrl+Alt+R** and reopens OBS.
-Nothing needs sudo. The command contains your setup code, so keep it private.
+On Linux, only removing an old system-wide install may need sudo. The command
+contains your setup code, so keep it private.
 
 **3. Play.** Press **Ctrl+Alt+R** and the clip shows up in your app.
 
@@ -109,10 +110,10 @@ Nothing needs sudo. The command contains your setup code, so keep it private.
 <summary><b>Install by hand</b></summary>
 
 1. Download the package for your system from the
-   [latest release](https://github.com/aarsh21/obs-replay-r2/releases/latest):
+   [latest release](https://github.com/aarsh21/better-clips/releases/latest):
    the `.zip` for Windows, the `.pkg` for macOS, or the `.deb` for Ubuntu and
    Debian.
-2. In OBS, open **Tools → Replay to R2 Settings**, click **Paste setup code**,
+2. In OBS, open **Tools → Better Clips Settings**, click **Paste setup code**,
    then **Test Upload** and **Save**.
 3. Enable the Replay Buffer in **Settings → Output**, and bind **Save Replay and
    Upload** in **Settings → Hotkeys**.

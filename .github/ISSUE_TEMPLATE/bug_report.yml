@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. For a security problem, don't file it here; see [SECURITY.md](https://github.com/aarsh21/obs-replay-r2/blob/main/SECURITY.md).
+        Thanks for reporting. For a security problem, don't file it here; see [SECURITY.md](https://github.com/aarsh21/better-clips/blob/main/SECURITY.md).
   - type: dropdown
     id: part
     attributes:
@@ -36,7 +36,7 @@ body:
     attributes:
       label: Versions
       description: Plugin version, OBS version and operating system.
-      placeholder: Replay to R2 0.1.4, OBS 33.0.2, Windows 11
+      placeholder: Better Clips 0.3.0, OBS 33.0.2, Windows 11
     validations:
       required: true
   - type: input
