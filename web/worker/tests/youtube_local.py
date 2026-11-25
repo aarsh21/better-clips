@@ -2,7 +2,9 @@
 
 Set up local hosted Wrangler as in web/.dev.vars.example, with test-client,
 test-secret, and both optional localhost overrides set to http://127.0.0.1:9393.
-Start Wrangler, then: python3 web/worker/tests/youtube_local.py
+Use a fresh local D1. Start Wrangler, then: python3 web/worker/tests/youtube_local.py
+The test compiles the desktop client with fake build credentials and points
+YOUTUBE_AUTH_BASE, YOUTUBE_TOKEN_BASE and YOUTUBE_API at this loopback server.
 Pass --serve instead for an interactive fake (one disposable test channel).
 """
 
@@ -37,6 +39,7 @@ grants = set()
 unticked = None
 quota = False
 revoked = False
+revoke_failure = False
 reads = []
 stale_reads = {}
 processing_result = "processed"
@@ -94,7 +97,25 @@ class Google(BaseHTTPRequestHandler):
             assert (
                 q["client_id"] == "test-client" and q["code_challenge_method"] == "S256"
             )
-            assert q["redirect_uri"] == BASE + "/api/youtube/callback"
+            if q["redirect_uri"] != BASE + "/api/youtube/callback":
+                u = urlsplit(q["redirect_uri"])
+                assert (
+                    u.scheme == "http"
+                    and u.hostname == "127.0.0.1"
+                    and u.port
+                    and u.path == "/callback"
+                )
+                assert q["state"] and q["access_type"] == "offline"
+                assert set(q["scope"].split()) == {
+                    "openid",
+                    "email",
+                    PREFIX + "upload",
+                    PREFIX + "readonly",
+                }
+                assert (
+                    call(q["redirect_uri"] + "?state=wrong&code=wrong", status=None)
+                    == 400
+                )
             code = secrets.token_hex()
             codes[code] = q
             return self.reply(
@@ -107,6 +128,10 @@ class Google(BaseHTTPRequestHandler):
             f = {k: v[0] for k, v in parse_qs(body.decode()).items()}
             if p.path == "/revoke":
                 assert f["token"] == "testing-refresh"
+                if revoke_failure:
+                    return self.reply(503, {})
+                if revoked:
+                    return self.reply(400, {"error": "invalid_token"})
                 revoked = True
                 return self.reply(200, {})
             assert f["client_secret"] == "test-secret"
@@ -130,7 +155,17 @@ class Google(BaseHTTPRequestHandler):
                 return self.reply(400, {"error": "invalid_grant"})
             token = secrets.token_hex()
             tokens[token] = grants.copy()
-            data = {"access_token": token, "scope": " ".join(grants)}
+            data = {
+                "access_token": token,
+                "scope": " ".join(
+                    (
+                        "https://www.googleapis.com/auth/userinfo.email"
+                        if scope == "email"
+                        else scope
+                    )
+                    for scope in grants
+                ),
+            }
             if fresh:
                 data["refresh_token"] = "testing-refresh"
             return self.reply(200, data)
@@ -139,7 +174,16 @@ class Google(BaseHTTPRequestHandler):
             s = sessions[p.path]
             rg = self.headers["content-range"]
             auth = self.headers.get("Authorization")
-            if auth:
+            if s["direct"]:
+                assert auth and auth.startswith("Bearer ") and not revoked
+                bearer = auth.removeprefix("Bearer ")
+                if not s.get("expired"):
+                    s["expired"] = bearer
+                    tokens.pop(bearer)
+                if bearer not in tokens:
+                    return self.reply(401, {})
+                s["verified"] = True
+            elif auth:
                 assert (
                     rg.startswith("bytes */")
                     and s.get("id")
@@ -193,6 +237,7 @@ class Google(BaseHTTPRequestHandler):
                 200, {"sub": "local-subject", "email": "test@example.org"}
             )
         if p.path == "/youtube/v3/channels":
+            assert PREFIX + "readonly" in access
             return self.reply(
                 200, {"items": [{"id": CHANNEL, "snippet": {"title": "Local channel"}}]}
             )
@@ -204,6 +249,7 @@ class Google(BaseHTTPRequestHandler):
             assert PREFIX + "upload" in access and q["uploadType"] == "resumable"
             key = "/session/" + secrets.token_hex(12)
             sessions[key] = {
+                "direct": PREFIX + "force-ssl" not in access,
                 "size": int(self.headers["x-upload-content-length"]),
                 "meta": json.loads(body),
                 "data": bytearray(),
@@ -286,10 +332,24 @@ def login(purpose, pair=False):
         status=302,
     )
     scopes = parse_qs(urlsplit(auth).query)["scope"][0].split()
-    check(set(scopes) == {"openid", "email", PREFIX + "upload", PREFIX + "readonly", PREFIX + "force-ssl"}, "first consent asks for all five scopes")
+    check(
+        set(scopes)
+        == {
+            "openid",
+            "email",
+            PREFIX + "upload",
+            PREFIX + "readonly",
+            PREFIX + "force-ssl",
+        },
+        "first consent asks for all five scopes",
+    )
     result = call(call(auth, status=302), status=302)
     if unticked:
-        check("every permission" in parse_qs(urlsplit(result).query).get("auth_error", [""])[0], "unticked scope refuses sign-in: " + unticked)
+        check(
+            "every permission"
+            in parse_qs(urlsplit(result).query).get("auth_error", [""])[0],
+            "unticked scope refuses sign-in: " + unticked,
+        )
         return
     if not pair:
         assert result == "/", result
@@ -311,14 +371,46 @@ def login(purpose, pair=False):
 
 
 def exercise():
-    global quota, revoked, processing_result, unticked
+    global quota, revoked, processing_result, unticked, revoke_failure
     scratch = Path(".amp/in/orb-backup/youtube-test")
     scratch.mkdir(exist_ok=True, parents=True)
     probe = scratch / "upload-probe"
     compiler = shlex.split(
         subprocess.check_output(
-            ["pkg-config", "--cflags", "--libs", "Qt6Network", "libobs"], text=True
+            ["pkg-config", "--cflags", "--libs", "Qt6Gui", "Qt6Network", "libobs"],
+            text=True,
         )
+    )
+    subprocess.run(
+        [
+            "cmake",
+            "--preset",
+            "ubuntu-x86_64",
+            "-B",
+            str(scratch / "build"),
+            "-DYOUTUBE_CLIENT_ID=test-client",
+            "-DYOUTUBE_CLIENT_SECRET=test-secret",
+        ],
+        check=True,
+    )
+    libexec = subprocess.check_output(
+        ["pkg-config", "--variable=libexecdir", "Qt6Core"], text=True
+    ).strip()
+    subprocess.run(
+        [
+            str(Path(libexec) / "moc"),
+            "web/worker/tests/upload-probe.cpp",
+            "-o",
+            str(scratch / "upload-probe.moc"),
+        ],
+        check=True,
+    )
+    probe_env = dict(
+        os.environ,
+        QT_QPA_PLATFORM="offscreen",
+        YOUTUBE_AUTH_BASE=FAKE,
+        YOUTUBE_TOKEN_BASE=FAKE,
+        YOUTUBE_API=FAKE,
     )
     subprocess.run(
         [
@@ -326,7 +418,10 @@ def exercise():
             "-std=c++17",
             "-fPIC",
             "-Isrc",
+            "-I" + str(scratch),
+            "-I" + str(scratch / "build/generated"),
             "web/worker/tests/upload-probe.cpp",
+            "src/youtube-connect.cpp",
             "src/youtube-upload.cpp",
             "-o",
             str(probe),
@@ -364,7 +459,13 @@ def exercise():
         (digest(sid), user, int(time.time() * 1000) + 600000),
     )
     cookies["clips_sid"] = sid
-    for unticked in ["openid", "email", PREFIX + "upload", PREFIX + "readonly", PREFIX + "force-ssl"]:
+    for unticked in [
+        "openid",
+        "email",
+        PREFIX + "upload",
+        PREFIX + "readonly",
+        PREFIX + "force-ssl",
+    ]:
         login("pair", True)
     unticked = None
     token = login("pair", True)
@@ -427,19 +528,17 @@ def exercise():
         "OBS pairing requires a challenge",
     )
     me = call("/api/me")
-    assert (
-        me["storage"] is None
-        and me["youtube"]["channelId"] == CHANNEL
-    )
+    assert me["storage"] is None and me["youtube"]["channelId"] == CHANNEL
     assert call("/api/clips") == {"clips": [], "youtube": []}
     print("Bucketless Google login, OBS state and single-use exchange: OK", flush=True)
 
-    def upload():
+    def upload(direct=False):
         n = len(sessions)
         p = subprocess.run(
-            [str(probe), BASE, str(mp4)],
+            [str(probe), "direct" if direct else BASE, str(mp4)],
+            env=probe_env,
             text=True,
-            input=token + "\n",
+            input=("testing-refresh" if direct else token) + "\n",
             capture_output=True,
             timeout=45,
         )
@@ -452,7 +551,14 @@ def exercise():
             and s["size"] in s["queries"]
         )
         assert p.stdout.strip() == "https://youtu.be/" + s["id"]
-        check(s.get("verified"), "Worker receipt carries a Google bearer")
+        check(
+            s.get("verified") and s["direct"] == direct,
+            (
+                "Direct PUTs use a refreshed Google bearer"
+                if direct
+                else "Worker receipt carries a Google bearer"
+            ),
+        )
         toast = (
             "is ready to play"
             if processing_result == "processed"
@@ -464,7 +570,7 @@ def exercise():
             f"Processing: uploader returned before two status checks and '{toast}' toast"
         )
         print(
-            f"One session, one video, {s['size']} identical bytes, status queries at {s['queries']}; no bearer on OBS PUT",
+            f"One session, one video, {s['size']} identical bytes, status queries at {s['queries']}; direct={direct}",
             flush=True,
         )
         return s["id"]
@@ -501,7 +607,10 @@ def exercise():
         and clip["durationSeconds"] == 13
     )
     endpoint = "/api/youtube/clips/" + clip["id"]
-    check(call("/api/youtube/connect?purpose=manage", status=None) == 400, "no second consent endpoint")
+    check(
+        call("/api/youtube/connect?purpose=manage", status=None) == 400,
+        "no second consent endpoint",
+    )
     call(
         endpoint,
         "PATCH",
@@ -578,7 +687,7 @@ def exercise():
     call("/api/youtube/clips/" + clip["id"], "DELETE")
     assert vid not in videos and not call("/api/clips")["youtube"]
     print(
-        "Manage grant, rename, visibility, cut, delete, external rename/deletion: OK",
+        "Single consent: rename, visibility, cut, delete, external rename/deletion: OK",
         flush=True,
     )
     metadata = {
@@ -607,6 +716,31 @@ def exercise():
     )
     print(
         "Quota error, disconnect revocation, reconnect and external revocation cleanup: OK"
+    )
+
+    def account(action):
+        subprocess.run([str(probe), action], env=probe_env, timeout=15, check=True)
+
+    account("connect")
+    print("Direct loopback, state rejection, PKCE exchange and channel lookup: OK")
+    for processing_result in ["processed", "rejected"]:
+        upload(direct=True)
+    revoke_failure = True
+    account("failed")
+    revoke_failure = False
+    account("revoked")
+    account("unpaired")
+    p = subprocess.run(
+        [str(probe), "direct", str(mp4)],
+        env=probe_env,
+        input="testing-refresh\n",
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+    check(
+        revoked and p.returncode == 3 and "Sign in again" in p.stderr,
+        "expired refresh token is permanent; revoke outcomes preserve or clear the local token",
     )
     assert not failures, failures
 
