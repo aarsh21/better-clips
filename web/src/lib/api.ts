@@ -7,6 +7,7 @@ type ApiClip = {
   key: string
   folder: Folder
   size: number
+  etag: string
   uploaded: string
   thumb?: { duration: number; width: number; height: number; v: string }
 }
@@ -466,10 +467,15 @@ export const api = {
     }),
   destroy: (key: string) =>
     request<{ ok: true }>(`/api/clips/${enc(key)}`, { method: "DELETE" }),
-  emptyTrash: () =>
-    request<{ deleted: number; failed: number }>("/api/trash", {
-      method: "DELETE",
-    }),
+  emptyTrash: (clips: BucketClip[]) =>
+    request<{ deleted: number; skipped: number; failed: number }>(
+      "/api/trash",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(clips.map(({ key, etag }) => ({ key, etag }))),
+      }
+    ),
   share: (key: string, days: number | null) =>
     request<{ url: string; key: string }>("/api/share", {
       method: "POST",

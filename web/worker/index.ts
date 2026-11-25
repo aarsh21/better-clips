@@ -593,6 +593,7 @@ export type Clip = {
   key: string
   folder: Folder
   size: number
+  etag: string
   uploaded: string
   thumb?: ThumbMeta
 }
@@ -630,6 +631,7 @@ app.get("/api/clips", async (c) => {
         key: o.key,
         folder,
         size: o.size,
+        etag: o.etag,
         uploaded: o.uploaded.toISOString(),
         ...(thumb && { thumb }),
       },
@@ -760,19 +762,43 @@ app.delete("/api/clips/*", async (c) => {
   return c.json({ ok: true })
 })
 
-/* Deletes every clip in the trash, with its thumbnail. */
-app.delete("/api/trash", async (c) => {
+/* POST so a new client cannot accidentally call an older Worker's delete-all. */
+app.post("/api/trash", async (c) => {
+  const targets = await c.req.json().catch(() => null)
+
+  if (!Array.isArray(targets) || !targets.length)
+    return c.json({ error: "Select the trash clips to delete" }, 400)
+
+  const confirmed = new Map<string, string>()
+
+  for (const target of targets) {
+    const key = target?.key,
+      etag = target?.etag
+
+    // Validate both fields at the JSON boundary before authorizing any deletion.
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof
+    const strings = typeof key === "string" && typeof etag === "string"
+
+    if (!strings || !etag || clipKey(key)?.folder !== "trash")
+      return c.json({ error: "Invalid trash clip" }, 400)
+    confirmed.set(key, etag)
+  }
+
   const t = c.get("tenant")
 
   const keys = (await t.store.list("trash/")).flatMap((o) =>
-    clipKey(o.key)?.folder === "trash" ? [o.key] : []
+    confirmed.get(o.key) === o.etag ? [o.key] : []
   )
 
   const gone = keys.length ? await deleteClips(t.store, keys) : []
 
-  await t.meta.forget(gone)
+  if (gone.length) await t.meta.forget(gone)
 
-  return c.json({ deleted: gone.length, failed: keys.length - gone.length })
+  return c.json({
+    deleted: gone.length,
+    skipped: confirmed.size - keys.length,
+    failed: keys.length - gone.length,
+  })
 })
 
 /* ---- Sharing ---- */

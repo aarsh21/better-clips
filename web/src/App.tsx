@@ -44,6 +44,7 @@ import {
   NoStorageError,
   SignInError,
   youtubeConnectUrl,
+  type BucketClip,
   type Clip,
   type Settings,
 } from "@/lib/api"
@@ -541,7 +542,12 @@ function ClipsBody({
   if (visible.length)
     return (
       <>
-        {view === "trash" && <TrashBar clips={visible} settings={settings} />}
+        {view === "trash" && (
+          <TrashBar
+            clips={visible.filter((c) => c.source === "bucket")}
+            settings={settings}
+          />
+        )}
         {toolbar}
         <ClipGrid clips={visible} byDay={byDay} onOpen={onOpen} />
       </>
@@ -557,23 +563,26 @@ function TrashBar({
   clips,
   settings,
 }: {
-  clips: Clip[]
+  clips: BucketClip[]
   settings: Settings | undefined
 }) {
-  const [confirming, setConfirming] = React.useState(false)
+  const [selection, setSelection] = React.useState<BucketClip[] | null>(null)
   const qc = useQueryClient()
 
   const empty = useMutation({
     mutationFn: api.emptyTrash,
-    onSuccess: ({ deleted, failed }) => {
-      if (failed)
-        toast.error(
-          `Deleted ${deleted}, but ${failed} couldn't be deleted. Try again.`
-        )
-      else
-        toast.success(
-          `Deleted ${deleted} ${deleted === 1 ? "clip" : "clips"} forever`
-        )
+    onSuccess: ({ deleted, skipped, failed }) => {
+      const message = `Deleted ${deleted} ${deleted === 1 ? "clip" : "clips"} forever`
+
+      const description = [
+        skipped && `${skipped} changed or no longer in Trash.`,
+        failed && `${failed} couldn't be deleted. Try again.`,
+      ]
+        .filter(Boolean)
+        .join(" ")
+
+      if (failed) toast.error(message, { description })
+      else toast.success(message, { description })
     },
     onError: (err) => toast.error(err.message),
     onSettled: () => qc.invalidateQueries({ queryKey: ["clips"] }),
@@ -592,25 +601,34 @@ function TrashBar({
         variant="destructive"
         size="sm"
         disabled={empty.isPending}
-        onClick={() => setConfirming(true)}
+        onClick={() => setSelection(clips)}
       >
         <TrashIcon />
         {empty.isPending ? "Emptying…" : "Empty trash"}
       </Button>
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+      <AlertDialog
+        open={!!selection}
+        onOpenChange={(open) => !open && setSelection(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Empty the trash?</AlertDialogTitle>
+            <AlertDialogTitle>Delete the clips shown?</AlertDialogTitle>
             <AlertDialogDescription>
-              {clips.length} {clips.length === 1 ? "clip" : "clips"} ({size})
-              will be removed from your bucket. This can&apos;t be undone.
+              {selection?.length} {selection?.length === 1 ? "clip" : "clips"} (
+              {formatBytes(bucketBytes(selection ?? []))}) will be removed from
+              your bucket. Other clips will stay in Trash. This can&apos;t be
+              undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={() => empty.mutate()}
+              onClick={() => {
+                if (!selection) return
+                empty.mutate(selection)
+                setSelection(null)
+              }}
             >
               Delete forever
             </AlertDialogAction>
