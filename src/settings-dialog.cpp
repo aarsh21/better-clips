@@ -451,7 +451,8 @@ private:
 		config.access_key = access_key->text().trimmed().toStdString();
 		config.secret_key = secret_key->text().trimmed().toStdString();
 		config.folder = folder->text().trimmed().toStdString();
-		config.public_url = public_url->text().trimmed().toStdString();
+		if (chosen() == Destination::S3)
+			config.public_url = public_url->text().trimmed().toStdString();
 		config.start_replay_buffer = start_replay->isChecked();
 		return config;
 	}

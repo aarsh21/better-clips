@@ -6,6 +6,7 @@
 #include "youtube.hpp"
 
 #include <cstdint>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -125,9 +126,11 @@ bool app_check(const R2Config &config, std::string &error);
 /* Kept across retries of ONE clip. A lost reply must never start a second video. */
 struct YouTubeSession {
 	std::string url, clip_id, video_id;
+	bool permanent_failure = false;
 };
 bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::vector<uint8_t> &mp4,
-		    YouTubeSession &session, std::string &link, std::string &error);
+		    YouTubeSession &session, std::string &link, std::string &error,
+		    const std::atomic<bool> &stopping = false);
 class QNetworkAccessManager;
 void youtube_watch(QNetworkAccessManager *network, const YouTubeSettings &settings, const std::string &clip_id,
 		   const std::string &title);

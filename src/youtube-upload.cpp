@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QEventLoop>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -19,12 +20,17 @@ struct Reply {
 	int status;
 	QByteArray range;
 	QJsonObject json;
+	QString reason;
 };
 
 /* The bearer goes ONLY to the app; the session URL itself authorizes PUTs. */
 Reply request(QNetworkAccessManager &net, const QUrl &url, const QByteArray &bearer, const QByteArray &range,
-	      const QByteArray &body, std::string &error)
+	      const QByteArray &body, std::string &error, const std::atomic<bool> &stopping)
 {
+	if (stopping) {
+		error = "OBS is closing";
+		return {};
+	}
 	if (!url.isValid() || !url.userInfo().isEmpty() ||
 	    (url.scheme() != "https" &&
 	     !(url.scheme() == "http" && (url.host() == "localhost" || url.host() == "127.0.0.1")))) {
@@ -42,18 +48,28 @@ Reply request(QNetworkAccessManager &net, const QUrl &url, const QByteArray &bea
 	req.setHeader(QNetworkRequest::ContentTypeHeader, put ? "video/mp4" : "application/json");
 	QNetworkReply *reply = put ? net.put(req, body) : net.post(req, body);
 	QEventLoop loop;
+	QTimer cancel;
+	QObject::connect(&cancel, &QTimer::timeout, reply, [&] {
+		if (stopping)
+			reply->abort();
+	});
+	cancel.start(50);
 	QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
 	if (!reply->isFinished())
 		loop.exec();
-	Reply result{reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(), reply->rawHeader("Range"),
-		     QJsonDocument::fromJson(reply->readAll()).object()};
+	Reply result{reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(),
+		     reply->rawHeader("Range"),
+		     QJsonDocument::fromJson(reply->readAll()).object(),
+		     {}};
 	if (reply->error() != QNetworkReply::NoError || (result.status != 308 && result.status / 100 != 2)) {
 		auto message = result.json.value("error");
-		const QString reason = message.toObject().value("message").toString();
-		error = message.toString(reason).toStdString();
+		const auto details = message.toObject();
+		result.reason = details.value("errors").toArray().at(0).toObject().value("reason").toString();
+		error = message.toString(details.value("message").toString(result.reason)).toStdString();
 		if (error.empty())
 			error = "YouTube upload connection failed (HTTP " + std::to_string(result.status) + ")";
-		result.status = 0;
+		if (result.status / 100 == 2 || result.status == 308)
+			result.status = 0; // Incomplete response, even if its headers arrived.
 	}
 	delete reply;
 	return result;
@@ -74,13 +90,20 @@ std::string youtube_title(const std::string &title_template, const std::string &
 }
 
 bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::vector<uint8_t> &mp4,
-		    YouTubeSession &session, std::string &link, std::string &error)
+		    YouTubeSession &session, std::string &link, std::string &error, const std::atomic<bool> &stopping)
 {
 	QNetworkAccessManager net;
+	auto failed = [&](const Reply &reply) {
+		const auto status = reply.status;
+		session.permanent_failure = status / 100 == 4 && status != 408 && status != 409 && status != 429 &&
+					    !(status == 403 && (reply.reason == "rateLimitExceeded" ||
+								reply.reason == "userRateLimitExceeded"));
+		return status / 100 != 2;
+	};
 	auto app = [&](const char *path, QJsonObject data) {
 		return request(net, QUrl(text(clip.youtube.app_url)).resolved(QUrl(path)),
 			       QByteArray::fromStdString(clip.youtube.upload_token), {},
-			       QJsonDocument(data).toJson(QJsonDocument::Compact), error);
+			       QJsonDocument(data).toJson(QJsonDocument::Compact), error, stopping);
 	};
 	bool query = !session.url.empty();
 	if (!query) {
@@ -92,7 +115,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 			      {"category", text(clip.game)},
 			      {"recordedAt",
 			       QDateTime::fromSecsSinceEpoch(clip.recorded_at).toUTC().toString(Qt::ISODate)}});
-		if (!r.status)
+		if (failed(r))
 			return false;
 		session.url = r.json.value("sessionUrl").toString().toStdString();
 		session.clip_id = r.json.value("clipId").toString().toStdString();
@@ -110,9 +133,13 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 			       : "bytes " + QByteArray::number(offset) + "-" + QByteArray::number(offset + n - 1)) +
 			"/" + QByteArray::number(total);
 		auto r = request(net, QUrl(text(session.url)), {}, range,
-				 QByteArray::fromRawData(reinterpret_cast<const char *>(mp4.data() + offset), n),
-				 error);
-		if (!r.status)
+				 QByteArray::fromRawData(reinterpret_cast<const char *>(mp4.data() + offset), n), error,
+				 stopping);
+		if (r.status == 404 || r.status == 410) {
+			session = {}; // Explicitly expired; no video ID has been confirmed.
+			return false;
+		}
+		if (r.status != 308 && failed(r))
 			return false;
 		if (r.status == 308) {
 			bool ok = false;
@@ -139,7 +166,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 	}
 	auto r = app("/api/youtube/upload/complete",
 		     {{"videoId", text(session.video_id)}, {"clipId", text(session.clip_id)}});
-	if (!r.status)
+	if (failed(r))
 		return false;
 	link = r.json.value("url").toString().toStdString();
 	if (link != "https://youtu.be/" + session.video_id) {

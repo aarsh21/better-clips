@@ -25,7 +25,7 @@ std::mutex mutex;
 std::condition_variable wake;
 std::deque<std::unique_ptr<Clip>> queue;   /* waiting to upload */
 std::deque<std::unique_ptr<Clip>> to_disk; /* arrived while the uploads were full */
-bool stopping = false;
+std::atomic<bool> stopping{false};
 std::thread worker;
 std::thread disk_worker;
 QNetworkAccessManager *processing = nullptr; /* UI event loop; only asynchronous requests */
@@ -121,6 +121,10 @@ void upload_clip(Clip &clip)
 	std::string error;
 	if (!build(clip, mp4))
 		return;
+	if (stopping) {
+		keep_on_disk(clip, mp4, "OBS is closing");
+		return;
+	}
 
 	const bool yt = clip.youtube.destination == Destination::YouTube;
 	YouTubeUpload details;
@@ -144,7 +148,11 @@ void upload_clip(Clip &clip)
 	for (size_t attempt = 0;; attempt++) {
 		auto upload_start = std::chrono::steady_clock::now();
 		std::string link;
-		bool uploaded = yt        ? youtube_upload(clip, details, mp4, session, link, error)
+		if (stopping) {
+			error = "OBS is closing";
+			break;
+		}
+		bool uploaded = yt        ? youtube_upload(clip, details, mp4, session, link, error, stopping)
 				: via_app ? app_upload(clip.config, clip.name, mp4, key, error)
 					  : s3_put_object(clip.config, key, mp4, "video/mp4", error);
 		if (uploaded) {
@@ -153,7 +161,7 @@ void upload_clip(Clip &clip)
 					  .count();
 			obs_log(LOG_INFO, "Uploaded %s (%zu bytes) in %lld ms", key.c_str(), mp4.size(), (long long)ms);
 
-			if (!yt && !clip.config.public_url.empty()) {
+			if (clip.youtube.destination == Destination::S3 && !clip.config.public_url.empty()) {
 				link = clip.config.public_url;
 				while (!link.empty() && link.back() == '/')
 					link.pop_back();
@@ -170,11 +178,11 @@ void upload_clip(Clip &clip)
 		obs_log(LOG_WARNING, "Upload of %s failed (attempt %zu): %s", key.c_str(), attempt + 1, error.c_str());
 
 		std::unique_lock<std::mutex> lock(mutex);
-		if (attempt >= std::size(RETRY_DELAYS) || stopping)
+		if (attempt >= std::size(RETRY_DELAYS) || stopping || session.permanent_failure)
 			break;
 		notify_user("Replay to R2: upload failed (" + error + "), retrying in " +
 			    std::to_string(RETRY_DELAYS[attempt]) + "s");
-		wake.wait_for(lock, std::chrono::seconds(RETRY_DELAYS[attempt]), [] { return stopping; });
+		wake.wait_for(lock, std::chrono::seconds(RETRY_DELAYS[attempt]), [] { return stopping.load(); });
 	}
 
 	obs_log(LOG_ERROR, "Giving up on uploading %s: %s", key.c_str(), error.c_str());
@@ -221,7 +229,7 @@ void uploader_stop()
 		std::lock_guard<std::mutex> lock(mutex);
 		stopping = true;
 		if (!queue.empty())
-			obs_log(LOG_INFO, "Finishing %zu queued upload(s) before exit", queue.size());
+			obs_log(LOG_INFO, "Saving %zu queued upload(s) to disk before exit", queue.size());
 	}
 	wake.notify_all();
 	if (worker.joinable())
