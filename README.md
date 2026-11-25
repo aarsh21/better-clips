@@ -165,8 +165,9 @@ flowchart LR
 3. It uploads the MP4 in 50 MB parts through your clips app, which checks the
    upload token and writes to R2. The upload runs on its own thread and never
    blocks OBS.
-4. Clips are named by day, time and scene, such as
-   `replays/2026-11-24/14-35-07_Valorant.mp4`.
+4. Clips are named by day, time and the window you were using (usually the
+   game), such as `replays/2026-11-24/14-35-07_Valorant.mp4`. When OBS itself
+   is focused, or on Linux desktops other than Hyprland, the scene name is used.
 
 The app is a single Cloudflare Worker next to your bucket, so bucket keys never
 reach the browser. See [web/README.md](web/README.md) for its design, bucket
@@ -201,6 +202,37 @@ buffered frames are freed.
 
 Yes. OBS's **Save Replay** button and hotkey still save a file as usual. The
 plugin adds its own button and hotkey next to them.
+
+</details>
+
+<details>
+<summary><b>The hotkey only works while OBS is focused (Hyprland and other Wayland desktops)</b></summary>
+
+Wayland only sends key presses to the focused window, and OBS has no global
+hotkey support there yet
+([obs-studio#10538](https://github.com/obsproject/obs-studio/issues/10538)).
+On Hyprland, keep your key bound to **Save Replay to Cloudflare R2** in OBS
+(Ctrl + Alt + R below) and let Hyprland pass it to OBS:
+
+```lua
+-- Hyprland 0.55 or newer (Lua config)
+hl.bind("CTRL + ALT + R", hl.dsp.pass({ window = [[class:com\.obsproject\.Studio]] }))
+```
+
+```ini
+# Older Hyprland (hyprland.conf)
+bind = CTRL ALT, R, pass, class:^(com\.obsproject\.Studio)$
+```
+
+If nothing happens, check OBS's window class with `hyprctl clients`.
+
+Alternatively, install
+[obs-wayland-hotkeys](https://github.com/leia-uwu/obs-wayland-hotkeys) (AUR:
+`obs-wayland-hotkeys-git`), which registers OBS's hotkeys with the
+GlobalShortcuts portal. It needs `xdg-desktop-portal-hyprland`. Assign a key in
+the dialog it shows when OBS starts, find the shortcut's name with
+`hyprctl globalshortcuts`, and bind it with Hyprland's `global` dispatcher. See
+the [Hyprland wiki](https://wiki.hypr.land/configuring/core/binds/globals/).
 
 </details>
 

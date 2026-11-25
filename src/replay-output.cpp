@@ -182,8 +182,8 @@ std::string url_safe(const std::string &text)
 	return out.substr(0, 40);
 }
 
-/* A name people can browse: a folder per day, then the time and the scene,
- * e.g. "2026-11-24/14-35-07_Valorant.mp4". With a public URL, a short random
+/* A name people can browse: a folder per day, then the time and the window
+ * or scene, e.g. "2026-11-24/14-35-07_Valorant.mp4". With a public URL, a short random
  * code is appended so nobody can guess a clip's link from the time. */
 std::string clip_name(time_t wall_time, const std::string &scene, bool add_code)
 {
@@ -366,10 +366,11 @@ void replay_r2_request_save(obs_output_t *output)
 	ReplayR2 *r = (ReplayR2 *)obs_obj_get_data(output);
 	if (!r || !r->active)
 		return;
-	/* The scene on screen now; the program output is a transition, whose
-	 * active source is the current scene. */
-	std::string scene;
-	obs_source_t *program = obs_get_output_source(0);
+	/* Names the clip after the window you're using, usually the game, or
+	 * else the scene on screen now; the program output is a transition,
+	 * whose active source is the current scene. */
+	std::string scene = focused_window_name();
+	obs_source_t *program = scene.empty() ? obs_get_output_source(0) : nullptr;
 	if (program) {
 		obs_source_t *active = obs_source_get_type(program) == OBS_SOURCE_TYPE_TRANSITION
 					       ? obs_transition_get_active_source(program)
