@@ -175,7 +175,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		session.clip_id = r.json.value("clipId").toString().toStdString();
 	}
 	if (session.url.empty() || (!direct && session.clip_id.empty())) {
-		error = "The Clips app did not open a YouTube upload.";
+		error = "The Better Clips app did not open a YouTube upload.";
 		return false;
 	}
 	const qint64 total = static_cast<qint64>(mp4.size());
@@ -230,7 +230,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		return false;
 	link = r.json.value("url").toString().toStdString();
 	if (link != "https://youtu.be/" + session.video_id) {
-		error = "The Clips app did not confirm the video link.";
+		error = "The Better Clips app did not confirm the video link.";
 		return false;
 	}
 	return true;

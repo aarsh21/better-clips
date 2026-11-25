@@ -356,7 +356,7 @@ void save_replay_to_r2()
 	}
 	if ((yt.destination == Destination::ClipsApp && current.app_url.empty()) ||
 	    (yt.destination == Destination::S3 && current.s3_url.empty())) {
-		notify_user("Better Clips: connect your clips app in Tools > Better Clips Settings");
+		notify_user("Better Clips: connect your Better Clips app in Tools > Better Clips Settings");
 		return;
 	}
 	replay_r2_request_save(replay_output);

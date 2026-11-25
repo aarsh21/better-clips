@@ -57,7 +57,7 @@ obs_data_t *call(const R2Config &config, const char *method, const std::string &
 	while (!url.empty() && url.back() == '/')
 		url.pop_back();
 	if (!secure_url(url)) {
-		error = "The Clips app URL must start with https://";
+		error = "The Better Clips app URL must start with https://";
 		return nullptr;
 	}
 	url += path;
@@ -110,12 +110,12 @@ obs_data_t *call(const R2Config &config, const char *method, const std::string &
 	if (status < 200 || status >= 300) {
 		const char *message = reply ? obs_data_get_string(reply, "error") : "";
 		error = "HTTP " + std::to_string(status) +
-			(*message ? std::string(" (") + message + ")" : ". Is the Clips app URL right?");
+			(*message ? std::string(" (") + message + ")" : ". Is the Better Clips app URL right?");
 		obs_data_release(reply);
 		return nullptr;
 	}
 	if (!reply)
-		error = "Unexpected answer from " + url + ". Is the Clips app URL right?";
+		error = "Unexpected answer from " + url + ". Is the Better Clips app URL right?";
 	return reply;
 }
 
@@ -177,7 +177,7 @@ bool app_upload(const R2Config &config, const std::string &name, const std::vect
 bool app_check(const R2Config &config, std::string &error)
 {
 	if (config.upload_token.empty()) {
-		error = "Paste the setup code from Connect OBS in your clips app";
+		error = "Paste the setup code from Connect OBS in your Better Clips app";
 		return false;
 	}
 	obs_data_t *reply = call(config, "GET", "/api/upload/check", "application/json", nullptr, 0, error);

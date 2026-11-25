@@ -102,7 +102,7 @@ void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 	if (!direct && (!base.isValid() || !base.userInfo().isEmpty() ||
 			(base.scheme() != "https" &&
 			 !(base.scheme() == "http" && (base.host() == "127.0.0.1" || base.host() == "localhost"))))) {
-		done(false, "The Clips app address must use HTTPS.");
+		done(false, "The Better Clips app address must use HTTPS.");
 		return;
 	}
 	if (!pairing)

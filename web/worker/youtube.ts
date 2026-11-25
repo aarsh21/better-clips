@@ -555,7 +555,7 @@ export function youtubeRoutes(app: Hono<any>) {
 
       if (!t.access_token || !requiredScopes.every((s) => granted.has(s)))
         throw new Error(
-          "Clips needs every permission to connect your YouTube channel. Try again and select them all."
+          "Better Clips needs every permission to connect your YouTube channel. Try again and select them all."
         )
 
       const me = await (

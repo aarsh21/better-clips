@@ -704,7 +704,7 @@ async function autoSetup(env: HostedEnv, token: string, userId: string) {
   const list = accounts.body?.result ?? []
 
   if (!accounts.ok || !list.length)
-    throw new UserError("Cloudflare didn't share an account with clips.")
+    throw new UserError("Cloudflare didn't share an account with Better Clips.")
 
   /* Storage is billed to the account, so never guess between several. */
   if (list.length > 1)
@@ -765,7 +765,7 @@ async function makeStorage(
     {
       method: "POST",
       body: JSON.stringify({
-        name: `clips app: ${bucket} bucket only`,
+        name: `Better Clips: ${bucket} bucket only`,
         policies: [
           {
             effect: "allow",
@@ -872,7 +872,7 @@ async function undo(env: HostedEnv, token: string, userId: string, made: Made) {
 
   return [
     left.bucket && `the bucket ${left.bucket} (R2)`,
-    left.tokenId && `the API token "clips app: ${made.bucket} bucket only"`,
+    left.tokenId && `the API token "Better Clips: ${made.bucket} bucket only"`,
   ]
     .filter(Boolean)
     .join(" and ")
