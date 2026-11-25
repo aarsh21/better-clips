@@ -20,7 +20,12 @@ export function useClips() {
     queryKey: KEY,
     queryFn: api.clips,
     /* New clips from OBS show up on their own. */
-    refetchInterval: 15_000,
+    refetchInterval: (query) =>
+      query.state.data?.some(
+        (c) => c.source === "youtube" && c.status === "processing"
+      )
+        ? 5_000
+        : 30_000,
     refetchIntervalInBackground: false,
     staleTime: 5_000,
   })

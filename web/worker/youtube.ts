@@ -1,5 +1,7 @@
 import type { Context, Hono } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
+import { HTTPException } from "hono/http-exception"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 import {
   currentVersion,
   decrypt,
@@ -30,7 +32,7 @@ const callback = (c: Context) =>
 const cookie = "clips_youtube_oauth"
 const path = "/api/youtube"
 const day = 86400000
-const editWindowMs = 5000 // videos.list can lag a successful videos.update.
+const readyInterval = 15 * 60000
 
 type Account = {
   user_id: string
@@ -56,6 +58,7 @@ type Flow = {
   user: string
   port: number
   obsState: string
+  challenge: string
   expires: number
 }
 
@@ -119,6 +122,7 @@ const reconnect = "YouTube access stopped working. Sign in with YouTube again."
 async function tokenRequest(env: HostedEnv, fields: Record<string, string>) {
   const res = await fetch(`${oauth(env)}/token`, {
     method: "POST",
+    signal: AbortSignal.timeout(15000),
     body: new URLSearchParams({
       ...fields,
       client_id: env.GOOGLE_CLIENT_ID!,
@@ -151,7 +155,7 @@ async function access(env: HostedEnv, a: Account) {
         )
         .bind(a.user_id, a.refresh_enc)
         .run()
-      throw new Error(reconnect)
+      throw new HTTPException(401, { message: reconnect })
     }
 
     throw new Error("Google could not renew access. Try again.")
@@ -180,29 +184,39 @@ async function google(
   init?: RequestInit
 ) {
   const res = await fetch(api(env) + route, {
+    signal: AbortSignal.timeout(15000),
     ...init,
     headers: { authorization: `Bearer ${token}`, ...init?.headers },
   })
 
-  if (!res.ok) {
-    const err = await res
-      .json<{ error: { errors?: { reason: string }[] } }>()
-      .catch(() => null)
+  if (!res.ok) throw await googleError(res)
 
-    const reason = err?.error?.errors?.[0]?.reason
-    throw new Error(
-      reason &&
+  return res
+}
+
+async function googleError(res: Response) {
+  const err = await res
+    .json<{ error: { errors?: { reason: string }[] } }>()
+    .catch(() => null)
+
+  const reason = err?.error?.errors?.[0]?.reason
+  // SAFETY: only upstream error statuses (4xx/5xx) are forwarded.
+  const status = res.status >= 400 ? (res.status as ContentfulStatusCode) : 502
+
+  return new HTTPException(
+    status === 403 && /rateLimit/i.test(reason ?? "") ? 429 : status,
+    {
+      message:
+        reason &&
         ["quotaExceeded", "dailyLimitExceeded", "uploadLimitExceeded"].includes(
           reason
         )
-        ? "The YouTube upload limit was reached. Try again tomorrow."
-        : res.status === 401
-          ? reconnect
-          : `YouTube refused the request (${reason ?? res.status}).`
-    )
-  }
-
-  return res
+          ? "The YouTube upload limit was reached. Try again tomorrow."
+          : res.status === 401
+            ? reconnect
+            : `YouTube refused the request (${reason ?? res.status}).`,
+    }
+  )
 }
 
 async function videos(env: HostedEnv, token: string, ids: string[]) {
@@ -240,93 +254,102 @@ function duration(iso: string) {
     : null
 }
 
-async function sync(env: HostedEnv, a: Account, token: string, ids: string[]) {
-  const batches: string[][] = []
+async function sync(
+  env: HostedEnv,
+  a: Account,
+  ids?: string[],
+  token?: string
+) {
+  const now = Date.now(),
+    lease = now + 60000
 
-  for (let i = 0; i < ids.length; i += 50) batches.push(ids.slice(i, i + 50))
-  await Promise.all(
-    batches.map(async (batch) => {
-      // Judge freshness when the read starts, even if a PATCH lands mid-request.
-      const cutoff = Date.now() - editWindowMs
-      const found = await videos(env, token, batch)
-      await env.DB!.batch(
-        batch.map((id) => {
-          const v = found.find(
-            (v) => v.id === id && v.snippet.channelId === a.channel_id
-          )
+  const { results: batch } = await env
+    .DB!.prepare(
+      `UPDATE youtube_clips SET nextSync=?1,editLease=0 WHERE id IN (
+    SELECT id FROM youtube_clips WHERE user_id=?2 AND videoId IS NOT NULL AND nextSync<=?3 AND editLease<=?3
+    AND (?4 IS NULL OR videoId IN (SELECT value FROM json_each(?4)))
+    ORDER BY status='processing' DESC,nextSync LIMIT 50) RETURNING videoId,editedAt`
+    )
+    .bind(lease, a.user_id, now, ids ? JSON.stringify(ids) : null)
+    .all<{ videoId: string; editedAt: number }>()
 
-          if (!v)
-            return env
-              .DB!.prepare(
-                "DELETE FROM youtube_clips WHERE user_id=? AND videoId=? AND editedAt<=? AND (status!='processing' OR uploaded<?)"
-              )
-              .bind(
-                a.user_id,
-                id,
-                cutoff,
-                new Date(Date.now() - 60000).toISOString()
-              )
-          const thumbs = v.snippet.thumbnails
-          const status = v.status.uploadStatus
+  if (!batch.length) return
 
-          return env
-            .DB!.prepare(
-              `UPDATE youtube_clips SET
-                title=CASE WHEN editedAt<=?1 THEN ?2 ELSE title END,
-                description=CASE WHEN editedAt<=?1 THEN ?3 ELSE description END,
-                privacy=CASE WHEN editedAt<=?1 THEN ?4 ELSE privacy END,
-                durationSeconds=?5,thumbnail=?6,status=?7 WHERE user_id=?8 AND videoId=?9`
-            )
-            .bind(
-              cutoff,
-              v.snippet.title,
-              v.snippet.description,
-              v.status.privacyStatus,
-              duration(v.contentDetails.duration),
-              thumbs?.high?.url ??
-                thumbs?.medium?.url ??
-                thumbs?.default?.url ??
-                null,
-              status === "processed"
-                ? "ready"
-                : ["rejected", "failed", "deleted"].includes(status)
-                  ? "failed"
-                  : "processing",
-              a.user_id,
-              id
-            )
-        })
+  const found = await videos(
+    env,
+    token ?? (await access(env, a)),
+    batch.map((row) => row.videoId)
+  )
+
+  await env.DB!.batch(
+    batch.flatMap(({ videoId: id, editedAt }) => {
+      const v = found.find(
+        (v) => v.id === id && v.snippet.channelId === a.channel_id
       )
+
+      if (!v)
+        return [
+          env
+            .DB!.prepare(
+              `DELETE FROM youtube_clips WHERE videoId=? AND editedAt=? AND nextSync=? AND editLease=0 AND misses>=1 AND uploaded<?`
+            )
+            .bind(id, editedAt, lease, new Date(now - 60000).toISOString()),
+          env
+            .DB!.prepare(
+              `UPDATE youtube_clips SET misses=misses+1,nextSync=? WHERE videoId=? AND editedAt=? AND nextSync=? AND editLease=0`
+            )
+            .bind(now + 5000, id, editedAt, lease),
+        ]
+      const thumbs = v.snippet.thumbnails
+      const status = v.status.uploadStatus
+
+      return env
+        .DB!.prepare(
+          `UPDATE youtube_clips SET
+                title=coalesce(pendingTitle,?2),pendingTitle=nullif(pendingTitle,?2),
+                description=coalesce(pendingDescription,?3),pendingDescription=nullif(pendingDescription,?3),
+                privacy=coalesce(pendingPrivacy,?4),pendingPrivacy=nullif(pendingPrivacy,?4),
+                durationSeconds=?5,thumbnail=?6,status=?7,misses=0,nextSync=?1
+                WHERE videoId=?8 AND editedAt=?9 AND nextSync=?10 AND editLease=0`
+        )
+        .bind(
+          Date.now() + (status === "uploaded" ? 3000 : readyInterval),
+          v.snippet.title,
+          v.snippet.description,
+          v.status.privacyStatus,
+          duration(v.contentDetails.duration),
+          thumbs?.high?.url ??
+            thumbs?.medium?.url ??
+            thumbs?.default?.url ??
+            null,
+          status === "processed"
+            ? "ready"
+            : ["rejected", "failed", "deleted"].includes(status)
+              ? "failed"
+              : "processing",
+          id,
+          editedAt,
+          lease
+        )
     })
   )
 }
 
-export async function youtubeClips(env: HostedEnv, user: string) {
+export async function youtubeClips(
+  env: HostedEnv,
+  user: string,
+  ctx: Pick<ExecutionContext, "waitUntil">
+) {
   const db = env.DB!,
     a = await account(env, user)
 
   if (!a) return []
 
-  const { results: ids } = await db
-    .prepare(
-      "SELECT videoId FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL"
-    )
-    .bind(user)
-    .all<{ videoId: string }>()
-
-  if (ids.length)
-    try {
-      await sync(
-        env,
-        a,
-        await access(env, a),
-        ids.map((r) => r.videoId)
-      )
-    } catch {
-      // A temporary Google outage must not hide the user's bucket clips.
-      // A revoked grant has already deleted its rows; otherwise show the last sync.
+  ctx.waitUntil(
+    sync(env, a).catch(() =>
       console.warn("Showing the last available YouTube clip list")
-    }
+    )
+  )
 
   const { results } = await db
     .prepare(
@@ -372,12 +395,18 @@ export async function youtubeMaintenance(env: HostedEnv) {
         .bind(a.user_id)
         .all<{ videoId: string }>()
 
-      await sync(
-        env,
-        a,
-        token,
-        ids.results.map((r) => r.videoId)
-      )
+      const batches = []
+
+      for (let i = 0; i < ids.results.length; i += 50)
+        batches.push(
+          sync(
+            env,
+            a,
+            ids.results.slice(i, i + 50).map((row) => row.videoId),
+            token
+          )
+        )
+      await Promise.all(batches)
       await db
         .prepare(
           "UPDATE youtube_accounts SET checked=?, channel_title=? WHERE user_id=?"
@@ -424,22 +453,25 @@ export function youtubeRoutes(app: Hono<any>) {
     if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET)
       return c.redirect("/?auth_error=YouTube+sign-in+is+not+configured")
 
-    if (!["login", "connect", "manage"].includes(purpose))
+    if (!["pair", "login", "connect", "manage"].includes(purpose))
       return c.json({ error: "Invalid purpose" }, 400)
     const who = await signedIn(c)
 
-    if (purpose !== "login" && !who)
+    if (purpose !== "login" && purpose !== "pair" && !who)
       return c.json({ error: "Sign in first" }, 401)
 
     const port = Number(q.obs_port ?? 0),
       obsState = q.obs_state ?? ""
 
     if (
-      (q.obs_port !== undefined || q.obs_state !== undefined) &&
+      (purpose === "pair" ||
+        q.obs_port !== undefined ||
+        q.obs_state !== undefined) &&
       (!Number.isInteger(port) ||
         port < 1 ||
         port > 65535 ||
-        !/^[-\w]{1,256}$/.test(obsState))
+        !/^[-\w]{1,256}$/.test(obsState) ||
+        !/^[-\w]{43}$/.test(q.obs_challenge ?? ""))
     )
       return c.json({ error: "Invalid OBS return address" }, 400)
 
@@ -447,9 +479,10 @@ export function youtubeRoutes(app: Hono<any>) {
       state: randomToken(),
       verifier: randomToken(),
       purpose,
-      user: purpose === "login" ? "" : who!.userId,
+      user: purpose === "login" && !port ? "" : (who?.userId ?? ""),
       port,
       obsState,
+      challenge: q.obs_challenge ?? "",
       expires: Date.now() + 600000,
     }
 
@@ -593,8 +626,10 @@ export function youtubeRoutes(app: Hono<any>) {
       if (!f.port) return c.redirect("/")
       const code = randomToken()
       await db
-        .prepare("INSERT INTO youtube_codes VALUES(?,?,?)")
-        .bind(await sha256(code), user, Date.now() + 300000)
+        .prepare(
+          "INSERT INTO youtube_codes(hash,user_id,expires,challenge) VALUES(?,?,?,?)"
+        )
+        .bind(await sha256(code), user, Date.now() + 300000, f.challenge)
         .run()
 
       return c.redirect(
@@ -616,14 +651,17 @@ export function youtubeRoutes(app: Hono<any>) {
     const env: HostedEnv = c.env
 
     const db = env.DB!,
-      { code } = await c.req.json(),
+      { code, verifier } = await c.req.json(),
       uploadToken = randomToken()
+
+    if (!isText(verifier) || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier))
+      return c.json({ error: "Invalid pairing verifier" }, 401)
 
     const a = await db
       .prepare(
-        "DELETE FROM youtube_codes WHERE hash=? AND expires>? RETURNING user_id"
+        "DELETE FROM youtube_codes WHERE hash=? AND expires>? AND challenge=? RETURNING user_id"
       )
-      .bind(await sha256(String(code)), Date.now())
+      .bind(await sha256(String(code)), Date.now(), await sha256(verifier))
       .first<{ user_id: string }>()
 
     if (!a)
@@ -741,15 +779,26 @@ export function youtubeRoutes(app: Hono<any>) {
         clip.session_key_version
       )
 
+      const url = new URL(session)
+
+      if (
+        url.origin !== new URL(api(env)).origin &&
+        !(url.protocol === "https:" && url.hostname.endsWith(".googleapis.com"))
+      )
+        throw new Error("Unexpected YouTube receipt address")
+
       const receipt = await fetch(session, {
         method: "PUT",
         headers: {
           "content-range": `bytes */${clip.size}`,
+          authorization: `Bearer ${await access(env, a)}`,
           "content-length": "0",
         },
         redirect: "manual",
         body: "",
       })
+
+      if (receipt.status >= 400) throw await googleError(receipt)
 
       if (!receipt.ok || (await receipt.json<{ id: string }>()).id !== videoId)
         return c.json(
@@ -760,9 +809,9 @@ export function youtubeRoutes(app: Hono<any>) {
 
     const result = await env
       .DB!.prepare(
-        "UPDATE youtube_clips SET videoId=?,session_enc=NULL,session_key_version=NULL,status=CASE WHEN videoId IS NULL THEN 'processing' ELSE status END WHERE id=? AND user_id=? AND (videoId IS NULL OR videoId=?)"
+        "UPDATE youtube_clips SET videoId=?,uploaded=CASE WHEN videoId IS NULL THEN ? ELSE uploaded END,session_enc=NULL,session_key_version=NULL,status=CASE WHEN videoId IS NULL THEN 'processing' ELSE status END WHERE id=? AND user_id=? AND (videoId IS NULL OR videoId=?)"
       )
-      .bind(videoId, clipId, a.user_id, videoId)
+      .bind(videoId, new Date().toISOString(), clipId, a.user_id, videoId)
       .run()
 
     if (!result.meta.changes) return c.json({ error: "Upload not found" }, 404)
@@ -787,7 +836,7 @@ export function youtubeRoutes(app: Hono<any>) {
     let status = clip.status
 
     if (status === "processing") {
-      await sync(env, a, await access(env, a), [clip.videoId])
+      await sync(env, a, [clip.videoId])
       status =
         (await env
           .DB!.prepare(
@@ -800,6 +849,49 @@ export function youtubeRoutes(app: Hono<any>) {
     return c.json({ status, url: `https://youtu.be/${clip.videoId}` }, 200, {
       "cache-control": "no-store",
     })
+  })
+  // D1 owns the lock, so edits from different Worker isolates also serialize.
+  app.use(path + "/clips/:id", async (c, next) => {
+    if (c.req.method !== "PATCH" && c.req.method !== "DELETE") return next()
+
+    const env: HostedEnv = c.env,
+      id = c.req.param("id"),
+      user = c.get("who").userId
+
+    const lease = Date.now() + 120000
+
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const lock = await env
+        .DB!.prepare(
+          "UPDATE youtube_clips SET editLease=? WHERE id=? AND user_id=? AND editLease<=?"
+        )
+        .bind(lease, id, user, Date.now())
+        .run()
+
+      if (lock.meta.changes) {
+        try {
+          return await next()
+        } finally {
+          await env
+            .DB!.prepare(
+              "UPDATE youtube_clips SET editLease=0 WHERE id=? AND user_id=? AND editLease=?"
+            )
+            .bind(id, user, lease)
+            .run()
+        }
+      }
+
+      if (
+        !(await env
+          .DB!.prepare("SELECT 1 FROM youtube_clips WHERE id=? AND user_id=?")
+          .bind(id, user)
+          .first())
+      )
+        return c.json({ error: "Clip not found" }, 404)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+
+    return c.json({ error: "Another edit is still saving. Try again." }, 409)
   })
   app.on(
     ["PATCH", "PUT", "DELETE"],
@@ -822,16 +914,14 @@ export function youtubeRoutes(app: Hono<any>) {
 
       const clip = await db
         .prepare(
-          "SELECT videoId,durationSeconds,title,description,privacy,editedAt FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
+          "SELECT videoId,durationSeconds,pendingTitle,pendingDescription FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
         )
         .bind(id, user)
         .first<{
           videoId: string
           durationSeconds: number | null
-          title: string
-          description: string
-          privacy: string
-          editedAt: number
+          pendingTitle: string | null
+          pendingDescription: string | null
         }>()
 
       if (!clip) return c.json({ error: "Clip not found" }, 404)
@@ -880,7 +970,6 @@ export function youtubeRoutes(app: Hono<any>) {
           return c.json({ error: "Invalid clip details" }, 400)
 
         const token = await access(env, a),
-          recent = clip.editedAt > Date.now() - editWindowMs,
           [v] = await videos(env, token, [clip.videoId])
 
         if (!v || v.snippet.channelId !== a.channel_id)
@@ -894,10 +983,10 @@ export function youtubeRoutes(app: Hono<any>) {
         const parts: UpdateParts = {}
 
         // A partial edit must not send a stale sibling field back to YouTube.
-        const nextTitle = title ?? (recent ? clip.title : v.snippet.title)
+        const nextTitle = title ?? clip.pendingTitle ?? v.snippet.title
 
         const nextDescription =
-          description ?? (recent ? clip.description : v.snippet.description)
+          description ?? clip.pendingDescription ?? v.snippet.description
 
         if (title !== undefined || description !== undefined)
           parts.snippet = {
@@ -941,16 +1030,11 @@ export function youtubeRoutes(app: Hono<any>) {
         )
         await db
           .prepare(
-            "UPDATE youtube_clips SET title=?,description=?,privacy=?,editedAt=? WHERE id=? AND user_id=?"
+            `UPDATE youtube_clips SET title=coalesce(?1,title),pendingTitle=coalesce(?1,pendingTitle),
+            description=coalesce(?2,description),pendingDescription=coalesce(?2,pendingDescription),
+            privacy=coalesce(?3,privacy),pendingPrivacy=coalesce(?3,pendingPrivacy),editedAt=editedAt+1,nextSync=0 WHERE id=?4 AND user_id=?5`
           )
-          .bind(
-            nextTitle,
-            nextDescription,
-            privacy ?? (recent ? clip.privacy : v.status.privacyStatus),
-            Date.now(),
-            id,
-            user
-          )
+          .bind(title ?? null, description ?? null, privacy ?? null, id, user)
           .run()
       } else return c.json({ error: "Use PATCH to edit clips" }, 405)
 
@@ -958,6 +1042,12 @@ export function youtubeRoutes(app: Hono<any>) {
     }
   )
   app.post(path + "/disconnect", async (c) => {
+    if (
+      !c.req.header("authorization") &&
+      c.req.header("Origin") !== new URL(c.req.url).origin
+    )
+      return c.json({ error: "Untrusted origin" }, 403)
+
     const env: HostedEnv = c.env,
       a = c.req.header("authorization")
         ? await obs(c)

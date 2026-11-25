@@ -24,6 +24,7 @@ import { getCookie, setCookie } from "hono/cookie"
 import { createRemoteJWKSet, jwtVerify } from "jose"
 
 import { clipTitle, labelParts } from "./clip-title"
+import { HTTPException } from "hono/http-exception"
 import { youtubeRoutes, youtubeClips, youtubeMaintenance } from "./youtube"
 import {
   cleanupDone,
@@ -601,7 +602,7 @@ app.get("/api/clips", async (c) => {
   const t = c.get("tenant")
 
   const youtube = isHosted(c.env)
-    ? await youtubeClips(c.env, c.get("who").userId)
+    ? await youtubeClips(c.env, c.get("who").userId, c.executionCtx)
     : undefined
 
   if (!t)
@@ -1192,6 +1193,9 @@ app.all("/api/*", (c) => c.json({ error: "Not found" }, 404))
 /* JSON errors, so OBS and the app can show what went wrong. A bucket key
  * that stopped working (deleted, or the bucket is gone) says so. */
 app.onError((err, c) => {
+  if (err instanceof HTTPException)
+    return c.json({ error: err.message }, err.status)
+
   if (err instanceof ClipChanged) return c.json({ error: err.message }, 409)
 
   if (err instanceof StorageError && [401, 403].includes(err.status))

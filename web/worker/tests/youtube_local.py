@@ -7,6 +7,7 @@ Pass --serve instead for an interactive fake (one disposable test channel).
 """
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
 import http.client
@@ -16,6 +17,7 @@ import re
 import secrets
 import shlex
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -37,6 +39,35 @@ revoked = False
 reads = []
 stale_reads = {}
 processing_result = "processed"
+list_gate = threading.Event()
+list_gate.set()
+failures = []
+
+
+def check(ok, label):
+    print(f"{'OK' if ok else 'FAIL'}: {label}", flush=True)
+    if not ok:
+        failures.append(label)
+
+
+def sql(statement, args=()):
+    # Only touch the disposable Wrangler database used by this exercise.
+    files = [
+        p
+        for p in Path("web/.wrangler/state/v3/d1").rglob("*.sqlite")
+        if p.name != "metadata.sqlite"
+    ]
+    assert len(files) == 1, files
+    with sqlite3.connect(files[0]) as db:
+        return db.execute(statement, args).fetchall()
+
+
+def digest(value):
+    return (
+        base64.urlsafe_b64encode(hashlib.sha256(value.encode()).digest())
+        .decode()
+        .rstrip("=")
+    )
 
 
 class Google(BaseHTTPRequestHandler):
@@ -101,9 +132,17 @@ class Google(BaseHTTPRequestHandler):
                 data["refresh_token"] = "testing-refresh"
             return self.reply(200, data)
         if p.path.startswith("/session/"):
-            assert "Authorization" not in self.headers and self.command == "PUT"
+            assert self.command == "PUT"
             s = sessions[p.path]
             rg = self.headers["content-range"]
+            auth = self.headers.get("Authorization")
+            if auth:
+                assert (
+                    rg.startswith("bytes */")
+                    and s.get("id")
+                    and auth.removeprefix("Bearer ") in tokens
+                )
+                s["verified"] = True
             if rg == f"bytes */{s['size']}":
                 assert not body
                 s["queries"].append(len(s["data"]))
@@ -172,6 +211,7 @@ class Google(BaseHTTPRequestHandler):
             if self.command == "GET":
                 assert PREFIX + "readonly" in access
                 reads.append(q["id"])
+                assert list_gate.wait(10), "library polls blocked on Google"
                 if reads.count(q["id"]) >= 2 and q["id"] in videos:
                     videos[q["id"]]["status"]["uploadStatus"] = processing_result
                 items = []
@@ -198,11 +238,13 @@ class Google(BaseHTTPRequestHandler):
 cookies = {}
 
 
-def call(path, method="GET", data=None, status=200, bearer=None):
+def call(path, method="GET", data=None, status=200, bearer=None, origin=None):
     u = urlsplit(path if path.startswith("http") else BASE + path)
     assert u.hostname in ("localhost", "127.0.0.1")
     conn = http.client.HTTPConnection(u.hostname, u.port, timeout=20)
     headers = {"content-type": "application/json"}
+    if origin:
+        headers["Origin"] = origin
     if u.port == urlsplit(BASE).port:
         headers["cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
     if bearer:
@@ -214,6 +256,9 @@ def call(path, method="GET", data=None, status=200, bearer=None):
         headers,
     )
     r = conn.getresponse()
+    if status is None:
+        r.read()
+        return r.status
     assert r.status == status, (u.path, r.status, r.read())
     if u.port == urlsplit(BASE).port:
         for name, val in r.getheaders():
@@ -226,10 +271,15 @@ def call(path, method="GET", data=None, status=200, bearer=None):
 
 
 def login(purpose, pair=False):
+    verifier = secrets.token_urlsafe(32)
     auth = call(
         "/api/youtube/connect?purpose="
         + purpose
-        + ("&obs_port=12345&obs_state=test-state" if pair else ""),
+        + (
+            "&obs_port=12345&obs_state=test-state&obs_challenge=" + digest(verifier)
+            if pair
+            else ""
+        ),
         status=302,
     )
     scopes = parse_qs(urlsplit(auth).query)["scope"][0].split()
@@ -242,7 +292,13 @@ def login(purpose, pair=False):
     assert (u.hostname, u.port, u.path) == ("127.0.0.1", 12345, "/callback"), result
     query = parse_qs(u.query)
     assert query["state"] == ["test-state"]
-    exchange = {"code": query["code"][0]}
+    exchange = {"code": query["code"][0], "verifier": verifier}
+    call(
+        "/api/youtube/obs/exchange",
+        "POST",
+        {**exchange, "verifier": secrets.token_urlsafe(32)},
+        401,
+    )
     token = call("/api/youtube/obs/exchange", "POST", exchange)["uploadToken"]
     call("/api/youtube/obs/exchange", "POST", exchange, status=401)
     return token
@@ -294,7 +350,73 @@ def exercise():
         ],
         check=True,
     )
-    token = login("login", True)
+    sid = secrets.token_urlsafe(32)
+    user = "fixture-" + secrets.token_hex(8)
+    sql("INSERT INTO users VALUES(?,?,0)", (user, "fixture@example.org"))
+    sql(
+        "INSERT INTO sessions VALUES(?,?,?)",
+        (digest(sid), user, int(time.time() * 1000) + 600000),
+    )
+    cookies["clips_sid"] = sid
+    token = login("pair", True)
+    check(
+        cookies["clips_sid"] == sid
+        and sql("SELECT user_id FROM youtube_accounts WHERE user_id=?", (user,)),
+        "pair binds existing browser session",
+    )
+    check(
+        call("/api/youtube/disconnect", "POST", {}, status=None) == 403,
+        "cookie disconnect requires a trusted Origin",
+    )
+    call(
+        "/api/youtube/disconnect",
+        "POST",
+        {},
+        status=403,
+        origin="https://other.example",
+    )
+    assert not revoked
+    call("/api/youtube/disconnect", "POST", {}, origin=BASE)
+    assert revoked
+    cookies.clear()
+    token = login("pair", True)
+    slow = call(
+        "/api/youtube/upload/start",
+        "POST",
+        dict(
+            title="slow",
+            description="",
+            privacy="private",
+            size=1,
+            category="",
+            recordedAt="2026-11-01",
+        ),
+        bearer=token,
+    )
+    sql("UPDATE youtube_clips SET uploaded='2020-01-01' WHERE id=?", (slow["clipId"],))
+    sessions[urlsplit(slow["sessionUrl"]).path]["id"] = "missing0001"
+    complete = dict(clipId=slow["clipId"], videoId="missing0001")
+    call("/api/youtube/upload/complete", "POST", complete, bearer=token)
+    call("/api/youtube/upload/status?clipId=" + slow["clipId"], bearer=token)
+    check(
+        sql("SELECT id FROM youtube_clips WHERE id=?", (slow["clipId"],)),
+        "first miss after a slow upload keeps its row",
+    )
+    clock = sql("SELECT uploaded FROM youtube_clips WHERE id=?", (slow["clipId"],))
+    assert clock and clock != [("2020-01-01",)]
+    call("/api/youtube/upload/complete", "POST", complete, bearer=token)
+    assert (
+        sql("SELECT uploaded FROM youtube_clips WHERE id=?", (slow["clipId"],)) == clock
+    )
+    sql("DELETE FROM youtube_clips WHERE id=?", (slow["clipId"],))
+    check(
+        call(
+            "/api/youtube/connect?purpose=login&obs_port=12345&obs_state=test",
+            status=None,
+        )
+        == 400,
+        "OBS pairing requires a challenge",
+    )
     me = call("/api/me")
     assert (
         me["storage"] is None
@@ -322,6 +444,7 @@ def exercise():
             and s["size"] in s["queries"]
         )
         assert p.stdout.strip() == "https://youtu.be/" + s["id"]
+        check(s.get("verified"), "Worker receipt carries a Google bearer")
         toast = (
             "is ready to play"
             if processing_result == "processed"
@@ -333,12 +456,35 @@ def exercise():
             f"Processing: uploader returned before two status checks and '{toast}' toast"
         )
         print(
-            f"One session, one video, {s['size']} identical bytes, status queries at {s['queries']}; no bearer on PUT",
+            f"One session, one video, {s['size']} identical bytes, status queries at {s['queries']}; no bearer on OBS PUT",
             flush=True,
         )
         return s["id"]
 
     vid = upload()
+    initial = (len(tokens), len(reads))
+    for _ in range(3):
+        call("/api/clips")
+    check(
+        initial == (len(tokens), len(reads)),
+        "ready polls use D1 without refreshing or listing",
+    )
+    list_gate.clear()
+    try:
+        sql("UPDATE youtube_clips SET nextSync=0 WHERE videoId=?", (vid,))
+        with ThreadPoolExecutor(4) as pool:
+            for reply in pool.map(call, ["/api/clips"] * 4):
+                assert reply["youtube"][0]["status"] == "ready"
+        for _ in range(100):
+            if len(reads) > initial[1]:
+                break
+            time.sleep(0.01)
+        assert (len(tokens), len(reads)) == (initial[0] + 1, initial[1] + 1)
+        print(
+            "Four concurrent polls returned cached rows during one blocked Google read"
+        )
+    finally:
+        list_gate.set()
     clip = call("/api/clips")["youtube"][0]
     assert (
         clip["videoId"] == vid
@@ -365,9 +511,28 @@ def exercise():
 
     actual = metadata()
     assert actual == ("New title", "New description", "private"), actual
+    time.sleep(5.3)
     call(endpoint, "PATCH", {"description": "Second edit"})
-    assert videos[vid]["snippet"]["title"] == "New title"
-    for _ in range(2):
+    check(
+        videos[vid]["snippet"]["title"] == "New title",
+        "delayed description edit preserves rename",
+    )
+
+    def sync_due():
+        # Advance just this row's schedule; the request still runs the real sync.
+        sql("UPDATE youtube_clips SET nextSync=0 WHERE videoId=?", (vid,))
+        call("/api/clips")
+        for _ in range(200):
+            row = sql("SELECT nextSync FROM youtube_clips WHERE videoId=?", (vid,))
+            if not row or (
+                row[0][0] and abs(row[0][0] - time.time() * 1000 - 60000) > 2000
+            ):
+                return
+            time.sleep(0.02)
+        raise AssertionError("background sync did not finish")
+
+    for _ in range(3):
+        sync_due()
         actual = metadata()
         assert actual == ("New title", "Second edit", "private"), actual
     assert not stale_reads[vid]
@@ -378,10 +543,27 @@ def exercise():
     call(endpoint + "/cut", "PUT", None)
     videos[vid]["snippet"]["title"] = "Renamed on YouTube"
     videos[vid]["status"]["privacyStatus"] = "unlisted"
-    time.sleep(6)  # Past the Worker's five-second edit window.
+    sync_due()
     assert metadata() == ("Renamed on YouTube", "Second edit", "unlisted")
-    print("Studio rename and visibility after the edit window: OK")
+    print("Studio rename and visibility on the next scheduled sync: OK")
+    with ThreadPoolExecutor(2) as pool:
+        list(
+            pool.map(
+                lambda payload: call(endpoint, "PATCH", payload),
+                [{"title": "Concurrent"}, {"description": "Independent"}],
+            )
+        )
+    assert metadata() == ("Concurrent", "Independent", "unlisted")
+    assert (
+        videos[vid]["snippet"]["title"] == "Concurrent"
+        and videos[vid]["snippet"]["description"] == "Independent"
+    )
+    sync_due()  # Finish the post-edit refresh before making the video disappear.
     del videos[vid]
+    sql("UPDATE youtube_clips SET uploaded='2020-01-01' WHERE videoId=?", (vid,))
+    sync_due()
+    assert call("/api/clips")["youtube"]
+    sync_due()
     assert call("/api/clips")["youtube"] == []
     processing_result = "failed"
     vid = upload()
@@ -403,7 +585,7 @@ def exercise():
     quota = True
     assert (
         "limit"
-        in call("/api/youtube/upload/start", "POST", metadata, 500, token)["error"]
+        in call("/api/youtube/upload/start", "POST", metadata, 403, token)["error"]
     )
     quota = False
     call("/api/youtube/disconnect", "POST", {}, bearer=token)
@@ -413,12 +595,13 @@ def exercise():
     revoked = True
     assert (
         "Sign in"
-        in call("/api/youtube/upload/start", "POST", metadata, 500, token)["error"]
+        in call("/api/youtube/upload/start", "POST", metadata, 401, token)["error"]
         and call("/api/me")["youtube"] is None
     )
     print(
         "Quota error, disconnect revocation, reconnect and external revocation cleanup: OK"
     )
+    assert not failures, failures
 
 
 if __name__ == "__main__":
