@@ -348,7 +348,9 @@ export function YouTubeObsSteps() {
       </li>
       <li>
         In <b>Tools → Replay to R2 Settings</b>, set <b>Destination</b> to{" "}
-        <b>YouTube</b> and click <b>Sign in with YouTube</b>.
+        <b>YouTube</b> and click <b>Sign in with YouTube</b>. When it says
+        you&apos;re connected, click <b>Save</b>: clips only go to YouTube once
+        the destination is saved.
       </li>
       <li>
         Bind <b>Save Replay and Upload</b> in <b>Settings → Hotkeys</b>, start

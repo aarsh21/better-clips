@@ -40,7 +40,8 @@ export function YouTubeSettings() {
             <b className="font-medium text-foreground">
               Tools → Replay to R2 Settings
             </b>
-            .
+            , sign in, then click{" "}
+            <b className="font-medium text-foreground">Save</b>.
           </p>
           <a
             href={youtubeConnectUrl("connect")}

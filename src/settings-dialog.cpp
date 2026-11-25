@@ -301,7 +301,7 @@ private:
 			if (!self)
 				return;
 			self->show_account(get_youtube_settings());
-			self->show_status(ok ? "Connected. Clips now upload to this channel."
+			self->show_status(ok ? "Connected. Click Save to upload clips to this channel."
 					     : QString("Couldn't sign in: %1").arg(QString::fromStdString(error)),
 					  !ok);
 		});
