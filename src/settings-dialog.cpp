@@ -116,13 +116,13 @@ public:
 		emit started();
 		youtube_disconnect([this](DisconnectResult result) {
 			pending = false;
-			emit finished(result != DisconnectResult::Failed);
+			emit finished(result);
 		});
 	}
 
 signals:
 	void started();
-	void finished(bool ok);
+	void finished(DisconnectResult result);
 };
 
 /* The YouTube page of the settings: the channel, and the upload defaults
@@ -143,18 +143,22 @@ public:
 		connect(disconnect_button, &QPushButton::clicked, &disconnect, &DisconnectState::start);
 		disconnect_button->setDisabled(disconnect.pending);
 		connect(&disconnect, &DisconnectState::started, this, [this] { disconnect_button->setEnabled(false); });
-		connect(&disconnect, &DisconnectState::finished, this, [this](bool ok) {
+		connect(&disconnect, &DisconnectState::finished, this, [this](DisconnectResult result) {
 			disconnect_button->setEnabled(true);
 			auto current = get_youtube_settings();
 			show_account(current);
-			if (!ok)
+			if (result == DisconnectResult::Failed)
 				show_status("Could not disconnect YouTube. Try again.", true);
-			else if (current.upload_token.empty())
+			/* You signed in again while it ran: that new connection stands. */
+			else if (!current.upload_token.empty())
+				show_status("");
+			else if (result == DisconnectResult::Revoked)
 				show_status(
 					"Disconnected. The app no longer has access to your channel, and its YouTube "
 					"clips are gone from your library. Your videos stay on YouTube.");
 			else
-				show_status("");
+				show_status("This OBS is no longer connected. Your channel is still connected to the "
+					    "Clips app; disconnect it there or in your Google Account.");
 		});
 		auto *account = new QHBoxLayout();
 		account->addWidget(channel, 1);
