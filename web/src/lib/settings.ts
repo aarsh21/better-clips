@@ -25,6 +25,11 @@ export function useHasBucket() {
   return account === null || account.storage !== null
 }
 
+/* Whether a YouTube channel is connected (hosted app). */
+export function useHasChannel() {
+  return Boolean(useAccount()?.youtube)
+}
+
 /* Polls while waiting for OBS, so the app notices Test Upload right away. */
 export function useSettings(waitForObs = false) {
   return useQuery({

@@ -2,12 +2,14 @@ import * as React from "react"
 import {
   ArchiveIcon,
   BookmarkSimpleIcon,
+  CloudIcon,
   FilmSlateIcon,
   GearSixIcon,
   MagnifyingGlassIcon,
   MoonIcon,
   SunIcon,
   TrashIcon,
+  YoutubeLogoIcon,
 } from "@phosphor-icons/react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
@@ -31,20 +33,31 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button-variants"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ManagePermissionDialog, YouTubeObsSteps } from "@/components/youtube"
+import {
+  ManagePermissionDialog,
+  YOUTUBE_RED,
+  YouTubeObsSteps,
+} from "@/components/youtube"
 import {
   api,
   bucketBytes,
   formatBytes,
   NoStorageError,
   SignInError,
+  youtubeConnectUrl,
   type Clip,
   type Settings,
 } from "@/lib/api"
 import { useClips, useNewClipToasts, useThumbnailWorker } from "@/lib/clips"
-import { retentionText, useHasBucket, useSettings } from "@/lib/settings"
+import {
+  retentionText,
+  useHasBucket,
+  useHasChannel,
+  useSettings,
+} from "@/lib/settings"
 import { useResumeYouTubeChange } from "@/lib/youtube"
 import {
   byNewest,
@@ -231,6 +244,7 @@ export default function App() {
           error={error}
           hasBucket={hasBucket}
           onOpen={(c) => openClip(c.key)}
+          onSettings={openSettings}
           toolbar={
             <ClipToolbar
               categories={categories}
@@ -456,6 +470,7 @@ function ClipsBody({
   toolbar,
   byDay,
   hasBucket,
+  onSettings,
 }: {
   clips: Clip[] | undefined
   visible: Clip[]
@@ -464,10 +479,12 @@ function ClipsBody({
   error: Error | null
   hasBucket: boolean
   onOpen: (clip: Clip) => void
+  onSettings: (tab: SettingsTab) => void
   toolbar: React.ReactNode
   byDay: boolean
 }) {
   const { data: settings } = useSettings()
+  const hasChannel = useHasChannel()
 
   if (error)
     return (
@@ -480,7 +497,15 @@ function ClipsBody({
 
   if (pending || !clips) return <GridSkeleton />
 
-  if (!clips.length) return hasBucket ? <FirstRun /> : <YouTubeFirstRun />
+  if (!clips.length) {
+    if (hasBucket) return <FirstRun />
+
+    return hasChannel ? (
+      <YouTubeFirstRun />
+    ) : (
+      <ChooseDestination onOwnKey={() => onSettings("storage")} />
+    )
+  }
 
   if (visible.length)
     return (
@@ -587,6 +612,63 @@ function YouTubeFirstRun() {
         Clips you save in OBS go to your YouTube channel and show up here.
       </p>
       <YouTubeObsSteps />
+    </div>
+  )
+}
+
+/* A hosted account with neither a bucket nor a channel yet: pick where
+ * clips go before OBS can send any. */
+function ChooseDestination({ onOwnKey }: { onOwnKey: () => void }) {
+  return (
+    <div className="mx-auto max-w-2xl py-16">
+      <h1 className="mb-1 text-base font-semibold">
+        Choose where your clips go
+      </h1>
+      <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
+        Keep them in a bucket in your own Cloudflare account, or upload them to
+        your YouTube channel. You can add the other one later.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-3 border bg-muted/30 p-4">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <CloudIcon weight="fill" className="size-4 text-primary" />
+            Your own R2 bucket
+          </p>
+          <p className="flex-1 text-[11px] leading-relaxed text-muted-foreground">
+            Download clips, trim them losslessly and share them with expiring
+            links. Free up to 10 GB.
+          </p>
+          <a href="/api/auth/setup" className={buttonVariants()}>
+            Set up automatically
+          </a>
+          <button
+            type="button"
+            onClick={onOwnKey}
+            className="self-start text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Use another bucket, with your own key
+          </button>
+        </div>
+        <div className="flex flex-col gap-3 border bg-muted/30 p-4">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <YoutubeLogoIcon
+              weight="fill"
+              className={cn("size-4", YOUTUBE_RED)}
+            />
+            Your YouTube channel
+          </p>
+          <p className="flex-1 text-[11px] leading-relaxed text-muted-foreground">
+            OBS uploads each clip to your channel, and you watch, rename and cut
+            them here. They take no storage.
+          </p>
+          <a
+            href={youtubeConnectUrl("connect")}
+            className={buttonVariants({ variant: "outline" })}
+          >
+            Connect YouTube
+          </a>
+        </div>
+      </div>
     </div>
   )
 }

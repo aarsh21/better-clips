@@ -1,9 +1,14 @@
 import * as React from "react"
-import { DesktopIcon, MoonIcon, SunIcon } from "@phosphor-icons/react"
+import {
+  CaretDownIcon,
+  DesktopIcon,
+  MoonIcon,
+  SunIcon,
+} from "@phosphor-icons/react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
 
-import { useSignOut } from "@/components/connect-storage"
+import { OwnKeyForm, useSignOut } from "@/components/connect-storage"
 import { YouTubeObsSteps } from "@/components/youtube"
 import { YouTubeSettings } from "@/components/youtube-settings"
 import { Segmented } from "@/components/segmented"
@@ -26,6 +31,7 @@ import {
   retentionText,
   useAccount,
   useHasBucket,
+  useHasChannel,
   useMe,
   useSaveSettings,
   useSettings,
@@ -49,6 +55,7 @@ export function SettingsDialog({
   /* YouTube is only on the hosted app. */
   const hosted = useAccount() !== null
   const hasBucket = useHasBucket()
+  const hasChannel = useHasChannel()
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -78,7 +85,13 @@ export function SettingsDialog({
           </TabsList>
           <div className="px-5 py-5">
             <TabsContent value="obs">
-              {hasBucket ? <ObsConnect /> : <YouTubeObsSteps />}
+              {hasBucket ? (
+                <ObsConnect />
+              ) : hasChannel ? (
+                <YouTubeObsSteps />
+              ) : (
+                <ChooseFirst onTab={onTab} />
+              )}
             </TabsContent>
             <TabsContent value="storage">
               <StorageSettings />
@@ -98,6 +111,27 @@ export function SettingsDialog({
   )
 }
 
+/* OBS has nowhere to send clips until there's a bucket or a channel. */
+function ChooseFirst({ onTab }: { onTab: (tab: SettingsTab) => void }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Choose where your clips go first: a bucket in your own Cloudflare
+        account, or your YouTube channel. Then this tab shows how to connect
+        OBS.
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={() => onTab("storage")}>
+          Set up a bucket
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => onTab("youtube")}>
+          Connect YouTube
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 const REPLAY_OPTIONS = [7, 14, 30, 60, 90, null]
 const TRASH_OPTIONS = [1, 3, 7, 14, 30]
 
@@ -106,15 +140,19 @@ function StorageSettings() {
   const { data: clips } = useClips()
   const save = useSaveSettings()
   const hasBucket = useHasBucket()
+  const hasChannel = useHasChannel()
+  /* Without a channel either, you came here to set up a bucket by hand. */
+  const [own, setOwn] = React.useState(!hasChannel)
 
   if (!hasBucket)
     return (
       <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Your clips are on YouTube, so they take no storage here. Want clips
-            you can download, trim losslessly and share with expiring links? Add
-            an R2 bucket in your own Cloudflare account, free up to 10 GB.
+            {hasChannel
+              ? "Your clips are on YouTube, so they take no storage here. Want clips you can download, trim losslessly and share with expiring links? "
+              : "No bucket is connected yet. "}
+            Add an R2 bucket in your own Cloudflare account, free up to 10 GB.
           </p>
           <a
             href="/api/auth/setup"
@@ -124,8 +162,23 @@ function StorageSettings() {
               className: "self-start",
             })}
           >
-            Set up a bucket
+            Set up automatically
           </a>
+          <button
+            type="button"
+            aria-expanded={own}
+            onClick={() => setOwn(!own)}
+            className="mt-1 flex items-center gap-1.5 self-start text-[11px] text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:text-foreground"
+          >
+            <CaretDownIcon
+              className={cn(
+                "size-3 transition-transform",
+                !own && "-rotate-90"
+              )}
+            />
+            Use another bucket, with your own key
+          </button>
+          {own && <OwnKeyForm />}
         </div>
         <AccountSettings />
       </div>

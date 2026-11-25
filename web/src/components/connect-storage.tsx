@@ -61,7 +61,7 @@ export function ConnectStorage() {
   )
 }
 
-function OwnKeyForm() {
+export function OwnKeyForm() {
   const [s3Url, setS3Url] = React.useState("")
   const [accessKeyId, setAccessKeyId] = React.useState("")
   const [secretAccessKey, setSecretAccessKey] = React.useState("")
