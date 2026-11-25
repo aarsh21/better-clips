@@ -4,9 +4,9 @@
 
 **Press a hotkey in a game. The last 30 seconds are in your browser a moment later.**
 
-An OBS plugin that sends your replay buffer straight to Cloudflare R2, without
-ever writing the clip to disk, and a fast web app to watch, trim, keep and share
-what it uploads.
+An OBS plugin that sends your replay buffer straight to your YouTube channel or
+your own R2 or S3 bucket, without ever writing the clip to disk, and a fast web
+app to watch, trim, keep and share what it uploads.
 
 [![Latest release](https://img.shields.io/github/v/release/aarsh21/better-clips?label=release&color=f0a640)](https://github.com/aarsh21/better-clips/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/aarsh21/better-clips/push.yaml?branch=main&label=plugin%20build)](https://github.com/aarsh21/better-clips/actions/workflows/push.yaml)
@@ -30,8 +30,9 @@ the file, upload it somewhere and copy a link. Better Clips skips all of that:
   clip only touches disk if it can't be uploaded.
 - **No extra encoding.** It reuses the frames OBS already encoded for its
   Replay Buffer, so it costs no GPU or CPU while you play.
-- **Your storage, your clips.** Clips go to your own R2 bucket. R2 has no
-  egress fees and the first 10 GB a month are free.
+- **Your storage, your clips.** Clips go to your own YouTube channel, R2
+  bucket or S3 bucket. YouTube storage is unlimited; R2 has no egress fees and
+  the first 10 GB a month are free.
 - **Ready to share.** The MP4 has its index up front, so clips start playing
   instantly in the browser, and share links embed as video in Discord.
 
@@ -44,6 +45,7 @@ the file, upload it somewhere and copy a link. Better Clips skips all of that:
 **In OBS**
 
 - **Save Replay and Upload** hotkey and a dock next to Controls
+- Upload to YouTube, an R2 bucket through the web app, or any S3 bucket
 - Change the replay length live, without restarting the buffer
 - Retries failed uploads, then saves the clip to your recording folder
 - H.264, HEVC and AV1 video, AAC and Opus audio, every audio track
@@ -56,6 +58,7 @@ the file, upload it somewhere and copy a link. Better Clips skips all of that:
 **In the web app**
 
 - Clips grouped by day, with hover previews and search (`/` or `⌘K`)
+- YouTube clips next to bucket clips: play, rename, cut, change visibility
 - Lossless trimming in the browser, with no re-encoding
 - Keep forever, trash, restore, rename, download
 - Share links that expire after 1, 7 or 30 days, or never
@@ -79,32 +82,44 @@ the file, upload it somewhere and copy a link. Better Clips skips all of that:
 
 ## Install
 
-Setup takes about two minutes and needs no R2 API keys.
-
-**1. Deploy your clips app.** It runs free on Cloudflare Workers, and Cloudflare
-creates the R2 bucket for you. Pick a password when it asks for `APP_PASSWORD`.
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/aarsh21/better-clips/tree/main/web)
-
-**2. Connect OBS.** Open your app, sign in and click **Connect OBS**. Copy the
-command for your system into a terminal:
+**1. Install the plugin.** Run this in a terminal:
 
 ```sh
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/aarsh21/better-clips/main/install.sh | sh -s -- '<setup code>'
+curl -fsSL https://raw.githubusercontent.com/aarsh21/better-clips/main/install.sh | sh
 ```
 
 ```powershell
 # Windows (PowerShell)
-$env:CLIPS_SETUP_CODE='<setup code>'; irm https://raw.githubusercontent.com/aarsh21/better-clips/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/aarsh21/better-clips/main/install.ps1 | iex
 ```
 
-The script waits for OBS to close, installs the latest release, connects it to
-your app, turns on the Replay Buffer, binds **Ctrl+Alt+R** and reopens OBS.
-On Linux, only removing an old system-wide install may need sudo. The command
-contains your setup code, so keep it private.
+The script waits for OBS to close and installs the latest release. If you used
+Replay to R2 before, it removes the old plugin and Better Clips keeps your
+settings. On Linux, only removing an old system-wide install may need sudo; on
+Windows, it asks once for permission.
 
-**3. Play.** Press **Ctrl+Alt+R** and the clip shows up in your app.
+**2. Choose where clips go.** In OBS, open **Tools → Better Clips Settings** and
+pick a **Destination**:
+
+- **YouTube, directly.** Choose **Directly to YouTube**, click **Sign in with
+  YouTube** and allow access in your browser. Clips upload to your channel as
+  unlisted videos and the link is copied for you. Nothing else to set up.
+- **The Better Clips app.** Sign in at
+  [clips.zabimaru.me](https://clips.zabimaru.me) with Cloudflare, which creates
+  an R2 bucket in your own account, or with Google for your YouTube clips. Then
+  open **Settings → OBS** in the app and copy the install command shown there:
+  it's the command above with your setup code built in, so it also connects
+  OBS, turns on the Replay Buffer and binds **Ctrl+Alt+R**. For YouTube through
+  the app, choose **YouTube → Through the Better Clips app** in OBS and sign in.
+- **An S3 bucket.** See **Upload straight to a bucket** below.
+
+**3. Play.** Enable the Replay Buffer in **Settings → Output**, bind **Save
+Replay and Upload** in **Settings → Hotkeys** (the setup code does both for
+you), and press it in a game.
+
+Questions about YouTube, permissions or privacy? See the
+[FAQ](https://clips.zabimaru.me/faq).
 
 <details>
 <summary><b>Install by hand</b></summary>
@@ -113,10 +128,25 @@ contains your setup code, so keep it private.
    [latest release](https://github.com/aarsh21/better-clips/releases/latest):
    the `.zip` for Windows, the `.pkg` for macOS, or the `.deb` for Ubuntu and
    Debian.
-2. In OBS, open **Tools → Better Clips Settings**, click **Paste setup code**,
-   then **Test Upload** and **Save**.
+2. In OBS, open **Tools → Better Clips Settings** and choose a destination as
+   in step 2 above. For the Better Clips app, click **Paste setup code**, then
+   **Test Upload** and **Save**.
 3. Enable the Replay Buffer in **Settings → Output**, and bind **Save Replay and
    Upload** in **Settings → Hotkeys**.
+
+</details>
+
+<details>
+<summary><b>Host your own Better Clips app</b></summary>
+
+The app runs free on Cloudflare Workers, and Cloudflare creates the R2 bucket for
+you. Pick a password when it asks for `APP_PASSWORD`.
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/aarsh21/better-clips/tree/main/web)
+
+Then open your app, sign in and click **Connect OBS** for an install command with
+your setup code. A self-hosted app stores clips in its bucket; YouTube needs the
+hosted app or direct mode. See [web/README.md](web/README.md) for details.
 
 </details>
 
@@ -124,9 +154,10 @@ contains your setup code, so keep it private.
 <summary><b>Upload straight to a bucket, without the app</b></summary>
 
 The plugin can upload to any S3-compatible bucket. Create an R2 API token with
-**Object Read & Write** for one bucket, then fill in **S3 API URL**
+**Object Read & Write** for one bucket, then choose **S3 bucket** as the
+**Destination** and fill in **S3 API URL**
 (`https://<account-id>.r2.cloudflarestorage.com/<bucket>`), **Access Key ID**
-and **Secret Access Key** in the plugin settings and leave **Clips app** empty.
+and **Secret Access Key**.
 
 </details>
 
