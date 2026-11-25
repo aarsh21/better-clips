@@ -351,8 +351,8 @@ export function YouTubeObsSteps() {
         <b>YouTube</b> and click <b>Sign in with YouTube</b>.
       </li>
       <li>
-        Bind <b>Save Replay to Cloudflare R2</b> in <b>Settings → Hotkeys</b>,
-        start the Replay Buffer and press it.
+        Bind <b>Save Replay and Upload</b> in <b>Settings → Hotkeys</b>, start
+        the Replay Buffer and press it.
       </li>
     </ol>
   )

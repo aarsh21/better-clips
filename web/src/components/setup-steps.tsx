@@ -222,8 +222,8 @@ function ManualSteps({
         , then <b>Test Upload</b> and <b>Save</b>.
       </Step>
       <Step n={4} title="Pick a hotkey">
-        In <b>Settings → Hotkeys</b>, bind <b>Save Replay to Cloudflare R2</b>.
-        Start the Replay Buffer and press it.
+        In <b>Settings → Hotkeys</b>, bind <b>Save Replay and Upload</b>. Start
+        the Replay Buffer and press it.
       </Step>
     </ol>
   )

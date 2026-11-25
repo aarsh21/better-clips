@@ -114,8 +114,8 @@ Nothing needs sudo. The command contains your setup code, so keep it private.
    Debian.
 2. In OBS, open **Tools → Replay to R2 Settings**, click **Paste setup code**,
    then **Test Upload** and **Save**.
-3. Enable the Replay Buffer in **Settings → Output**, and bind **Save Replay to
-   Cloudflare R2** in **Settings → Hotkeys**.
+3. Enable the Replay Buffer in **Settings → Output**, and bind **Save Replay and
+   Upload** in **Settings → Hotkeys**.
 
 </details>
 
@@ -212,7 +212,7 @@ plugin adds its own button and hotkey next to them.
 Wayland only sends key presses to the focused window, and OBS has no global
 hotkey support there yet
 ([obs-studio#10538](https://github.com/obsproject/obs-studio/issues/10538)).
-On Hyprland, keep your key bound to **Save Replay to Cloudflare R2** in OBS
+On Hyprland, keep your key bound to **Save Replay and Upload** in OBS
 (Ctrl + Alt + R below) and let Hyprland pass it to OBS:
 
 ```lua

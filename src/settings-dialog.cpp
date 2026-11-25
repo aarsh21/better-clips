@@ -419,7 +419,7 @@ private:
 			pages->widget(i)->setSizePolicy(QSizePolicy::Preferred,
 							i == int(to) ? QSizePolicy::Preferred : QSizePolicy::Ignored);
 
-		const char *hotkey = "Then bind <b>Save Replay to Cloudflare R2</b> in Settings &gt; Hotkeys.";
+		const char *hotkey = "Then bind <b>Save Replay and Upload</b> in Settings &gt; Hotkeys.";
 		if (to == Destination::ClipsApp)
 			help->setText(QString("Saved replays upload from memory to your clips app and are never "
 					      "written to disk.<br>Easiest: open your clips app, click <b>Connect "
@@ -693,7 +693,7 @@ void check_connection_async(const R2Config &config)
 		std::string where, error;
 		if (test_connection(config, where, error))
 			notify_user("Replay to R2: connected to " + where +
-				    ". Press your Save Replay to Cloudflare R2 hotkey to save a clip.");
+				    ". Press your Save Replay and Upload hotkey to save a clip.");
 		else
 			notify_user("Replay to R2: could not connect (" + error + ")");
 		tests_running--;
