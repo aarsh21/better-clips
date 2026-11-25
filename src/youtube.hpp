@@ -6,9 +6,12 @@
 
 /* Where saved replays go. ClipsApp and S3 use R2Config as before. */
 enum class Destination { ClipsApp, S3, YouTube };
+enum class YouTubeRoute { ClipsApp, Direct };
 
 struct YouTubeSettings {
 	Destination destination = Destination::ClipsApp;
+	YouTubeRoute route = YouTubeRoute::ClipsApp;
+	std::string refresh_token; /* Direct only; never sent to the Clips app */
 	/* Set by youtube_connect_async; empty when not connected. */
 	std::string app_url;      /* the hosted Clips app that keeps the Google tokens */
 	std::string upload_token; /* OBS's token for that app */
@@ -25,11 +28,13 @@ struct YouTubeSettings {
 YouTubeSettings get_youtube_settings();
 void set_youtube_settings(const YouTubeSettings &settings);
 
-/* Sign in with YouTube: opens the browser at app_url and waits on a loopback
- * port. done runs on the UI thread with a user-facing error when !ok. */
-void youtube_connect_async(const std::string &app_url, std::function<void(bool ok, const std::string &error)> done);
+bool youtube_direct_available(); /* false when the build has no Google client ID */
+/* Opens the Clips app or Google (Direct ignores app_url), then waits on a
+ * loopback port. done runs on the UI thread with a user-facing error when !ok. */
+void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
+			   std::function<void(bool ok, const std::string &error)> done);
 
-/* Revokes access through the app. done runs on the UI thread after the settings update,
+/* Revokes access through the current route. done runs on the UI thread after the settings update,
  * unless OBS shuts down first. */
 enum class DisconnectResult { Revoked, Unpaired, Failed };
 void youtube_disconnect(std::function<void(DisconnectResult result)> done);

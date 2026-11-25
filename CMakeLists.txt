@@ -13,6 +13,11 @@ include(helpers)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
+set(YOUTUBE_CLIENT_ID "$ENV{YOUTUBE_CLIENT_ID}" CACHE STRING "Google Desktop OAuth client ID")
+set(YOUTUBE_CLIENT_SECRET "$ENV{YOUTUBE_CLIENT_SECRET}" CACHE STRING "Google Desktop OAuth client secret")
+configure_file(src/youtube-client.hpp.in generated/youtube-client.hpp @ONLY)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 find_package(libobs REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
 

@@ -77,6 +77,8 @@ void load_config()
 	dock_placed = obs_data_get_bool(data, "dock_placed");
 	obs_data_set_default_int(data, "destination", config.app_url.empty() && !config.s3_url.empty() ? 1 : 0);
 	youtube.destination = static_cast<Destination>(obs_data_get_int(data, "destination"));
+	youtube.route = static_cast<YouTubeRoute>(obs_data_get_int(data, "youtube_route"));
+	youtube.refresh_token = obs_data_get_string(data, "youtube_refresh_token");
 	youtube.app_url = obs_data_get_string(data, "youtube_app_url");
 	youtube.upload_token = obs_data_get_string(data, "youtube_upload_token");
 	youtube.channel_id = obs_data_get_string(data, "youtube_channel_id");
@@ -110,6 +112,8 @@ void save_config()
 		obs_data_set_string(data, "public_url", config.public_url.c_str());
 		obs_data_set_bool(data, "start_replay_buffer", config.start_replay_buffer);
 		obs_data_set_int(data, "destination", static_cast<int>(youtube.destination));
+		obs_data_set_int(data, "youtube_route", static_cast<int>(youtube.route));
+		obs_data_set_string(data, "youtube_refresh_token", youtube.refresh_token.c_str());
 		obs_data_set_string(data, "youtube_app_url", youtube.app_url.c_str());
 		obs_data_set_string(data, "youtube_upload_token", youtube.upload_token.c_str());
 		obs_data_set_string(data, "youtube_channel_id", youtube.channel_id.c_str());
@@ -331,7 +335,9 @@ void save_replay_to_r2()
 	}
 	R2Config current = get_config();
 	auto yt = get_youtube_settings();
-	if (yt.destination == Destination::YouTube && (yt.app_url.empty() || yt.upload_token.empty())) {
+	if (yt.destination == Destination::YouTube &&
+	    (yt.route == YouTubeRoute::Direct ? !youtube_direct_available() || yt.refresh_token.empty()
+					      : yt.app_url.empty() || yt.upload_token.empty())) {
 		notify_user("Sign in with YouTube in Tools > Replay to R2 Settings");
 		return;
 	}

@@ -136,6 +136,9 @@ jobs:
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
+        env: &desktop-oauth
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
         with:
           target: macos-universal
           config: ${{ needs.check-event.outputs.config }}
@@ -213,6 +216,7 @@ jobs:
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
+        env: *desktop-oauth
         with:
           target: x86_64
           config: ${{ needs.check-event.outputs.config }}
@@ -279,6 +283,7 @@ jobs:
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
+        env: *desktop-oauth
         with:
           target: x64
           config: ${{ needs.check-event.outputs.config }}

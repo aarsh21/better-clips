@@ -297,7 +297,7 @@ private:
 		show_status("Finish signing in to Google in your browser. This updates when you're done.");
 
 		QPointer<YouTubePage> self(this);
-		youtube_connect_async(url, [self](bool ok, const std::string &error) {
+		youtube_connect_async(YouTubeRoute::ClipsApp, url, [self](bool ok, const std::string &error) {
 			if (!self)
 				return;
 			self->show_account(get_youtube_settings());
