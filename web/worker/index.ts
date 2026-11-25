@@ -729,6 +729,21 @@ app.delete("/api/clips/*", async (c) => {
   return c.json({ ok: true })
 })
 
+/* Deletes every clip in the trash, with its thumbnail. */
+app.delete("/api/trash", async (c) => {
+  const t = c.get("tenant")
+
+  const keys = (await t.store.list("trash/")).flatMap((o) =>
+    clipKey(o.key)?.folder === "trash" ? [o.key] : []
+  )
+
+  const gone = keys.length ? await deleteClips(t.store, keys) : []
+
+  await t.meta.forget(gone)
+
+  return c.json({ deleted: gone.length, failed: keys.length - gone.length })
+})
+
 /* ---- Sharing ---- */
 
 app.post("/api/share", async (c) => {

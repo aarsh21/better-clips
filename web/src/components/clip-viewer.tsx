@@ -30,6 +30,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -397,12 +398,15 @@ function ShareMenu({ onShare }: { onShare: (days: number | null) => void }) {
         Share
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-44">
-        <DropdownMenuLabel>Copy a link that works for</DropdownMenuLabel>
-        {SHARE_OPTIONS.map(({ label, days }) => (
-          <DropdownMenuItem key={label} onClick={() => onShare(days)}>
-            {label}
-          </DropdownMenuItem>
-        ))}
+        {/* Base UI only allows a menu label inside a group. */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Copy a link that works for</DropdownMenuLabel>
+          {SHARE_OPTIONS.map(({ label, days }) => (
+            <DropdownMenuItem key={label} onClick={() => onShare(days)}>
+              {label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   )

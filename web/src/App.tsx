@@ -9,6 +9,7 @@ import {
   SunIcon,
   TrashIcon,
 } from "@phosphor-icons/react"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
 import { toast } from "sonner"
 
@@ -18,10 +19,21 @@ import type { SettingsTab } from "@/components/settings-dialog"
 import { ObsConnect } from "@/components/setup-steps"
 import { SignIn } from "@/components/sign-in"
 import { useTheme } from "@/components/theme-provider"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
+  api,
   formatBytes,
   NoStorageError,
   SignInError,
@@ -416,11 +428,86 @@ function ClipsBody({
 
   if (!clips.length) return <FirstRun />
 
-  if (visible.length) return <ClipGrid clips={visible} onOpen={onOpen} />
+  if (visible.length)
+    return (
+      <>
+        {view === "trash" && <TrashBar clips={visible} settings={settings} />}
+        <ClipGrid clips={visible} onOpen={onOpen} />
+      </>
+    )
 
   const tab = TABS[view]
 
   return <Empty icon={tab.icon} title={tab.empty} body={tab.hint(settings)} />
+}
+
+/* Above the trash: when it clears itself, and a way to clear it now. */
+function TrashBar({
+  clips,
+  settings,
+}: {
+  clips: Clip[]
+  settings: Settings | undefined
+}) {
+  const [confirming, setConfirming] = React.useState(false)
+  const qc = useQueryClient()
+
+  const empty = useMutation({
+    mutationFn: api.emptyTrash,
+    onSuccess: ({ deleted, failed }) => {
+      if (failed)
+        toast.error(
+          `Deleted ${deleted}, but ${failed} couldn't be deleted. Try again.`
+        )
+      else
+        toast.success(
+          `Deleted ${deleted} ${deleted === 1 ? "clip" : "clips"} forever`
+        )
+    },
+    onError: (err) => toast.error(err.message),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["clips"] }),
+  })
+
+  const size = formatBytes(clips.reduce((n, c) => n + c.size, 0))
+
+  return (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border px-4 py-3">
+      <p className="text-xs text-muted-foreground">
+        {clips.length} {clips.length === 1 ? "clip" : "clips"} · {size}.
+        They&apos;re deleted for good after{" "}
+        {retentionText(settings?.trashDays ?? 7)}.
+      </p>
+      <Button
+        variant="destructive"
+        size="sm"
+        disabled={empty.isPending}
+        onClick={() => setConfirming(true)}
+      >
+        <TrashIcon />
+        {empty.isPending ? "Emptying…" : "Empty trash"}
+      </Button>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Empty the trash?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {clips.length} {clips.length === 1 ? "clip" : "clips"} ({size})
+              will be removed from your bucket. This can&apos;t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => empty.mutate()}
+            >
+              Delete forever
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
 }
 
 function FirstRun() {

@@ -294,6 +294,10 @@ export const api = {
     }),
   destroy: (key: string) =>
     request<{ ok: true }>(`/api/clips/${enc(key)}`, { method: "DELETE" }),
+  emptyTrash: () =>
+    request<{ deleted: number; failed: number }>("/api/trash", {
+      method: "DELETE",
+    }),
   share: (key: string, days: number | null) =>
     request<{ url: string; key: string }>("/api/share", {
       method: "POST",

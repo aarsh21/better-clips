@@ -32,10 +32,10 @@ export function ConnectStorage() {
           Set up automatically
         </a>
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Cloudflare asks once to let clips create a <b>clips</b> bucket and a
-          key for just that bucket. clips asks Cloudflare to cancel that
-          permission as soon as it&apos;s done, and never touches existing
-          buckets.
+          For new users: makes a new, empty bucket. Cloudflare asks once to let
+          clips create it and a key for just that bucket. clips asks Cloudflare
+          to cancel that permission as soon as it&apos;s done, and never touches
+          existing buckets.
         </p>
       </div>
 
@@ -48,7 +48,7 @@ export function ConnectStorage() {
         <CaretDownIcon
           className={cn("size-3 transition-transform", !own && "-rotate-90")}
         />
-        Use my own bucket and key instead
+        Already have clips in a bucket? Connect it with a key
       </button>
       {own && <OwnKeyForm />}
 
