@@ -7,6 +7,10 @@ the web app ships from `main`.
 
 ### Web app
 
+- Fixed the page going blank when opening the **Share** menu.
+- An **Empty trash** button on the Trash tab.
+- The storage screen now says which option is for a bucket that already holds
+  your clips.
 - **Hosted mode.** One deployment can serve many people: sign in with
   Cloudflare and bring your own R2 bucket, either one the app creates or one
   you connect with a bucket-only key. Videos load straight from each bucket
@@ -14,6 +18,14 @@ the web app ships from `main`.
 - Share links are pinned to the recording and thumbnail they were made from.
 - Cleanup in a connected bucket waits until you confirm the lengths, and only
   deletes `.mp4` clips.
+
+## [0.1.5] - 2026-11-25
+
+### Plugin
+
+- A clip that can't be uploaded is saved to OBS's recording folder instead of
+  being lost: after every retry fails, when OBS closes mid-upload, or when 3
+  clips are already waiting to upload.
 
 ## [0.1.4] - 2026-11-24
 
@@ -60,6 +72,7 @@ the web app ships from `main`.
   clips to Cloudflare R2 without writing them to disk.
 - The clips web app to browse, preview, trim, keep, delete and share clips.
 
+[0.1.5]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.5
 [0.1.4]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.4
 [0.1.3]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.3
 [0.1.2]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.2
