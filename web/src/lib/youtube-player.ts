@@ -125,6 +125,26 @@ export function useYouTubePlayer(
   return { player, playing }
 }
 
+/* YouTube's end parameter only stops the first play: its replay button, or
+ * a seek past the end, plays the whole video. So a cut clip stops at the
+ * cut's end here, and waits at its start for the next play. */
+export function useCutEnd(player: Player | null, cut: Cut | null) {
+  const start = cut?.start
+  const end = cut?.end
+
+  React.useEffect(() => {
+    if (!player || start === undefined || end === undefined) return
+
+    const timer = setInterval(() => {
+      if (player.getCurrentTime() < end - 0.15) return
+      player.pauseVideo()
+      player.seekTo(start, true)
+    }, 100)
+
+    return () => clearInterval(timer)
+  }, [player, start, end])
+}
+
 export function togglePlayer(player: Player | null, playing: boolean) {
   if (playing) player?.pauseVideo()
   else player?.playVideo()

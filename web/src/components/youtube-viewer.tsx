@@ -42,6 +42,7 @@ import {
 import {
   embedUrl,
   togglePlayer,
+  useCutEnd,
   useYouTubePlayer,
   type Player,
 } from "@/lib/youtube-player"
@@ -70,6 +71,9 @@ export function YouTubeViewer({
   /* Cutting shows the whole video, so you can move the cut outwards. */
   const src = embedUrl(clip.videoId, mode === "cut" ? null : clip.cut)
   const { player, playing } = useYouTubePlayer(iframe, ready ? src : "")
+
+  /* The cut bar loops inside the range it's editing instead. */
+  useCutEnd(player, mode === "cut" ? null : clip.cut)
   const duration = clip.durationSeconds || player?.getDuration() || 0
 
   const apply = (change: YouTubeChange) => mutate({ clip, change })
