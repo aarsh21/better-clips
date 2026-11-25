@@ -17,8 +17,13 @@ import {
 const scope = (name: string) =>
   `https://www.googleapis.com/auth/youtube.${name}`
 
-const basic = [scope("upload"), scope("readonly")]
-const manage = scope("force-ssl")
+const requiredScopes = [
+  "openid",
+  "email",
+  scope("upload"),
+  scope("readonly"),
+  scope("force-ssl"),
+]
 
 const api = (env: HostedEnv) =>
   local(env.YOUTUBE_API) ?? "https://www.googleapis.com"
@@ -100,7 +105,6 @@ export async function youtubeInfo(env: HostedEnv, user: string) {
     a && {
       channelId: a.channel_id,
       channelTitle: a.channel_title,
-      canManage: a.scopes.split(" ").includes(manage),
     }
   )
 }
@@ -453,7 +457,7 @@ export function youtubeRoutes(app: Hono<any>) {
     if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET)
       return c.redirect("/?auth_error=YouTube+sign-in+is+not+configured")
 
-    if (!["pair", "login", "connect", "manage"].includes(purpose))
+    if (!["pair", "login", "connect"].includes(purpose))
       return c.json({ error: "Invalid purpose" }, 400)
     const who = await signedIn(c)
 
@@ -504,12 +508,7 @@ export function youtubeRoutes(app: Hono<any>) {
       redirect_uri: callback(c),
       response_type: "code",
       state: f.state,
-      scope: [
-        "openid",
-        "email",
-        ...basic,
-        ...(purpose === "manage" ? [manage] : []),
-      ].join(" "),
+      scope: requiredScopes.join(" "),
       access_type: "offline",
       include_granted_scopes: "true",
       prompt: "consent",
@@ -551,14 +550,12 @@ export function youtubeRoutes(app: Hono<any>) {
 
       const granted = new Set(t.scope?.split(" "))
 
-      if (
-        !t.access_token ||
-        ![...basic, ...(f.purpose === "manage" ? [manage] : [])].every((s) =>
-          granted.has(s)
-        )
-      )
+      if (granted.has("https://www.googleapis.com/auth/userinfo.email"))
+        granted.add("email")
+
+      if (!t.access_token || !requiredScopes.every((s) => granted.has(s)))
         throw new Error(
-          "Grant the requested YouTube permissions and try again."
+          "Clips needs every permission to connect your YouTube channel. Try again and select them all."
         )
 
       const me = await (
@@ -580,8 +577,7 @@ export function youtubeRoutes(app: Hono<any>) {
 
       if (
         (linked && linked.user_id !== user) ||
-        (old && (old.subject !== me.sub || old.channel_id !== ch.id)) ||
-        (f.purpose === "manage" && !old)
+        (old && (old.subject !== me.sub || old.channel_id !== ch.id))
       )
         throw new Error("Choose the originally connected YouTube channel.")
 
@@ -903,14 +899,7 @@ export function youtubeRoutes(app: Hono<any>) {
         a = await account(env, user),
         id = c.req.param("id")
 
-      if (!a?.scopes.split(" ").includes(manage))
-        return c.json(
-          {
-            error: "Allow Clips to manage your YouTube videos.",
-            needs: "manage",
-          },
-          403
-        )
+      if (!a) return c.json({ error: reconnect }, 401)
 
       const clip = await db
         .prepare(

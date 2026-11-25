@@ -34,6 +34,7 @@ CHANNEL = "UC-local-testing"
 PREFIX = "https://www.googleapis.com/auth/youtube."
 codes, tokens, sessions, videos = {}, {}, {}, {}
 grants = set()
+unticked = None
 quota = False
 revoked = False
 reads = []
@@ -121,7 +122,9 @@ class Google(BaseHTTPRequestHandler):
                     .rstrip("=")
                     == req["code_challenge"]
                 )
+                grants.clear()
                 grants.update(req["scope"].split())
+                grants.discard(unticked)
                 revoked = False
             elif revoked or f.get("refresh_token") != "testing-refresh":
                 return self.reply(400, {"error": "invalid_grant"})
@@ -283,8 +286,11 @@ def login(purpose, pair=False):
         status=302,
     )
     scopes = parse_qs(urlsplit(auth).query)["scope"][0].split()
-    assert (PREFIX + "force-ssl" in scopes) == (purpose == "manage")
+    check(set(scopes) == {"openid", "email", PREFIX + "upload", PREFIX + "readonly", PREFIX + "force-ssl"}, "first consent asks for all five scopes")
     result = call(call(auth, status=302), status=302)
+    if unticked:
+        check("every permission" in parse_qs(urlsplit(result).query).get("auth_error", [""])[0], "unticked scope refuses sign-in: " + unticked)
+        return
     if not pair:
         assert result == "/", result
         return
@@ -305,7 +311,7 @@ def login(purpose, pair=False):
 
 
 def exercise():
-    global quota, revoked, processing_result
+    global quota, revoked, processing_result, unticked
     scratch = Path(".amp/in/orb-backup/youtube-test")
     scratch.mkdir(exist_ok=True, parents=True)
     probe = scratch / "upload-probe"
@@ -358,6 +364,9 @@ def exercise():
         (digest(sid), user, int(time.time() * 1000) + 600000),
     )
     cookies["clips_sid"] = sid
+    for unticked in ["openid", "email", PREFIX + "upload", PREFIX + "readonly", PREFIX + "force-ssl"]:
+        login("pair", True)
+    unticked = None
     token = login("pair", True)
     check(
         cookies["clips_sid"] == sid
@@ -421,7 +430,6 @@ def exercise():
     assert (
         me["storage"] is None
         and me["youtube"]["channelId"] == CHANNEL
-        and not me["youtube"]["canManage"]
     )
     assert call("/api/clips") == {"clips": [], "youtube": []}
     print("Bucketless Google login, OBS state and single-use exchange: OK", flush=True)
@@ -493,8 +501,7 @@ def exercise():
         and clip["durationSeconds"] == 13
     )
     endpoint = "/api/youtube/clips/" + clip["id"]
-    assert call(endpoint, "PATCH", {"title": "No grant"}, 403)["needs"] == "manage"
-    login("manage")
+    check(call("/api/youtube/connect?purpose=manage", status=None) == 400, "no second consent endpoint")
     call(
         endpoint,
         "PATCH",
