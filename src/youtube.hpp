@@ -31,7 +31,8 @@ void youtube_connect_async(const std::string &app_url, std::function<void(bool o
 
 /* Revokes access through the app. done runs on the UI thread after the settings update,
  * unless OBS shuts down first. */
-void youtube_disconnect(std::function<void(bool ok)> done);
+enum class DisconnectResult { Revoked, Unpaired, Failed };
+void youtube_disconnect(std::function<void(DisconnectResult result)> done);
 void stop_youtube_disconnect();
 
 /* {game}, {date} (YYYY-MM-DD) and {time} (HH:MM), at most 100 characters,
@@ -46,3 +47,5 @@ struct YouTubeUpload {
  * when review_before_upload is on; blocks until the user answers. false means
  * cancel: the clip is saved to the recording folder instead. */
 bool youtube_review(YouTubeUpload &upload, const std::string &channel_title);
+void start_youtube_reviews();
+void stop_youtube_reviews();

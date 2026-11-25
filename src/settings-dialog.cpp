@@ -114,9 +114,9 @@ public:
 			return;
 		pending = true;
 		emit started();
-		youtube_disconnect([this](bool ok) {
+		youtube_disconnect([this](DisconnectResult result) {
 			pending = false;
-			emit finished(ok);
+			emit finished(result != DisconnectResult::Failed);
 		});
 	}
 
@@ -546,21 +546,9 @@ struct CancelUnlessShown {
 	}
 };
 
-std::atomic<bool> exiting{false};
+std::mutex reviews_mutex;
+std::unique_ptr<QObject> reviews;
 QPointer<QDialog> open_review; /* UI thread only */
-
-/* OBS is closing: answer an open review with "save to disk", so the uploader
- * can finish before OBS unloads the plugin. */
-void on_review_frontend_event(enum obs_frontend_event event, void *)
-{
-	if (event != OBS_FRONTEND_EVENT_EXIT)
-		return;
-	exiting = true;
-	if (open_review)
-		open_review->reject();
-	/* OBS calls these from last to first, so this may remove itself. */
-	obs_frontend_remove_event_callback(on_review_frontend_event, nullptr);
-}
 
 class ReviewDialog : public QDialog {
 public:
@@ -628,16 +616,6 @@ private:
  * keeps it; the taskbar flashes until you look. */
 void show_review(const std::shared_ptr<Review> &review, const std::string &channel_title)
 {
-	static bool hooked = false;
-	if (!hooked) {
-		obs_frontend_add_event_callback(on_review_frontend_event, nullptr);
-		hooked = true;
-	}
-	if (exiting) {
-		review->answer(false);
-		return;
-	}
-
 	auto *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
 	auto *dialog = new ReviewDialog(parent, review->fields, channel_title);
 	dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -714,9 +692,22 @@ void show_settings_dialog()
 	dialog->show();
 }
 
+void start_youtube_reviews()
+{
+	reviews = std::make_unique<QObject>();
+}
+
+void stop_youtube_reviews()
+{
+	std::lock_guard<std::mutex> lock(reviews_mutex);
+	reviews.reset(); // Dropping a queued call destroys its CancelUnlessShown guard.
+	delete open_review.data();
+}
+
 bool youtube_review(YouTubeUpload &upload, const std::string &channel_title)
 {
-	if (exiting)
+	std::unique_lock<std::mutex> posting(reviews_mutex);
+	if (!reviews)
 		return false;
 
 	auto review = std::make_shared<Review>();
@@ -725,19 +716,17 @@ bool youtube_review(YouTubeUpload &upload, const std::string &channel_title)
 	guard->review = review;
 	notify_user("Replay to R2: review the clip in OBS to upload it to YouTube");
 	QMetaObject::invokeMethod(
-		qApp,
+		reviews.get(),
 		[guard, channel_title]() {
 			std::shared_ptr<Review> shown = std::move(guard->review);
 			show_review(shown, channel_title);
 		},
 		Qt::QueuedConnection);
 	guard.reset();
+	posting.unlock();
 
 	std::unique_lock<std::mutex> lock(review->mutex);
-	/* Also wakes when OBS starts closing before the dialog opened. */
-	while (!review->done.wait_for(lock, std::chrono::milliseconds(250), [&] { return review->answered; }))
-		if (exiting)
-			return false;
+	review->done.wait(lock, [&] { return review->answered; });
 	if (review->upload)
 		upload = review->fields;
 	return review->upload;

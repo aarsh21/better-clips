@@ -1,6 +1,7 @@
 #include "replay-r2.hpp"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDesktopServices>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -15,6 +16,7 @@
 
 namespace {
 std::unique_ptr<QNetworkAccessManager> disconnect_net;
+std::unique_ptr<QObject> pairing;
 
 QNetworkRequest app_request(QUrl url)
 {
@@ -35,13 +37,20 @@ void youtube_connect_async(const std::string &app_url, std::function<void(bool, 
 		done(false, "The Clips app address must use HTTPS.");
 		return;
 	}
-	auto *server = new QTcpServer(QCoreApplication::instance());
+	if (!pairing)
+		pairing = std::make_unique<QObject>();
+	auto *server = new QTcpServer(pairing.get());
 	if (!server->listen(QHostAddress::LocalHost, 0)) {
 		server->deleteLater();
 		done(false, "Could not listen for sign-in on this computer.");
 		return;
 	}
 	const QString state = QUuid::createUuid().toString(QUuid::WithoutBraces);
+	const QString verifier =
+		QUuid::createUuid().toString(QUuid::Id128) + QUuid::createUuid().toString(QUuid::Id128);
+	const QString challenge =
+		QString::fromLatin1(QCryptographicHash::hash(verifier.toLatin1(), QCryptographicHash::Sha256)
+					    .toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
 	auto *timeout = new QTimer(server);
 	timeout->setSingleShot(true);
 	QObject::connect(timeout, &QTimer::timeout, server, [server, done] {
@@ -76,8 +85,9 @@ void youtube_connect_async(const std::string &app_url, std::function<void(bool, 
 				"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\nReturn to OBS to finish connecting YouTube.");
 			s->disconnectFromHost();
 			auto *net = new QNetworkAccessManager(server);
-			auto *r = net->post(app_request(base.resolved(QUrl("/api/youtube/obs/exchange"))),
-					    QJsonDocument(QJsonObject{{"code", code}}).toJson());
+			auto *r =
+				net->post(app_request(base.resolved(QUrl("/api/youtube/obs/exchange"))),
+					  QJsonDocument(QJsonObject{{"code", code}, {"verifier", verifier}}).toJson());
 			QObject::connect(r, &QNetworkReply::finished, server, [=] {
 				auto obj = QJsonDocument::fromJson(r->readAll()).object();
 				auto token = obj.value("uploadToken").toString();
@@ -97,8 +107,10 @@ void youtube_connect_async(const std::string &app_url, std::function<void(bool, 
 		});
 	});
 	auto url = base.resolved(QUrl("/api/youtube/connect"));
-	url.setQuery(QUrlQuery(
-		{{"purpose", "login"}, {"obs_port", QString::number(server->serverPort())}, {"obs_state", state}}));
+	url.setQuery(QUrlQuery({{"purpose", "pair"},
+				{"obs_port", QString::number(server->serverPort())},
+				{"obs_state", state},
+				{"obs_challenge", challenge}}));
 	if (!QDesktopServices::openUrl(url)) {
 		timeout->stop();
 		server->close();
@@ -107,7 +119,7 @@ void youtube_connect_async(const std::string &app_url, std::function<void(bool, 
 	}
 }
 
-void youtube_disconnect(std::function<void(bool)> done)
+void youtube_disconnect(std::function<void(DisconnectResult)> done)
 {
 	auto yt = get_youtube_settings();
 	if (!disconnect_net)
@@ -117,9 +129,11 @@ void youtube_disconnect(std::function<void(bool)> done)
 	auto *r = disconnect_net->post(req, "{}");
 	QObject::connect(r, &QNetworkReply::finished, r, [r, token = yt.upload_token, done = std::move(done)] {
 		const int status = r->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-		bool ok = status == 401 || (status / 100 == 2 && r->error() == QNetworkReply::NoError);
+		auto result = status == 401       ? DisconnectResult::Unpaired
+			      : status / 100 == 2 ? DisconnectResult::Revoked
+						  : DisconnectResult::Failed;
 		r->deleteLater();
-		if (ok) {
+		if (result != DisconnectResult::Failed) {
 			auto current = get_youtube_settings();
 			if (current.upload_token == token) {
 				current.upload_token.clear();
@@ -130,11 +144,12 @@ void youtube_disconnect(std::function<void(bool)> done)
 		} else {
 			notify_user("Could not disconnect YouTube. Try again.");
 		}
-		done(ok);
+		done(result);
 	});
 }
 
 void stop_youtube_disconnect()
 {
+	pairing.reset();
 	disconnect_net.reset();
 }
