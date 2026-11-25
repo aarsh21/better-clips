@@ -2,6 +2,7 @@ import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
+import { useClipTime } from "@/lib/clock"
 import {
   api,
   longTitle,
@@ -132,6 +133,8 @@ export function useNewClipToasts(
   open: (key: string) => void
 ) {
   const seen = React.useRef<Set<string> | null>(null)
+  const clipTime = useClipTime()
+
   React.useEffect(() => {
     if (!clips) return
 
@@ -142,12 +145,12 @@ export function useNewClipToasts(
 
       for (const clip of fresh.slice(0, 3)) {
         toast(`New clip · ${longTitle(clip)}`, {
-          description: clip.time,
+          description: clipTime(clip.time),
           action: { label: "Watch", onClick: () => open(clip.key) },
         })
       }
     }
 
     seen.current = new Set(clips.map((c) => c.key))
-  }, [clips, open])
+  }, [clips, open, clipTime])
 }

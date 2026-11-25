@@ -27,6 +27,7 @@ import {
   type Settings,
 } from "@/lib/api"
 import { useClipMoves, type ClipMoves } from "@/lib/clip-actions"
+import { useClipTime } from "@/lib/clock"
 import { useSettings } from "@/lib/settings"
 
 /* clips arrive in display order. Sorted by time, they're grouped under day
@@ -108,6 +109,7 @@ function ClipCard({
   const [preview, setPreview] = React.useState(false)
   const timer = React.useRef<number>(undefined)
   const left = daysLeft(clip, settings)
+  const clipTime = useClipTime()
 
   const startPreview = () => {
     timer.current = window.setTimeout(() => setPreview(true), 350)
@@ -181,8 +183,8 @@ function ClipCard({
                 </span>
               ) : null}
               {byDay
-                ? clip.time.slice(0, 5)
-                : `${dayLabel(clip.day)} ${clip.time.slice(0, 5)}`}
+                ? clipTime(clip.time)
+                : `${dayLabel(clip.day)} ${clipTime(clip.time)}`}
             </span>
           </div>
           <span className="truncate text-[11px] text-muted-foreground">

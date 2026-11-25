@@ -8,6 +8,7 @@ import { Segmented } from "@/components/segmented"
 import { Button } from "@/components/ui/button"
 import { ObsConnect } from "@/components/setup-steps"
 import { useTheme } from "@/components/theme-provider"
+import { setClock, useClock } from "@/lib/clock"
 import {
   Dialog,
   DialogContent,
@@ -334,23 +335,46 @@ const THEME_OPTIONS = [
 function AppearanceSettings() {
   const { theme, setTheme } = useTheme()
   const id = React.useId()
+  const clockId = React.useId()
+  const clock = useClock()
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-col gap-0.5">
-        <span id={id} className="text-xs font-medium">
-          Theme
-        </span>
-        <span className="text-[11px] text-muted-foreground">
-          System follows your computer's light or dark mode.
-        </span>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span id={id} className="text-xs font-medium">
+            Theme
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            System follows your computer's light or dark mode.
+          </span>
+        </div>
+        <Segmented
+          labelledBy={id}
+          options={[...THEME_OPTIONS]}
+          value={theme}
+          onChange={setTheme}
+        />
       </div>
-      <Segmented
-        labelledBy={id}
-        options={[...THEME_OPTIONS]}
-        value={theme}
-        onChange={setTheme}
-      />
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-0.5">
+          <span id={clockId} className="text-xs font-medium">
+            Time format
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            How clip times are shown, such as 15:22 or 3:22 PM.
+          </span>
+        </div>
+        <Segmented
+          labelledBy={clockId}
+          options={[
+            { value: "24h", label: "24-hour" },
+            { value: "12h", label: "12-hour" },
+          ]}
+          value={clock}
+          onChange={setClock}
+        />
+      </div>
     </div>
   )
 }

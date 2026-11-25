@@ -51,6 +51,7 @@ import {
   type ClipActions,
   type ClipNav,
 } from "@/lib/clip-actions"
+import { useClipTime } from "@/lib/clock"
 import { isEditableTarget } from "@/lib/keys"
 import { useSettings } from "@/lib/settings"
 import { seekTo, togglePlay } from "@/lib/video"
@@ -247,8 +248,13 @@ function keyAction(e: KeyboardEvent, ctx: KeyContext) {
   return bindings.get(e.key)
 }
 
-function clipMeta(clip: Clip, duration: number, settings?: Settings) {
-  const parts = [dayLabel(clip.day), clip.time, formatBytes(clip.size)]
+function clipMeta(
+  clip: Clip,
+  time: string,
+  duration: number,
+  settings?: Settings
+) {
+  const parts = [dayLabel(clip.day), time, formatBytes(clip.size)]
 
   if (clip.category) parts.unshift(clip.category)
   const left = daysLeft(clip, settings)
@@ -278,6 +284,7 @@ function ViewerHeader({
   onRenamed: (name: string | null) => void
 }) {
   const { data: settings } = useSettings()
+  const clipTime = useClipTime()
 
   return (
     <div className="flex items-center gap-2 border-b px-3 py-2">
@@ -295,7 +302,7 @@ function ViewerHeader({
           </DialogTitle>
         )}
         <span className="truncate text-[11px] text-muted-foreground tabular-nums">
-          {clipMeta(clip, duration, settings)}
+          {clipMeta(clip, clipTime(clip.time, true), duration, settings)}
         </span>
       </div>
       <div className="flex items-center">

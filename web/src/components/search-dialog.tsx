@@ -23,6 +23,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { dayLabel, formatDuration, thumbUrl, type Clip } from "@/lib/api"
+import { useClipTime } from "@/lib/clock"
 import type { View } from "@/lib/view"
 
 const VIEW_ITEMS = [
@@ -150,6 +151,8 @@ function matchWords(value: string, search: string, keywords?: string[]) {
 }
 
 function ClipRow({ clip }: { clip: Clip }) {
+  const clipTime = useClipTime()
+
   return (
     <>
       <span className="relative aspect-video w-14 shrink-0 overflow-hidden bg-muted">
@@ -178,7 +181,7 @@ function ClipRow({ clip }: { clip: Clip }) {
         </span>
         <span className="text-[11px] text-muted-foreground tabular-nums">
           {clip.category && `${clip.category} · `}
-          {dayLabel(clip.day)} · {clip.time.slice(0, 5)}
+          {dayLabel(clip.day)} · {clipTime(clip.time)}
           {clip.thumb?.duration
             ? ` · ${formatDuration(clip.thumb.duration)}`
             : ""}

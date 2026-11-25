@@ -35,7 +35,7 @@ trimming: `I` `O` set in and out, `Enter` save, `Esc` cancel.
 ```
 replays/<day>/<time>_<category>[__<name>].mp4
                                    from OBS, deleted after N days (Settings);
-                                   the category is the window or scene, the
+                                   the category is the app or scene, the
                                    name is one you give it in the app
 saved/<day>/...                    kept clips, never deleted
 trash/<day>/...                    deleted clips, purged after N days (Settings)
