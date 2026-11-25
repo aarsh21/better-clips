@@ -77,13 +77,17 @@ public:
 	void refresh()
 	{
 		bool running = obs_frontend_replay_buffer_active();
-		bool youtube = get_youtube_settings().destination == Destination::YouTube;
+		auto yt = get_youtube_settings();
+		bool youtube = yt.destination == Destination::YouTube;
+		bool direct = yt.route == YouTubeRoute::Direct;
 		save->setText(!running  ? "Start Replay Buffer"
 			      : youtube ? "Save Replay to YouTube"
 					: "Save Replay to R2");
-		save->setToolTip(!running  ? "Starts OBS's Replay Buffer so you can save clips"
-				 : youtube ? "Uploads the last few seconds to your YouTube channel"
-					   : "Uploads the last few seconds to your clips app");
+		save->setToolTip(
+			!running   ? "Starts OBS's Replay Buffer so you can save clips"
+			: !youtube ? "Uploads the last few seconds to your clips app"
+			: direct   ? "Uploads the last few seconds straight to your YouTube channel"
+				   : "Uploads the last few seconds to your YouTube channel, through your Clips app");
 
 		int seconds = get_replay_seconds();
 		if (seconds > 0 && !length->hasFocus() && length->value() != seconds) {

@@ -10,6 +10,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -21,7 +22,9 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QStackedWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -39,11 +42,29 @@ namespace {
  * the plugin and shuts curl down. */
 std::atomic<int> tests_running{0};
 
-/* YouTube clips go through the hosted app, which keeps the Google tokens. */
+/* YouTube clips go through the hosted app, which keeps the Google tokens,
+ * unless OBS uploads to YouTube directly. */
 constexpr const char *HOSTED_APP = "https://clips.zabimaru.me";
 constexpr const char *YOUTUBE_TERMS = "https://www.youtube.com/t/terms";
 constexpr const char *GOOGLE_PERMISSIONS = "https://myaccount.google.com/permissions";
 constexpr int AUDIO_TRACKS = 6; /* OBS's audio tracks */
+
+/* Whether OBS can upload on the route it signed in with. */
+bool youtube_connected(const YouTubeSettings &settings)
+{
+	return settings.route == YouTubeRoute::Direct ? !settings.refresh_token.empty()
+						      : !settings.upload_token.empty();
+}
+
+/* The clips app's FAQ, which opens without signing in. */
+void open_faq(std::string app_url)
+{
+	while (!app_url.empty() && app_url.back() == '/')
+		app_url.pop_back();
+	if (!secure_url(app_url))
+		app_url = HOSTED_APP;
+	QDesktopServices::openUrl(QUrl(QString::fromStdString(app_url + "/faq")));
+}
 
 /* The same check as Test Upload. With S3, uploads a small text file. */
 bool test_connection(const R2Config &config, std::string &where, std::string &error)
@@ -125,12 +146,27 @@ signals:
 	void finished(DisconnectResult result);
 };
 
-/* The YouTube page of the settings: the channel, and the upload defaults
- * YouTube asks that people control. */
+/* The YouTube page of the settings: how clips get there, the channel, and
+ * the upload defaults YouTube asks that people control. */
 class YouTubePage : public QWidget {
 public:
 	explicit YouTubePage(const YouTubeSettings &settings)
 	{
+		via_app = new QRadioButton("Through the Clips app");
+		direct = new QRadioButton("Directly to YouTube");
+		auto *routes = new QHBoxLayout();
+		routes->addWidget(via_app);
+		routes->addWidget(direct);
+		routes->addStretch(1);
+		route_hint = hint_label();
+		/* Without a Google client ID in this build, only the app can upload. */
+		const bool can_direct = youtube_direct_available();
+		(can_direct && settings.route == YouTubeRoute::Direct ? direct : via_app)->setChecked(true);
+		connect(direct, &QRadioButton::toggled, this, [this]() {
+			show_route();
+			show_status("");
+		});
+
 		app_url = new QLineEdit();
 		app_url->setPlaceholderText(HOSTED_APP);
 
@@ -142,24 +178,12 @@ public:
 		static DisconnectState disconnect;
 		connect(disconnect_button, &QPushButton::clicked, &disconnect, &DisconnectState::start);
 		disconnect_button->setDisabled(disconnect.pending);
-		connect(&disconnect, &DisconnectState::started, this, [this] { disconnect_button->setEnabled(false); });
-		connect(&disconnect, &DisconnectState::finished, this, [this](DisconnectResult result) {
-			disconnect_button->setEnabled(true);
-			auto current = get_youtube_settings();
-			show_account(current);
-			if (result == DisconnectResult::Failed)
-				show_status("Could not disconnect YouTube. Try again.", true);
-			/* You signed in again while it ran: that new connection stands. */
-			else if (!current.upload_token.empty())
-				show_status("");
-			else if (result == DisconnectResult::Revoked)
-				show_status(
-					"Disconnected. The app no longer has access to your channel, and its YouTube "
-					"clips are gone from your library. Your videos stay on YouTube.");
-			else
-				show_status("This OBS is no longer connected. Your channel is still connected to the "
-					    "Clips app; disconnect it there or in your Google Account.");
+		connect(&disconnect, &DisconnectState::started, this, [this] {
+			disconnect_button->setEnabled(false);
+			show_status("Disconnecting...");
 		});
+		connect(&disconnect, &DisconnectState::finished, this,
+			[this](DisconnectResult result) { show_disconnected(result); });
 		auto *account = new QHBoxLayout();
 		account->addWidget(channel, 1);
 		account->addWidget(sign_in);
@@ -195,14 +219,14 @@ public:
 		review->setToolTip("Shows the title, description and visibility for every clip, so you can "
 				   "change them or keep the clip off YouTube");
 
-		auto *access = new QLabel(QString("You can remove this app's access to your channel any time in "
-						  "<a href=\"%1\">your Google Account</a>.")
-						  .arg(GOOGLE_PERMISSIONS));
+		access = new QLabel();
 		access->setOpenExternalLinks(true);
 		access->setWordWrap(true);
 
 		form = new QFormLayout(this);
 		form->setContentsMargins(0, 0, 0, 0);
+		form->addRow("Upload", routes);
+		form->addRow(QString(), route_hint);
 		form->addRow("Clips app", app_url);
 		form->addRow("Channel", account);
 		form->addRow(status);
@@ -215,16 +239,20 @@ public:
 		form->addRow(review);
 		form->addRow(terms_label());
 		form->addRow(access);
+		form->setRowVisible(routes, can_direct);
+		form->setRowVisible(route_hint, can_direct);
 
 		show_account(settings);
 		update_preview();
 	}
 
-	/* The settings with this page's upload defaults. The connection itself
-	 * is saved by youtube_connect_async and youtube_disconnect. */
+	/* The settings with this page's route and upload defaults. The
+	 * connection itself is saved by youtube_connect_async and
+	 * youtube_disconnect. */
 	YouTubeSettings current() const
 	{
 		YouTubeSettings settings = get_youtube_settings();
+		settings.route = route();
 		settings.privacy = privacy->currentData().toString().toStdString();
 		settings.title_template = title_template->text().trimmed().toStdString();
 		if (settings.title_template.empty())
@@ -235,27 +263,49 @@ public:
 		return settings;
 	}
 
+	/* The address the FAQ opens at: this page's Clips app. */
+	std::string faq_app() const { return app_url->text().trimmed().toStdString(); }
+
 	QFormLayout *form;
 
 private:
+	QRadioButton *via_app, *direct;
 	QLineEdit *app_url, *title_template;
-	QLabel *channel, *status, *title_preview;
+	QLabel *route_hint, *channel, *status, *title_preview, *access;
 	QPushButton *sign_in, *disconnect_button;
 	QComboBox *privacy, *audio_track;
 	QPlainTextEdit *description;
 	QCheckBox *review;
 
+	YouTubeRoute route() const { return direct->isChecked() ? YouTubeRoute::Direct : YouTubeRoute::ClipsApp; }
+
+	/* The trade-off of the chosen route, and the fields it needs. */
+	void show_route()
+	{
+		const bool app = route() == YouTubeRoute::ClipsApp;
+		route_hint->setText(app ? "Clips show up in the Clips app, to rename, cut and delete them."
+					: "No Clips app needed, but clips won't show up in its library.");
+		form->setRowVisible(app_url, app);
+		access->setText(QString("You can remove %1 access to your channel any time in "
+					"<a href=\"%2\">your Google Account</a>.")
+					.arg(app ? "the Clips app's" : "OBS's", GOOGLE_PERMISSIONS));
+	}
+
 	void show_account(const YouTubeSettings &settings)
 	{
-		bool connected = !settings.upload_token.empty();
+		bool connected = youtube_connected(settings);
 		channel->setText(connected
 					 ? QString("<b>%1</b>")
 						   .arg(QString::fromStdString(settings.channel_title).toHtmlEscaped())
 					 : "Not connected");
 		channel->setEnabled(connected);
-		/* The token belongs to one app, so its address is fixed until you
-		 * disconnect. */
+		/* A connection belongs to one route, and through the app to one
+		 * app, so they're fixed until you disconnect. */
 		if (connected)
+			(settings.route == YouTubeRoute::Direct ? direct : via_app)->setChecked(true);
+		via_app->setEnabled(!connected);
+		direct->setEnabled(!connected);
+		if (connected && settings.route == YouTubeRoute::ClipsApp)
 			app_url->setText(QString::fromStdString(settings.app_url));
 		else if (app_url->text().isEmpty())
 			app_url->setText(HOSTED_APP);
@@ -264,6 +314,7 @@ private:
 		sign_in->setEnabled(true);
 		sign_in->setText("Sign in with YouTube");
 		disconnect_button->setVisible(connected);
+		show_route();
 	}
 
 	/* Progress in grey, errors in the normal text color so they stand out. */
@@ -272,6 +323,32 @@ private:
 		status->setText(text);
 		status->setStyleSheet(error ? "" : "color: palette(placeholder-text);");
 		status->setVisible(!text.isEmpty());
+	}
+
+	void show_disconnected(DisconnectResult result)
+	{
+		/* The route that was disconnected: the radio buttons stay on it
+		 * until show_account unlocks them. */
+		const bool app = route() == YouTubeRoute::ClipsApp;
+		disconnect_button->setEnabled(true);
+		auto current = get_youtube_settings();
+		show_account(current);
+		if (result == DisconnectResult::Failed)
+			show_status("Could not disconnect YouTube. Try again.", true);
+		/* You signed in again while it ran: that new connection stands. */
+		else if (youtube_connected(current))
+			show_status("");
+		else if (result == DisconnectResult::Revoked)
+			show_status(app ? "Disconnected. The app no longer has access to your channel, and its "
+					  "YouTube clips are gone from your library. Your videos stay on YouTube."
+					: "Disconnected. OBS no longer has access to your channel. Your videos stay "
+					  "on YouTube.");
+		else if (app)
+			show_status("This OBS is no longer connected. Your channel is still connected to the "
+				    "Clips app; disconnect it there or in your Google Account.");
+		else
+			show_status("OBS is signed out. Google had already ended its access, so there's nothing "
+				    "left to remove. Your videos stay on YouTube.");
 	}
 
 	void update_preview()
@@ -284,23 +361,35 @@ private:
 
 	void start_sign_in()
 	{
-		std::string url = app_url->text().trimmed().toStdString();
-		while (!url.empty() && url.back() == '/')
-			url.pop_back();
-		if (!secure_url(url)) {
-			show_status("Enter your clips app's address, starting with https://", true);
-			return;
+		const YouTubeRoute chosen = route();
+		std::string url;
+		if (chosen == YouTubeRoute::ClipsApp) {
+			url = app_url->text().trimmed().toStdString();
+			while (!url.empty() && url.back() == '/')
+				url.pop_back();
+			if (!secure_url(url)) {
+				show_status("Enter your clips app's address, starting with https://", true);
+				return;
+			}
 		}
 
 		sign_in->setEnabled(false);
 		sign_in->setText("Waiting for your browser...");
+		via_app->setEnabled(false);
+		direct->setEnabled(false);
 		show_status("Finish signing in to Google in your browser. This updates when you're done.");
 
 		QPointer<YouTubePage> self(this);
-		youtube_connect_async(YouTubeRoute::ClipsApp, url, [self](bool ok, const std::string &error) {
+		youtube_connect_async(chosen, url, [self, chosen](bool ok, const std::string &error) {
+			auto settings = get_youtube_settings();
+			/* Uploads take the route you signed in with, even before Save. */
+			if (ok && settings.route != chosen) {
+				settings.route = chosen;
+				set_youtube_settings(settings);
+			}
 			if (!self)
 				return;
-			self->show_account(get_youtube_settings());
+			self->show_account(settings);
 			self->show_status(ok ? "Connected. Click Save to upload clips to this channel."
 					     : QString("Couldn't sign in: %1").arg(QString::fromStdString(error)),
 					  !ok);
@@ -391,13 +480,19 @@ public:
 		connect(test, &QPushButton::clicked, this, [this]() { run_test(); });
 		connect(destination, &QComboBox::currentIndexChanged, this, [this]() { show_destination(); });
 
+		auto *faq = new QLabel("<a href=\"faq\">Questions? Read the FAQ</a>");
+		connect(faq, &QLabel::linkActivated, this, [this]() { open_faq(faq_app()); });
+		auto *bottom = new QHBoxLayout();
+		bottom->addWidget(faq);
+		bottom->addWidget(buttons, 1);
+
 		auto *layout = new QVBoxLayout(this);
 		layout->addWidget(help);
 		layout->addLayout(top);
 		layout->addWidget(pages);
 		layout->addWidget(start_replay);
 		layout->addWidget(status);
-		layout->addWidget(buttons);
+		layout->addLayout(bottom);
 
 		align_labels({top, app_form, s3_form, youtube_page->form});
 		show_destination();
@@ -413,6 +508,14 @@ private:
 	QPushButton *paste, *test;
 
 	Destination chosen() const { return Destination(destination->currentData().toInt()); }
+
+	/* The FAQ is in every clips app, so it opens in the one you use. */
+	std::string faq_app() const
+	{
+		if (chosen() == Destination::YouTube)
+			return youtube_page->faq_app();
+		return chosen() == Destination::ClipsApp ? app_url->text().trimmed().toStdString() : HOSTED_APP;
+	}
 
 	/* Shows the chosen destination's fields, and sizes the dialog to them. */
 	void show_destination()
@@ -435,9 +538,8 @@ private:
 					      "bucket, such as Cloudflare R2.<br>%1")
 					      .arg(hotkey));
 		else
-			help->setText(QString("Saved replays upload from memory to your YouTube channel, and show up "
-					      "in your clips app next to your other clips.<br>%1")
-					      .arg(hotkey));
+			help->setText(
+				QString("Saved replays upload from memory to your YouTube channel.<br>%1").arg(hotkey));
 
 		/* YouTube has no setup code, and signing in is its test. */
 		paste->setVisible(to != Destination::YouTube);
