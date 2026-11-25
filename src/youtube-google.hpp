@@ -1,8 +1,7 @@
 #pragma once
 
 #include "youtube-client.hpp"
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
+#include "youtube-http.hpp"
 #include <QUrlQuery>
 
 namespace google {
@@ -18,34 +17,28 @@ inline QUrl api(const QString &path)
 {
 	return endpoint("YOUTUBE_API", "https://www.googleapis.com", path);
 }
-inline QNetworkRequest request(const QUrl &url)
+inline youtube_http::Request form(const QString &path, const QUrlQuery &fields)
 {
-	QNetworkRequest req(url);
-	req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-	req.setTransferTimeout(15000);
-	return req;
-}
-inline QNetworkReply *form(QNetworkAccessManager &net, const QString &path, const QUrlQuery &fields)
-{
-	auto req = request(endpoint("YOUTUBE_TOKEN_BASE", "https://oauth2.googleapis.com", path));
-	req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
 	QByteArray body;
 	for (const auto &field : fields.queryItems(QUrl::FullyDecoded)) {
 		if (!body.isEmpty())
 			body += '&';
 		body += QUrl::toPercentEncoding(field.first) + '=' + QUrl::toPercentEncoding(field.second);
 	}
-	return net.post(req, body);
+	return {endpoint("YOUTUBE_TOKEN_BASE", "https://oauth2.googleapis.com", path),
+		"POST",
+		{"Content-Type: application/x-www-form-urlencoded"},
+		body};
 }
-inline QNetworkReply *token(QNetworkAccessManager &net, QUrlQuery fields)
+inline youtube_http::Request token(QUrlQuery fields)
 {
 	fields.addQueryItem("client_id", YOUTUBE_CLIENT_ID);
 	fields.addQueryItem("client_secret", YOUTUBE_CLIENT_SECRET);
-	return form(net, "/token", fields);
+	return form("/token", fields);
 }
-inline QNetworkReply *refresh(QNetworkAccessManager &net, const std::string &credential)
+inline youtube_http::Request refresh(const std::string &credential)
 {
-	return token(net, QUrlQuery({{"grant_type", "refresh_token"},
-				     {"refresh_token", QString::fromStdString(credential)}}));
+	return token(
+		QUrlQuery({{"grant_type", "refresh_token"}, {"refresh_token", QString::fromStdString(credential)}}));
 }
 } // namespace google

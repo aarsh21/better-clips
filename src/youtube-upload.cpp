@@ -2,12 +2,9 @@
 #include "youtube-google.hpp"
 
 #include <QDateTime>
-#include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
 #include <QTimer>
 #include <QUrlQuery>
 
@@ -17,74 +14,25 @@ QString text(const std::string &s)
 	return QString::fromStdString(s);
 }
 
-struct Reply {
-	int status;
-	QByteArray range;
-	QJsonObject json;
-	QString reason;
-	QByteArray location;
-};
-
-Reply await_reply(QNetworkReply *reply, std::string &error, const std::atomic<bool> &stopping);
-
-Reply request(QNetworkAccessManager &net, const QUrl &url, const QByteArray &bearer, const QByteArray &range,
-	      const QByteArray &body, std::string &error, const std::atomic<bool> &stopping, qint64 upload_size = -1)
+using namespace youtube_http;
+Request request(const QUrl &url, const QByteArray &bearer, const QByteArray &range, const QByteArray &body,
+		qint64 upload_size = -1)
 {
-	if (stopping) {
-		error = "OBS is closing";
-		return {};
-	}
-	if (!url.isValid() || !url.userInfo().isEmpty() ||
-	    (url.scheme() != "https" &&
-	     !(url.scheme() == "http" && (url.host() == "localhost" || url.host() == "127.0.0.1")))) {
-		error = "Upload address must use HTTPS.";
-		return {};
-	}
-	QNetworkRequest req(url);
-	req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-	req.setTransferTimeout(60000);
-	if (!bearer.isEmpty())
-		req.setRawHeader("Authorization", "Bearer " + bearer);
 	const bool put = !range.isEmpty();
+	Request req{url,
+		    put ? "PUT" : "POST",
+		    {put ? "Content-Type: video/mp4" : "Content-Type: application/json"},
+		    body,
+		    60};
+	if (!bearer.isEmpty())
+		req.headers.append("Authorization: Bearer " + bearer);
 	if (upload_size >= 0) {
-		req.setRawHeader("X-Upload-Content-Length", QByteArray::number(upload_size));
-		req.setRawHeader("X-Upload-Content-Type", "video/mp4");
+		req.headers.append("X-Upload-Content-Length: " + QByteArray::number(upload_size));
+		req.headers.append("X-Upload-Content-Type: video/mp4");
 	}
 	if (put)
-		req.setRawHeader("Content-Range", range);
-	req.setHeader(QNetworkRequest::ContentTypeHeader, put ? "video/mp4" : "application/json");
-	return await_reply(put ? net.put(req, body) : net.post(req, body), error, stopping);
-}
-
-Reply await_reply(QNetworkReply *reply, std::string &error, const std::atomic<bool> &stopping)
-{
-	QEventLoop loop;
-	QTimer cancel;
-	QObject::connect(&cancel, &QTimer::timeout, reply, [&] {
-		if (stopping)
-			reply->abort();
-	});
-	cancel.start(50);
-	QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-	if (!reply->isFinished())
-		loop.exec();
-	Reply result{reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(),
-		     reply->rawHeader("Range"),
-		     QJsonDocument::fromJson(reply->readAll()).object(),
-		     {},
-		     reply->rawHeader("Location")};
-	if (reply->error() != QNetworkReply::NoError || (result.status != 308 && result.status / 100 != 2)) {
-		auto message = result.json.value("error");
-		const auto details = message.toObject();
-		result.reason = details.value("errors").toArray().at(0).toObject().value("reason").toString();
-		error = message.toString(details.value("message").toString(result.reason)).toStdString();
-		if (error.empty())
-			error = "YouTube upload connection failed (HTTP " + std::to_string(result.status) + ")";
-		if (result.status / 100 == 2 || result.status == 308)
-			result.status = 0; // Incomplete response, even if its headers arrived.
-	}
-	delete reply;
-	return result;
+		req.headers.append("Content-Range: " + range);
+	return req;
 }
 } // namespace
 
@@ -104,28 +52,35 @@ std::string youtube_title(const std::string &title_template, const std::string &
 bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::vector<uint8_t> &mp4,
 		    YouTubeSession &session, std::string &link, std::string &error, const std::atomic<bool> &stopping)
 {
-	QNetworkAccessManager net;
+	std::string diagnostic;
+	auto transfer = [&](const Request &req) {
+		auto r = perform(req, stopping);
+		diagnostic = r.diagnostic();
+		if (r.code != CURLE_OK && (r.status / 100 == 2 || r.status == 308))
+			r.status = 0; // Incomplete response, even if its headers arrived.
+		return r;
+	};
+	auto fail = [&](const std::string &message) {
+		// Server messages are useful in the UI, but can contain credentials.
+		blog(LOG_WARNING, "[better-clips] YouTube upload failed (%s)", diagnostic.c_str());
+		error = message;
+		return false;
+	};
 	const bool direct = clip.youtube.route == YouTubeRoute::Direct;
 	QByteArray bearer;
 	auto google_request = [&](QUrl url, const QByteArray &range, const QByteArray &body, qint64 size = -1) {
 		for (int attempt = 0;; ++attempt) {
-			if (stopping)
-				return Reply{};
 			if (bearer.isEmpty()) {
-				auto token =
-					await_reply(google::refresh(net, clip.youtube.refresh_token), error, stopping);
-				if (token.status / 100 != 2) {
-					if (token.json.value("error") == "invalid_grant")
-						error = "YouTube access expired. Sign in again.";
+				auto token = transfer(google::refresh(clip.youtube.refresh_token));
+				if (token.status / 100 != 2)
 					return token;
-				}
 				bearer = token.json.value("access_token").toString().toUtf8();
 				if (bearer.isEmpty()) {
-					error = "Google did not return an access token.";
+					fail("Google did not return an access token.");
 					return Reply{};
 				}
 			}
-			auto reply = request(net, url, bearer, range, body, error, stopping, size);
+			auto reply = transfer(request(url, bearer, range, body, size));
 			if (reply.status != 401 || attempt != 0)
 				return reply;
 			bearer.clear();
@@ -133,16 +88,32 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 	};
 	auto failed = [&](const Reply &reply) {
 		const auto status = reply.status;
-		session.permanent_failure = status / 100 == 4 && status != 408 && status != 409 && status != 429 &&
-					    !(status == 403 && (reply.reason == "rateLimitExceeded" ||
-								reply.reason == "userRateLimitExceeded"));
+		auto reason = reply.json.value("error")
+				      .toObject()
+				      .value("errors")
+				      .toArray()
+				      .at(0)
+				      .toObject()
+				      .value("reason")
+				      .toString();
+		session.permanent_failure =
+			status / 100 == 4 && status != 408 && status != 409 && status != 429 &&
+			!(status == 403 && (reason == "rateLimitExceeded" || reason == "userRateLimitExceeded"));
+		if (status / 100 != 2 && error.empty()) {
+			auto message = reply.json.value("error");
+			auto detail = message.toString(message.toObject().value("message").toString(reason));
+			fail(message == "invalid_grant" ? "YouTube access expired. Sign in again."
+			     : detail.isEmpty()         ? "YouTube upload failed (" + diagnostic + ")"
+							: detail.toStdString());
+		}
 		return status / 100 != 2;
 	};
 	auto app = [&](const char *path, QJsonObject data) {
-		return request(net, QUrl(text(clip.youtube.app_url)).resolved(QUrl(path)),
-			       QByteArray::fromStdString(clip.youtube.upload_token), {},
-			       QJsonDocument(data).toJson(QJsonDocument::Compact), error, stopping);
+		return transfer(request(QUrl(text(clip.youtube.app_url)).resolved(QUrl(path)),
+					QByteArray::fromStdString(clip.youtube.upload_token), {},
+					QJsonDocument(data).toJson(QJsonDocument::Compact)));
 	};
+	error.clear();
 	bool query = !session.url.empty();
 	if (!query && direct) {
 		const auto api = google::api("/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status");
@@ -155,9 +126,8 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 			return false;
 		auto location = QUrl::fromEncoded(r.location);
 		if (location.scheme() != api.scheme() || location.authority() != api.authority()) {
-			error = "Google returned an unexpected upload address.";
 			session.permanent_failure = true;
-			return false;
+			return fail("Google returned an unexpected upload address.");
 		}
 		session.url = location.toEncoded().toStdString();
 	} else if (!query) {
@@ -175,8 +145,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		session.clip_id = r.json.value("clipId").toString().toStdString();
 	}
 	if (session.url.empty() || (!direct && session.clip_id.empty())) {
-		error = "The Better Clips app did not open a YouTube upload.";
-		return false;
+		return fail("The Better Clips app did not open a YouTube upload.");
 	}
 	const qint64 total = static_cast<qint64>(mp4.size());
 	qint64 offset = 0;
@@ -188,11 +157,10 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 			"/" + QByteArray::number(total);
 		auto bytes = QByteArray::fromRawData(reinterpret_cast<const char *>(mp4.data() + offset), n);
 		auto url = QUrl(text(session.url));
-		auto r = direct ? google_request(url, range, bytes)
-				: request(net, url, {}, range, bytes, error, stopping);
+		auto r = direct ? google_request(url, range, bytes) : transfer(request(url, {}, range, bytes));
 		if (!direct && (r.status == 404 || r.status == 410)) {
 			session = {}; // Explicitly expired; no video ID has been confirmed.
-			return false;
+			return fail("The YouTube upload session expired.");
 		}
 		if (r.status != 308 && failed(r))
 			return false;
@@ -201,13 +169,11 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 			qint64 last = r.range.mid(8).toLongLong(&ok);
 			if (!r.range.isEmpty() &&
 			    (!r.range.startsWith("bytes=0-") || !ok || last < 0 || last >= total - 1)) {
-				error = "YouTube reported an unexpected upload position.";
-				return false;
+				return fail("YouTube reported an unexpected upload position.");
 			}
 			qint64 next = r.range.isEmpty() ? 0 : last + 1;
 			if (!query && next <= offset) {
-				error = "YouTube has not received this part yet.";
-				return false;
+				return fail("YouTube has not received this part yet.");
 			}
 			offset = next;
 			query = false;
@@ -215,8 +181,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		}
 		session.video_id = r.json.value("id").toString().toStdString();
 		if (session.video_id.empty()) {
-			error = "Waiting for YouTube to confirm the upload.";
-			return false;
+			return fail("Waiting for YouTube to confirm the upload.");
 		}
 	}
 	if (direct) {
@@ -230,15 +195,14 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		return false;
 	link = r.json.value("url").toString().toStdString();
 	if (link != "https://youtu.be/" + session.video_id) {
-		error = "The Better Clips app did not confirm the video link.";
-		return false;
+		return fail("The Better Clips app did not confirm the video link.");
 	}
 	return true;
 }
 
 /* Schedule lightweight checks on Qt's event loop, with no retained clip data
  * or sleeping upload thread. The uploader owns network for its whole life. */
-void youtube_watch(QNetworkAccessManager *network, const YouTubeSettings &settings, const std::string &clip_id,
+void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::string &clip_id,
 		   const std::string &title)
 {
 	QUrl url = QUrl(text(settings.app_url)).resolved(QUrl("/api/youtube/upload/status"));
@@ -248,23 +212,16 @@ void youtube_watch(QNetworkAccessManager *network, const YouTubeSettings &settin
 		url = google::api("/youtube/v3/videos");
 		url.setQuery(QUrlQuery({{"part", "status"}, {"id", text(clip_id)}}));
 	}
-	QNetworkRequest req(url);
-	req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-	req.setRawHeader("Authorization", "Bearer " + QByteArray::fromStdString(settings.upload_token));
-	req.setTransferTimeout(15000);
 	QMetaObject::invokeMethod(
-		network,
-		[network, req, title, direct, refresh = settings.refresh_token] {
-			auto *timer = new QTimer(network);
+		owner,
+		[owner, url, title, direct, token = settings.upload_token, refresh = settings.refresh_token] {
+			auto *timer = new QTimer(owner);
 			timer->setSingleShot(true);
-			auto access = std::make_shared<QByteArray>();
+			auto access =
+				std::make_shared<QByteArray>(direct ? QByteArray() : QByteArray::fromStdString(token));
 			auto poll = [=] {
-				auto request = req;
-				if (direct)
-					request.setRawHeader("Authorization", "Bearer " + *access);
-				auto *reply = network->get(request);
-				QObject::connect(reply, &QNetworkReply::finished, timer, [=] {
-					auto obj = QJsonDocument::fromJson(reply->readAll()).object();
+				send(timer, {url, "GET", {"Authorization: Bearer " + *access}}, [=](const Reply &reply) {
+					auto obj = reply.json;
 					auto status = obj.value("status").toString();
 					if (direct) {
 						auto state = obj.value("items")
@@ -280,9 +237,7 @@ void youtube_watch(QNetworkAccessManager *network, const YouTubeSettings &settin
 						else if (state == "failed" || state == "rejected" || state == "deleted")
 							status = "failed";
 					}
-					const int http =
-						reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-					reply->deleteLater();
+					const auto http = reply.code == CURLE_OK ? reply.status : 0;
 					if (http == 200 && status == "ready")
 						notify_user("YouTube: " + title + " is ready to play.");
 					else if (http == 200 && status == "failed")
@@ -299,21 +254,16 @@ void youtube_watch(QNetworkAccessManager *network, const YouTubeSettings &settin
 					}
 					timer->deleteLater();
 				});
-				// The deadline can end a watch while this reply is still in flight.
-				QObject::connect(timer, &QObject::destroyed, reply, &QObject::deleteLater);
 			};
 			QObject::connect(timer, &QTimer::timeout, timer, [=] {
 				if (!direct || !access->isEmpty()) {
 					poll();
 					return;
 				}
-				auto *reply = google::refresh(*network, refresh);
-				QObject::connect(timer, &QObject::destroyed, reply, &QObject::deleteLater);
-				QObject::connect(reply, &QNetworkReply::finished, timer, [=] {
-					auto obj = QJsonDocument::fromJson(reply->readAll()).object();
-					reply->deleteLater();
+				send(timer, google::refresh(refresh), [=](const Reply &reply) {
+					auto obj = reply.json;
 					*access = obj.value("access_token").toString().toUtf8();
-					if (reply->error() == QNetworkReply::NoError && !access->isEmpty())
+					if (reply.ok() && !access->isEmpty())
 						poll();
 					else if (obj.value("error") == "invalid_grant") {
 						notify_user("Clips can no longer check " + title +

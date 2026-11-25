@@ -131,8 +131,8 @@ struct YouTubeSession {
 bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::vector<uint8_t> &mp4,
 		    YouTubeSession &session, std::string &link, std::string &error,
 		    const std::atomic<bool> &stopping = false);
-class QNetworkAccessManager;
-void youtube_watch(QNetworkAccessManager *network, const YouTubeSettings &settings, const std::string &clip_id,
+class QObject;
+void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::string &clip_id,
 		   const std::string &title);
 
 /* True for https:// URLs, and plain http only on this computer, for testing. */

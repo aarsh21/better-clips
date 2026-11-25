@@ -56,6 +56,7 @@ target_sources(
     src/settings-dialog.cpp
     src/sha256.cpp
     src/uploader.cpp
+    src/youtube-http.cpp
     src/youtube-upload.cpp
     src/youtube-connect.cpp
     src/focused-app.cpp

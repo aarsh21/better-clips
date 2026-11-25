@@ -7,7 +7,7 @@
 
 #include <obs-frontend-api.h>
 #include <util/platform.h>
-#include <QNetworkAccessManager>
+#include <QObject>
 
 #include <chrono>
 #include <condition_variable>
@@ -28,7 +28,7 @@ std::deque<std::unique_ptr<Clip>> to_disk; /* arrived while the uploads were ful
 std::atomic<bool> stopping{false};
 std::thread worker;
 std::thread disk_worker;
-QNetworkAccessManager *processing = nullptr; /* UI event loop; only asynchronous requests */
+QObject *processing = nullptr; /* UI-thread owner of processing timers and requests */
 
 /* Seconds to wait before each retry; the clip only lives in memory, so try
  * for a couple of minutes before giving up. */
@@ -102,16 +102,19 @@ std::string save_to_disk(const Clip &clip, const std::vector<uint8_t> &mp4)
 }
 
 /* Keeps a clip that couldn't be uploaded, and says where it went. */
-void keep_on_disk(const Clip &clip, const std::vector<uint8_t> &mp4, const std::string &why)
+void keep_on_disk(const Clip &clip, const std::vector<uint8_t> &mp4, const std::string &why,
+		  const char *log_reason = nullptr)
 {
+	if (!log_reason)
+		log_reason = why.c_str();
 	std::string path = save_to_disk(clip, mp4);
 	if (path.empty()) {
 		obs_log(LOG_ERROR, "%s: %s, and it couldn't be saved to the recording folder", clip.name.c_str(),
-			why.c_str());
+			log_reason);
 		notify_user("Better Clips: " + why + ", and it couldn't be saved to disk. Clip lost.");
 		return;
 	}
-	obs_log(LOG_INFO, "%s: %s, saved to %s", clip.name.c_str(), why.c_str(), path.c_str());
+	obs_log(LOG_INFO, "%s: %s, saved to %s", clip.name.c_str(), log_reason, path.c_str());
 	notify_user("Better Clips: " + why + ". Saved it to " + path);
 }
 
@@ -175,7 +178,9 @@ void upload_clip(Clip &clip)
 			return;
 		}
 
-		obs_log(LOG_WARNING, "Upload of %s failed (attempt %zu): %s", key.c_str(), attempt + 1, error.c_str());
+		if (!yt) // YouTube already logged the status without the server's message.
+			obs_log(LOG_WARNING, "Upload of %s failed (attempt %zu): %s", key.c_str(), attempt + 1,
+				error.c_str());
 
 		std::unique_lock<std::mutex> lock(mutex);
 		if (attempt >= std::size(RETRY_DELAYS) || stopping || session.permanent_failure)
@@ -185,8 +190,9 @@ void upload_clip(Clip &clip)
 		wake.wait_for(lock, std::chrono::seconds(RETRY_DELAYS[attempt]), [] { return stopping.load(); });
 	}
 
-	obs_log(LOG_ERROR, "Giving up on uploading %s: %s", key.c_str(), error.c_str());
-	keep_on_disk(clip, mp4, "upload failed (" + error + ")");
+	if (!yt)
+		obs_log(LOG_ERROR, "Giving up on uploading %s: %s", key.c_str(), error.c_str());
+	keep_on_disk(clip, mp4, "upload failed (" + error + ")", yt ? "YouTube upload failed" : nullptr);
 }
 
 void write_clip(Clip &clip)
@@ -217,7 +223,7 @@ void run(std::deque<std::unique_ptr<Clip>> &clips, void (*handle)(Clip &))
 
 void uploader_start()
 {
-	processing = new QNetworkAccessManager;
+	processing = new QObject;
 	stopping = false;
 	worker = std::thread(run, std::ref(queue), upload_clip);
 	disk_worker = std::thread(run, std::ref(to_disk), write_clip);

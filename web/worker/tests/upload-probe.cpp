@@ -36,8 +36,15 @@ void notify_user(const std::string &message, const std::string &link)
 
 int main(int argc, char **argv)
 {
+	// Keep stdout reserved for the upload link, like the OBS clipboard.
+	base_set_log_handler(
+		[](int, const char *fmt, va_list args, void *) {
+			vfprintf(stderr, fmt, args);
+			fputc('\n', stderr);
+		},
+		nullptr);
 	QGuiApplication app(argc, argv);
-	QNetworkAccessManager monitor;
+	QObject monitor;
 	if (argc == 2) {
 		std::string action(argv[1]);
 		Browser browser;

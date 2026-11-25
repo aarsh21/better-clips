@@ -377,7 +377,7 @@ def exercise():
     probe = scratch / "upload-probe"
     compiler = shlex.split(
         subprocess.check_output(
-            ["pkg-config", "--cflags", "--libs", "Qt6Gui", "Qt6Network", "libobs"],
+            ["pkg-config", "--cflags", "--libs", "Qt6Gui", "Qt6Network", "libobs", "libcurl"],
             text=True,
         )
     )
@@ -422,6 +422,7 @@ def exercise():
             "-I" + str(scratch / "build/generated"),
             "web/worker/tests/upload-probe.cpp",
             "src/youtube-connect.cpp",
+            "src/youtube-http.cpp",
             "src/youtube-upload.cpp",
             "-o",
             str(probe),
@@ -739,7 +740,9 @@ def exercise():
         timeout=10,
     )
     check(
-        revoked and p.returncode == 3 and "Sign in again" in p.stderr,
+        revoked and p.returncode == 3 and "Sign in again" in p.stderr
+        and p.stderr.count("[better-clips] YouTube upload failed (HTTP 400)") == 1
+        and "testing-refresh" not in p.stderr,
         "expired refresh token is permanent; revoke outcomes preserve or clear the local token",
     )
     assert not failures, failures

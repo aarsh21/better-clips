@@ -32,6 +32,10 @@ the web app ships from `main`.
   bucket clips: play, rename, change visibility, cut and delete them. Google
   asks once for every permission. New **FAQ** and **Privacy** pages.
 
+## [0.3.1]
+
+- Fixed YouTube sign-in and uploads on OBS builds that ship without a Qt TLS backend, including macOS. Failed requests now report the HTTP status or curl error in the OBS log.
+
 ## [0.3.0] - 2026-11-25
 
 - Replay to R2 is now **Better Clips**. The installer removes the old plugin,
@@ -123,6 +127,7 @@ the web app ships from `main`.
   clips to Cloudflare R2 without writing them to disk.
 - The clips web app to browse, preview, trim, keep, delete and share clips.
 
+[0.3.1]: https://github.com/aarsh21/better-clips/releases/tag/0.3.1
 [0.3.0]: https://github.com/aarsh21/better-clips/releases/tag/0.3.0
 [0.1.7]: https://github.com/aarsh21/better-clips/releases/tag/0.1.7
 [0.1.6]: https://github.com/aarsh21/better-clips/releases/tag/0.1.6
