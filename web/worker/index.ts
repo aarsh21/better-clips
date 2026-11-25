@@ -24,6 +24,7 @@ import { getCookie, setCookie } from "hono/cookie"
 import { createRemoteJWKSet, jwtVerify } from "jose"
 
 import { clipTitle, labelParts } from "./clip-title"
+import { youtubeRoutes, youtubeClips, youtubeMaintenance } from "./youtube"
 import {
   cleanupDone,
   currentObsToken,
@@ -102,6 +103,12 @@ const OPEN = new Set([
   "/api/auth/callback",
   "/api/auth/setup",
   "/api/auth/logout",
+  "/api/youtube/connect",
+  "/api/youtube/callback",
+  "/api/youtube/obs/exchange",
+  "/api/youtube/upload/start",
+  "/api/youtube/upload/complete",
+  "/api/youtube/upload/status",
 ])
 
 /* Hosted routes that work before storage is connected. */
@@ -121,6 +128,7 @@ app.use("/api/*", async (c, next) => {
   if (
     !hosted &&
     (path.startsWith("/api/auth/") ||
+      path.startsWith("/api/youtube/") ||
       path === "/api/storage" ||
       path === "/api/obs/token")
   )
@@ -130,6 +138,13 @@ app.use("/api/*", async (c, next) => {
     return c.json({ error: "Not found" }, 404)
 
   if (OPEN.has(path)) return next()
+
+  if (
+    hosted &&
+    path === "/api/youtube/disconnect" &&
+    c.req.header("authorization")
+  )
+    return next()
 
   if (hosted) return hostedAuth(c, next)
 
@@ -214,8 +229,12 @@ async function hostedAuth(c: Context<App>, next: Next) {
     )
   c.set("uploader", "owner")
 
-  if (ACCOUNT.has(c.req.path)) return next()
+  if (ACCOUNT.has(c.req.path) || c.req.path.startsWith("/api/youtube/"))
+    return next()
   const entry = who.tenantId ? await loadTenant(c.env, who.tenantId) : null
+
+  if (!entry && c.req.path === "/api/clips" && c.req.method === "GET")
+    return next()
 
   if (!entry)
     return c.json({ error: "Connect your storage first", storage: "none" }, 409)
@@ -581,6 +600,13 @@ export type Clip = {
 app.get("/api/clips", async (c) => {
   const t = c.get("tenant")
 
+  const youtube = isHosted(c.env)
+    ? await youtubeClips(c.env, c.get("who").userId)
+    : undefined
+
+  if (!t)
+    return c.json({ clips: [], youtube }, 200, { "cache-control": "no-store" })
+
   const [objects, thumbs] = await Promise.all([
     t.store.list(""),
     t.meta.thumbs(),
@@ -609,7 +635,7 @@ app.get("/api/clips", async (c) => {
     ]
   })
 
-  return c.json({ clips }, 200, { "cache-control": "no-store" })
+  return c.json({ clips, youtube }, 200, { "cache-control": "no-store" })
 })
 
 app.get("/api/media/*", async (c) => {
@@ -1159,6 +1185,8 @@ app.put("/api/settings", async (c) => {
 
 hostedRoutes(app)
 
+youtubeRoutes(app)
+
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404))
 
 /* JSON errors, so OBS and the app can show what went wrong. A bucket key
@@ -1242,6 +1270,7 @@ async function cleanupAll(env: Env) {
     })
   )
   await rewrapStale(env, 25)
+  await youtubeMaintenance(env)
 }
 
 export default {

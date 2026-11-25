@@ -11,6 +11,7 @@ import type { Context, Hono } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 
 import { d1Meta, parseSettings, type Meta, type Settings } from "./meta"
+import { youtubeInfo } from "./youtube"
 import { parseS3Url, s3Store, StorageError, type Store } from "./store"
 
 export type HostedEnv = {
@@ -23,6 +24,10 @@ export type HostedEnv = {
   CREDS_KEY_PREVIOUS?: string
   OAUTH_CLIENT_ID?: string
   OAUTH_CLIENT_SECRET?: string
+  GOOGLE_CLIENT_ID?: string
+  GOOGLE_CLIENT_SECRET?: string
+  GOOGLE_OAUTH?: string
+  YOUTUBE_API?: string
   /* The bucket automatic setup uses, or creates when it's missing. */
   AUTO_BUCKET?: string
   /* Only honoured when they point at this computer, for tests. */
@@ -40,11 +45,14 @@ export type SignedIn = {
 
 export function isHosted(env: HostedEnv) {
   return Boolean(
-    env.DB && env.CREDS_KEY && env.OAUTH_CLIENT_ID && env.OAUTH_CLIENT_SECRET
+    env.DB &&
+    env.CREDS_KEY &&
+    ((env.OAUTH_CLIENT_ID && env.OAUTH_CLIENT_SECRET) ||
+      (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET))
   )
 }
 
-const local = (url: string | undefined) =>
+export const local = (url: string | undefined) =>
   url && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(url)
     ? url
     : null
@@ -93,7 +101,8 @@ type Keys = { aes: CryptoKey; mac: CryptoKey }
 
 const keyCache = new Map<string, Promise<Keys>>()
 
-const currentVersion = (env: HostedEnv) => Number(env.CREDS_KEY_VERSION) || 1
+export const currentVersion = (env: HostedEnv) =>
+  Number(env.CREDS_KEY_VERSION) || 1
 
 async function deriveKeys(base64: string): Promise<Keys> {
   const raw = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
@@ -156,7 +165,7 @@ function keys(env: HostedEnv, version = currentVersion(env)) {
   return hit
 }
 
-async function encrypt(env: HostedEnv, text: string) {
+export async function encrypt(env: HostedEnv, text: string) {
   const iv = crypto.getRandomValues(new Uint8Array(12))
 
   const sealed = await crypto.subtle.encrypt(
@@ -168,7 +177,7 @@ async function encrypt(env: HostedEnv, text: string) {
   return `${b64url(iv)}.${b64url(sealed)}`
 }
 
-async function decrypt(env: HostedEnv, sealed: string, version: number) {
+export async function decrypt(env: HostedEnv, sealed: string, version: number) {
   const [iv, data] = sealed.split(".")
 
   const plain = await crypto.subtle.decrypt(
@@ -463,7 +472,7 @@ function forgetUser(userId: string, tenantId?: string | null) {
   if (tenantId) tenantCache.delete(tenantId)
 }
 
-async function startSession(c: Context, userId: string) {
+export async function startSession(c: Context, userId: string) {
   const env: HostedEnv = c.env
   const sid = randomToken()
   const expires = Date.now() + SESSION_DAYS * 86_400_000
@@ -1096,6 +1105,7 @@ export function hostedRoutes(app: Hono<any>) {
     return c.json(
       {
         email: who.email,
+        youtube: await youtubeInfo(env, who.userId),
         storage: entry && {
           id: entry.row.id,
           bucket: entry.row.bucket,

@@ -3,6 +3,7 @@
 #include <obs-module.h>
 
 #include <QString>
+#include "youtube.hpp"
 
 #include <cstdint>
 #include <string>
@@ -90,6 +91,10 @@ struct Clip {
 	std::vector<AudioTrack> audio;
 	std::vector<encoder_packet> packets; /* referenced, sorted by dts_usec */
 	R2Config config;
+	YouTubeSettings youtube;
+	int youtube_audio_index = -1; /* packet track for the selected mixer, or absent */
+	std::string game;
+	time_t recorded_at = 0;
 	std::string save_dir; /* OBS's recording folder, for a clip that can't upload */
 
 	Clip() = default;
@@ -116,6 +121,16 @@ bool app_upload(const R2Config &config, const std::string &name, const std::vect
 
 /* Checks that the clips app accepts the upload token. */
 bool app_check(const R2Config &config, std::string &error);
+
+/* Kept across retries of ONE clip. A lost reply must never start a second video. */
+struct YouTubeSession {
+	std::string url, clip_id, video_id;
+};
+bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::vector<uint8_t> &mp4,
+		    YouTubeSession &session, std::string &link, std::string &error);
+class QNetworkAccessManager;
+void youtube_watch(QNetworkAccessManager *network, const YouTubeSettings &settings, const std::string &clip_id,
+		   const std::string &title);
 
 /* True for https:// URLs, and plain http only on this computer, for testing. */
 bool secure_url(const std::string &url);

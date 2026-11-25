@@ -1,2 +1,16 @@
 # The password you sign in to your clips app with. Use 12 or more characters.
 APP_PASSWORD=
+
+# Hosted mode (no bucket or Cloudflare OAuth credentials required).
+# From web/: pnpm exec wrangler d1 migrations apply clips-app --local -c wrangler.app.jsonc
+# CLOUDFLARE_VITE_WRANGLER_CONFIG_PATH=wrangler.app.jsonc pnpm dev
+# Or: pnpm build && pnpm exec wrangler dev --local -c wrangler.app.jsonc
+# Open localhost:5173 (Vite) or localhost:8787 (Wrangler); register the exact
+# http://localhost:<port>/api/youtube/callback with the Google Web client.
+# CREDS_KEY: generate once with openssl rand -base64 32, and keep it stable.
+CREDS_KEY=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+# Optional loopback-only replacements for testing, never needed with Google:
+# GOOGLE_OAUTH=http://127.0.0.1:9393
+# YOUTUBE_API=http://127.0.0.1:9393

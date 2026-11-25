@@ -1,0 +1,46 @@
+#pragma once
+
+#include <ctime>
+#include <functional>
+#include <string>
+
+/* Where saved replays go. ClipsApp and S3 use R2Config as before. */
+enum class Destination { ClipsApp, S3, YouTube };
+
+struct YouTubeSettings {
+	Destination destination = Destination::ClipsApp;
+	/* Set by youtube_connect_async; empty when not connected. */
+	std::string app_url;      /* the hosted Clips app that keeps the Google tokens */
+	std::string upload_token; /* OBS's token for that app */
+	std::string channel_id;
+	std::string channel_title;
+	/* Upload defaults the user controls, as YouTube's policies require. */
+	std::string privacy = "unlisted"; /* "private", "unlisted" or "public" */
+	std::string title_template = "{game} - {date} {time}";
+	std::string description;
+	bool review_before_upload = false;
+	int audio_track = 1; /* 1-based OBS audio track sent to YouTube */
+};
+
+YouTubeSettings get_youtube_settings();
+void set_youtube_settings(const YouTubeSettings &settings);
+
+/* Sign in with YouTube: opens the browser at app_url and waits on a loopback
+ * port. done runs on the UI thread with a user-facing error when !ok. */
+void youtube_connect_async(const std::string &app_url, std::function<void(bool ok, const std::string &error)> done);
+
+/* Revokes access through the app and clears the channel and token. */
+void youtube_disconnect();
+
+/* {game}, {date} (YYYY-MM-DD) and {time} (HH:MM), at most 100 characters,
+ * without < or >. */
+std::string youtube_title(const std::string &title_template, const std::string &game, time_t when);
+
+struct YouTubeUpload {
+	std::string title, description, privacy;
+};
+
+/* Implemented by the UI (settings-dialog.cpp). Called on the uploader thread
+ * when review_before_upload is on; blocks until the user answers. false means
+ * cancel: the clip is saved to the recording folder instead. */
+bool youtube_review(YouTubeUpload &upload, const std::string &channel_title);

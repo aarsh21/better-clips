@@ -7,6 +7,7 @@
 
 #include <obs-frontend-api.h>
 #include <util/platform.h>
+#include <QNetworkAccessManager>
 
 #include <chrono>
 #include <condition_variable>
@@ -27,6 +28,7 @@ std::deque<std::unique_ptr<Clip>> to_disk; /* arrived while the uploads were ful
 bool stopping = false;
 std::thread worker;
 std::thread disk_worker;
+QNetworkAccessManager *processing = nullptr; /* UI event loop; only asynchronous requests */
 
 /* Seconds to wait before each retry; the clip only lives in memory, so try
  * for a couple of minutes before giving up. */
@@ -120,22 +122,38 @@ void upload_clip(Clip &clip)
 	if (!build(clip, mp4))
 		return;
 
-	const bool via_app = !clip.config.app_url.empty();
+	const bool yt = clip.youtube.destination == Destination::YouTube;
+	YouTubeUpload details;
+	YouTubeSession session;
+	if (yt) {
+		if (clip.youtube_audio_index < 0) {
+			keep_on_disk(clip, mp4, "the selected YouTube audio track is not in the Replay Buffer");
+			return;
+		}
+		details = {youtube_title(clip.youtube.title_template, clip.game, clip.recorded_at),
+			   clip.youtube.description, clip.youtube.privacy};
+		if (clip.youtube.review_before_upload && !youtube_review(details, clip.youtube.channel_title)) {
+			keep_on_disk(clip, mp4, "YouTube upload cancelled");
+			return;
+		}
+	}
+	const bool via_app = clip.youtube.destination == Destination::ClipsApp;
 	std::string key = via_app ? clip.name : object_key(clip.config, clip.name);
 	notify_user("Replay to R2: uploading " + clip.name + " (" + format_mb(mp4.size()) + ")...");
 
 	for (size_t attempt = 0;; attempt++) {
 		auto upload_start = std::chrono::steady_clock::now();
-		bool uploaded = via_app ? app_upload(clip.config, clip.name, mp4, key, error)
-					: s3_put_object(clip.config, key, mp4, "video/mp4", error);
+		std::string link;
+		bool uploaded = yt        ? youtube_upload(clip, details, mp4, session, link, error)
+				: via_app ? app_upload(clip.config, clip.name, mp4, key, error)
+					  : s3_put_object(clip.config, key, mp4, "video/mp4", error);
 		if (uploaded) {
 			auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 					  std::chrono::steady_clock::now() - upload_start)
 					  .count();
 			obs_log(LOG_INFO, "Uploaded %s (%zu bytes) in %lld ms", key.c_str(), mp4.size(), (long long)ms);
 
-			std::string link;
-			if (!clip.config.public_url.empty()) {
+			if (!yt && !clip.config.public_url.empty()) {
 				link = clip.config.public_url;
 				while (!link.empty() && link.back() == '/')
 					link.pop_back();
@@ -144,6 +162,8 @@ void upload_clip(Clip &clip)
 			notify_user(link.empty() ? "Replay to R2: uploaded " + key
 						 : "Replay to R2: uploaded, link copied: " + link,
 				    link);
+			if (yt)
+				youtube_watch(processing, clip.youtube, session.clip_id, details.title);
 			return;
 		}
 
@@ -189,6 +209,7 @@ void run(std::deque<std::unique_ptr<Clip>> &clips, void (*handle)(Clip &))
 
 void uploader_start()
 {
+	processing = new QNetworkAccessManager;
 	stopping = false;
 	worker = std::thread(run, std::ref(queue), upload_clip);
 	disk_worker = std::thread(run, std::ref(to_disk), write_clip);
@@ -207,6 +228,9 @@ void uploader_stop()
 		worker.join();
 	if (disk_worker.joinable())
 		disk_worker.join();
+	/* No uploader can queue another watch. Destroy pending timers and requests. */
+	delete processing;
+	processing = nullptr;
 }
 
 void uploader_enqueue(Clip *clip)

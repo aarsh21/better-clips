@@ -44,6 +44,7 @@ namespace {
 
 std::mutex config_mutex;
 R2Config config;
+YouTubeSettings youtube;
 obs_hotkey_id save_hotkey = OBS_INVALID_HOTKEY_ID;
 obs_output_t *replay_output = nullptr; /* our in-memory replay buffer */
 bool ui_alive = true;
@@ -74,6 +75,20 @@ void load_config()
 	config.public_url = obs_data_get_string(data, "public_url");
 	config.start_replay_buffer = obs_data_get_bool(data, "start_replay_buffer");
 	dock_placed = obs_data_get_bool(data, "dock_placed");
+	obs_data_set_default_int(data, "destination", config.app_url.empty() && !config.s3_url.empty() ? 1 : 0);
+	youtube.destination = static_cast<Destination>(obs_data_get_int(data, "destination"));
+	youtube.app_url = obs_data_get_string(data, "youtube_app_url");
+	youtube.upload_token = obs_data_get_string(data, "youtube_upload_token");
+	youtube.channel_id = obs_data_get_string(data, "youtube_channel_id");
+	youtube.channel_title = obs_data_get_string(data, "youtube_channel_title");
+	obs_data_set_default_string(data, "youtube_privacy", "unlisted");
+	obs_data_set_default_string(data, "youtube_title", "{game} - {date} {time}");
+	obs_data_set_default_int(data, "youtube_audio_track", 1);
+	youtube.privacy = obs_data_get_string(data, "youtube_privacy");
+	youtube.title_template = obs_data_get_string(data, "youtube_title");
+	youtube.description = obs_data_get_string(data, "youtube_description");
+	youtube.review_before_upload = obs_data_get_bool(data, "youtube_review");
+	youtube.audio_track = static_cast<int>(obs_data_get_int(data, "youtube_audio_track"));
 
 	obs_data_array_t *hotkey = obs_data_get_array(data, "save_hotkey");
 	obs_hotkey_load(save_hotkey, hotkey);
@@ -94,6 +109,16 @@ void save_config()
 		obs_data_set_string(data, "folder", config.folder.c_str());
 		obs_data_set_string(data, "public_url", config.public_url.c_str());
 		obs_data_set_bool(data, "start_replay_buffer", config.start_replay_buffer);
+		obs_data_set_int(data, "destination", static_cast<int>(youtube.destination));
+		obs_data_set_string(data, "youtube_app_url", youtube.app_url.c_str());
+		obs_data_set_string(data, "youtube_upload_token", youtube.upload_token.c_str());
+		obs_data_set_string(data, "youtube_channel_id", youtube.channel_id.c_str());
+		obs_data_set_string(data, "youtube_channel_title", youtube.channel_title.c_str());
+		obs_data_set_string(data, "youtube_privacy", youtube.privacy.c_str());
+		obs_data_set_string(data, "youtube_title", youtube.title_template.c_str());
+		obs_data_set_string(data, "youtube_description", youtube.description.c_str());
+		obs_data_set_bool(data, "youtube_review", youtube.review_before_upload);
+		obs_data_set_int(data, "youtube_audio_track", youtube.audio_track);
 	}
 	obs_data_set_bool(data, "dock_placed", dock_placed);
 	obs_data_array_t *hotkey = obs_hotkey_save(save_hotkey);
@@ -206,6 +231,7 @@ void apply_pending_setup_code()
 		return;
 	}
 	next.start_replay_buffer = true;
+	youtube.destination = next.app_url.empty() ? Destination::S3 : Destination::ClipsApp;
 	enable_replay_buffer_in_profile();
 	bind_default_hotkey();
 	set_config(next);
@@ -302,7 +328,13 @@ void save_replay_to_r2()
 		return;
 	}
 	R2Config current = get_config();
-	if (current.app_url.empty() && current.s3_url.empty()) {
+	auto yt = get_youtube_settings();
+	if (yt.destination == Destination::YouTube && (yt.app_url.empty() || yt.upload_token.empty())) {
+		notify_user("Sign in with YouTube in Tools > Replay to R2 Settings");
+		return;
+	}
+	if ((yt.destination == Destination::ClipsApp && current.app_url.empty()) ||
+	    (yt.destination == Destination::S3 && current.s3_url.empty())) {
 		notify_user("Replay to R2: connect your clips app in Tools > Replay to R2 Settings");
 		return;
 	}
@@ -352,6 +384,21 @@ R2Config get_config()
 {
 	std::lock_guard<std::mutex> lock(config_mutex);
 	return config;
+}
+
+YouTubeSettings get_youtube_settings()
+{
+	std::lock_guard<std::mutex> lock(config_mutex);
+	return youtube;
+}
+
+void set_youtube_settings(const YouTubeSettings &settings)
+{
+	{
+		std::lock_guard<std::mutex> lock(config_mutex);
+		youtube = settings;
+	}
+	save_config();
 }
 
 void set_config(const R2Config &new_config)

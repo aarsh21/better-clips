@@ -10,6 +10,8 @@
 #include "plugin-support.h"
 
 #include <util/platform.h>
+#include <obs-frontend-api.h>
+#include <util/config-file.h>
 
 #include <algorithm>
 #include <cctype>
@@ -24,6 +26,7 @@ namespace {
 
 struct ReplayR2 {
 	obs_output_t *output;
+	unsigned audio_mask = 0;
 
 	std::mutex mutex;
 	std::deque<encoder_packet> packets;
@@ -217,6 +220,9 @@ Clip *snapshot(ReplayR2 *r)
 {
 	Clip *clip = new Clip();
 	clip->config = get_config();
+	clip->youtube = get_youtube_settings();
+	clip->game = r->save_scene;
+	clip->recorded_at = r->save_wall_time;
 
 	clip->name = clip_name(r->save_wall_time, r->save_scene, !clip->config.public_url.empty());
 
@@ -224,6 +230,20 @@ Clip *snapshot(ReplayR2 *r)
 	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
 		obs_encoder_t *encoder = obs_output_get_audio_encoder(r->output, i);
 		if (encoder) {
+#if LIBOBS_API_MAJOR_VER >= 31
+			const int mixer = static_cast<int>(obs_encoder_get_mixer_index(encoder));
+#else
+			/* OBS 30 packs the selected mixers into consecutive output slots. */
+			int mixer = -1;
+			size_t slot = 0;
+			for (int m = 0; m < MAX_AUDIO_MIXES; ++m)
+				if ((r->audio_mask & (1u << m)) && slot++ == i) {
+					mixer = m;
+					break;
+				}
+#endif
+			if (mixer >= 0 && mixer + 1 == clip->youtube.audio_track)
+				clip->youtube_audio_index = static_cast<int>(i);
 			clip->audio.emplace_back();
 			fill_audio_track(clip->audio.back(), encoder, i);
 		}
@@ -302,6 +322,25 @@ void update(void *data, obs_data_t *settings)
 bool start(void *data)
 {
 	ReplayR2 *r = (ReplayR2 *)data;
+#if LIBOBS_API_MAJOR_VER < 31
+	/* Older libobs doesn't expose an encoder's mixer. Mirror the frontend's
+	 * recording selection when the encoders are attached, not at upload time. */
+	auto *profile = obs_frontend_get_profile_config();
+	if (profile) {
+		bool advanced = QString::fromUtf8(config_get_string(profile, "Output", "Mode")) == "Advanced";
+		const char *section = advanced ? "AdvOut" : "SimpleOutput";
+		bool flv = QString::fromUtf8(config_get_string(profile, section, "RecFormat2")) == "flv";
+		r->audio_mask = static_cast<unsigned>(config_get_int(profile, section, "RecTracks"));
+		if (advanced && flv) {
+			int track = static_cast<int>(config_get_int(profile, section, "FLVTrack"));
+			r->audio_mask = track >= 1 && track <= MAX_AUDIO_MIXES ? 1u << (track - 1) : 0;
+		} else if (advanced && !r->audio_mask)
+			r->audio_mask = static_cast<unsigned>(config_get_int(profile, section, "TrackIndex"));
+		else if (!advanced &&
+			 (flv || QString::fromUtf8(config_get_string(profile, section, "RecQuality")) == "Stream"))
+			r->audio_mask = 1;
+	}
+#endif
 	if (!obs_output_can_begin_data_capture(r->output, 0))
 		return false;
 	if (!obs_output_initialize_encoders(r->output, 0))

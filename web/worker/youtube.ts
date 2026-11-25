@@ -1,0 +1,959 @@
+import type { Context, Hono } from "hono"
+import { deleteCookie, getCookie, setCookie } from "hono/cookie"
+import {
+  currentVersion,
+  decrypt,
+  encrypt,
+  local,
+  randomToken,
+  sha256,
+  signedIn,
+  startSession,
+  type HostedEnv,
+} from "./hosted"
+
+const scope = (name: string) =>
+  `https://www.googleapis.com/auth/youtube.${name}`
+
+const basic = [scope("upload"), scope("readonly")]
+const manage = scope("force-ssl")
+
+const api = (env: HostedEnv) =>
+  local(env.YOUTUBE_API) ?? "https://www.googleapis.com"
+
+const oauth = (env: HostedEnv) =>
+  local(env.GOOGLE_OAUTH) ?? "https://oauth2.googleapis.com"
+
+const callback = (c: Context) =>
+  new URL("/api/youtube/callback", c.req.url).href
+
+const cookie = "clips_youtube_oauth"
+const path = "/api/youtube"
+const day = 86400000
+
+type Account = {
+  user_id: string
+  subject: string
+  channel_id: string
+  channel_title: string
+  scopes: string
+  refresh_enc: string
+  key_version: number
+}
+
+type Token = {
+  access_token: string
+  refresh_token?: string
+  scope: string
+  error?: string
+}
+
+type Flow = {
+  state: string
+  verifier: string
+  purpose: string
+  user: string
+  port: number
+  obsState: string
+  expires: number
+}
+
+type Video = {
+  id: string
+  snippet: {
+    channelId: string
+    title: string
+    description: string
+    categoryId: string
+    tags?: string[]
+    defaultLanguage?: string
+    thumbnails?: Record<string, { url: string }>
+  }
+  status: {
+    privacyStatus: string
+    uploadStatus: string
+    license?: string
+    embeddable?: boolean
+    publicStatsViewable?: boolean
+    selfDeclaredMadeForKids?: boolean
+    containsSyntheticMedia?: boolean
+    publishAt?: string
+  }
+  contentDetails: { duration: string }
+}
+
+async function account(env: HostedEnv, user: string) {
+  return env
+    .DB!.prepare("SELECT * FROM youtube_accounts WHERE user_id=?")
+    .bind(user)
+    .first<Account>()
+}
+
+export async function youtubeInfo(env: HostedEnv, user: string) {
+  const a = await account(env, user)
+
+  return (
+    a && {
+      channelId: a.channel_id,
+      channelTitle: a.channel_title,
+      canManage: a.scopes.split(" ").includes(manage),
+    }
+  )
+}
+
+async function obs(c: Context) {
+  const env: HostedEnv = c.env
+  const token = /^Bearer (\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1]
+
+  return token
+    ? env
+        .DB!.prepare("SELECT * FROM youtube_accounts WHERE obs_hash=?")
+        .bind(await sha256(token))
+        .first<Account>()
+    : null
+}
+
+const reconnect = "YouTube access stopped working. Sign in with YouTube again."
+
+async function tokenRequest(env: HostedEnv, fields: Record<string, string>) {
+  const res = await fetch(`${oauth(env)}/token`, {
+    method: "POST",
+    body: new URLSearchParams({
+      ...fields,
+      client_id: env.GOOGLE_CLIENT_ID!,
+      client_secret: env.GOOGLE_CLIENT_SECRET!,
+    }),
+  })
+
+  // Google returns invalid_grant in a 400 response when access was revoked.
+  if (!res.ok) {
+    if (res.status === 400) return res.json<Token>()
+    throw new Error("Google sign-in is unavailable. Try again.")
+  }
+
+  return res.json<Token>()
+}
+
+async function access(env: HostedEnv, a: Account) {
+  const plain = await decrypt(env, a.refresh_enc, a.key_version)
+
+  const t = await tokenRequest(env, {
+    grant_type: "refresh_token",
+    refresh_token: plain,
+  })
+
+  if (!t.access_token) {
+    if (t.error === "invalid_grant") {
+      await env
+        .DB!.prepare(
+          "DELETE FROM youtube_accounts WHERE user_id=? AND refresh_enc=?"
+        )
+        .bind(a.user_id, a.refresh_enc)
+        .run()
+      throw new Error(reconnect)
+    }
+
+    throw new Error("Google could not renew access. Try again.")
+  }
+
+  if (a.key_version !== currentVersion(env) || t.refresh_token)
+    await env
+      .DB!.prepare(
+        "UPDATE youtube_accounts SET refresh_enc=?,key_version=? WHERE user_id=? AND refresh_enc=?"
+      )
+      .bind(
+        await encrypt(env, t.refresh_token ?? plain),
+        currentVersion(env),
+        a.user_id,
+        a.refresh_enc
+      )
+      .run()
+
+  return t.access_token
+}
+
+async function google(
+  env: HostedEnv,
+  token: string,
+  route: string,
+  init?: RequestInit
+) {
+  const res = await fetch(api(env) + route, {
+    ...init,
+    headers: { authorization: `Bearer ${token}`, ...init?.headers },
+  })
+
+  if (!res.ok) {
+    const err = await res
+      .json<{ error: { errors?: { reason: string }[] } }>()
+      .catch(() => null)
+
+    const reason = err?.error?.errors?.[0]?.reason
+    throw new Error(
+      reason &&
+        ["quotaExceeded", "dailyLimitExceeded", "uploadLimitExceeded"].includes(
+          reason
+        )
+        ? "The YouTube upload limit was reached. Try again tomorrow."
+        : res.status === 401
+          ? reconnect
+          : `YouTube refused the request (${reason ?? res.status}).`
+    )
+  }
+
+  return res
+}
+
+async function videos(env: HostedEnv, token: string, ids: string[]) {
+  const res = await google(
+    env,
+    token,
+    `/youtube/v3/videos?part=snippet,status,contentDetails&id=${encodeURIComponent(ids.join(","))}`
+  )
+
+  return (await res.json<{ items: Video[] }>()).items
+}
+
+async function myChannel(env: HostedEnv, token: string) {
+  const res = await google(
+    env,
+    token,
+    "/youtube/v3/channels?part=snippet&mine=true"
+  )
+
+  const channels = await res.json<{
+    items: { id: string; snippet: { title: string } }[]
+  }>()
+
+  return channels.items[0]
+}
+
+function duration(iso: string) {
+  const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?$/.exec(iso)
+
+  return m
+    ? Number(m[1] ?? 0) * 86400 +
+        Number(m[2] ?? 0) * 3600 +
+        Number(m[3] ?? 0) * 60 +
+        Number(m[4] ?? 0)
+    : null
+}
+
+async function sync(env: HostedEnv, a: Account, token: string, ids: string[]) {
+  const batches: string[][] = []
+
+  for (let i = 0; i < ids.length; i += 50) batches.push(ids.slice(i, i + 50))
+  await Promise.all(
+    batches.map(async (batch) => {
+      const found = await videos(env, token, batch)
+      await env.DB!.batch(
+        batch.map((id) => {
+          const v = found.find(
+            (v) => v.id === id && v.snippet.channelId === a.channel_id
+          )
+
+          if (!v)
+            return env
+              .DB!.prepare(
+                "DELETE FROM youtube_clips WHERE user_id=? AND videoId=? AND (status!='processing' OR uploaded<?)"
+              )
+              .bind(a.user_id, id, new Date(Date.now() - 60000).toISOString())
+          const thumbs = v.snippet.thumbnails
+          const status = v.status.uploadStatus
+
+          return env
+            .DB!.prepare(
+              "UPDATE youtube_clips SET title=?,description=?,privacy=?,durationSeconds=?,thumbnail=?,status=? WHERE user_id=? AND videoId=?"
+            )
+            .bind(
+              v.snippet.title,
+              v.snippet.description,
+              v.status.privacyStatus,
+              duration(v.contentDetails.duration),
+              thumbs?.high?.url ??
+                thumbs?.medium?.url ??
+                thumbs?.default?.url ??
+                null,
+              status === "processed"
+                ? "ready"
+                : ["rejected", "failed", "deleted"].includes(status)
+                  ? "failed"
+                  : "processing",
+              a.user_id,
+              id
+            )
+        })
+      )
+    })
+  )
+}
+
+export async function youtubeClips(env: HostedEnv, user: string) {
+  const db = env.DB!,
+    a = await account(env, user)
+
+  if (!a) return []
+
+  const { results: ids } = await db
+    .prepare(
+      "SELECT videoId FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL"
+    )
+    .bind(user)
+    .all<{ videoId: string }>()
+
+  if (ids.length)
+    try {
+      await sync(
+        env,
+        a,
+        await access(env, a),
+        ids.map((r) => r.videoId)
+      )
+    } catch {
+      // A temporary Google outage must not hide the user's bucket clips.
+      // A revoked grant has already deleted its rows; otherwise show the last sync.
+      console.warn("Showing the last available YouTube clip list")
+    }
+
+  const { results } = await db
+    .prepare(
+      "SELECT id,videoId,title,description,category,privacy,recordedAt,uploaded,durationSeconds,thumbnail,status,start,end FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL ORDER BY recordedAt DESC"
+    )
+    .bind(user)
+    .all()
+
+  return results.map(({ start, end, ...row }) => ({
+    ...row,
+    cut: start === null ? null : { start, end },
+    url: `https://youtu.be/${row.videoId}`,
+  }))
+}
+
+export async function youtubeMaintenance(env: HostedEnv) {
+  const db = env.DB!,
+    now = Date.now()
+
+  await db.batch([
+    db.prepare("DELETE FROM youtube_codes WHERE expires<=?").bind(now),
+    db
+      .prepare("DELETE FROM youtube_clips WHERE videoId IS NULL AND uploaded<?")
+      .bind(new Date(now - 7 * day).toISOString()),
+  ])
+
+  const { results } = await db
+    .prepare(
+      "SELECT * FROM youtube_accounts WHERE checked<? OR key_version<>? ORDER BY checked LIMIT 5"
+    )
+    .bind(now - 6 * day, currentVersion(env))
+    .all<Account>()
+
+  for (const a of results) {
+    try {
+      const token = await access(env, a)
+      const channel = await myChannel(env, token)
+
+      const ids = await db
+        .prepare(
+          "SELECT videoId FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL"
+        )
+        .bind(a.user_id)
+        .all<{ videoId: string }>()
+
+      await sync(
+        env,
+        a,
+        token,
+        ids.results.map((r) => r.videoId)
+      )
+      await db
+        .prepare(
+          "UPDATE youtube_accounts SET checked=?, channel_title=? WHERE user_id=?"
+        )
+        .bind(
+          now,
+          channel?.id === a.channel_id ? channel.snippet.title : "",
+          a.user_id
+        )
+        .run()
+    } catch {
+      // Try again tomorrow without blocking older, unvisited accounts.
+      await db
+        .prepare("UPDATE youtube_accounts SET checked=? WHERE user_id=?")
+        .bind(now - 5 * day, a.user_id)
+        .run()
+      console.warn("YouTube account refresh did not finish")
+    }
+  }
+}
+
+const privacyOk = (v: string) =>
+  v === "private" || v === "unlisted" || v === "public"
+
+// These predicates validate incoming JSON before it reaches D1 or Google.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof
+const isText = (value: unknown): value is string => typeof value === "string"
+
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- untrusted request field
+const titleOk = (v: unknown) =>
+  isText(v) && !!v.trim() && [...v].length <= 100 && !/[<>]/.test(v)
+
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- untrusted request field
+const descriptionOk = (v: unknown) =>
+  isText(v) && new TextEncoder().encode(v).length <= 5000 && !/[<>]/.test(v)
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- registered on index.ts's app
+export function youtubeRoutes(app: Hono<any>) {
+  app.get(path + "/connect", async (c) => {
+    const env: HostedEnv = c.env,
+      q = c.req.query(),
+      purpose = q.purpose
+
+    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET)
+      return c.redirect("/?auth_error=YouTube+sign-in+is+not+configured")
+
+    if (!["login", "connect", "manage"].includes(purpose))
+      return c.json({ error: "Invalid purpose" }, 400)
+    const who = await signedIn(c)
+
+    if (purpose !== "login" && !who)
+      return c.json({ error: "Sign in first" }, 401)
+
+    const port = Number(q.obs_port ?? 0),
+      obsState = q.obs_state ?? ""
+
+    if (
+      (q.obs_port !== undefined || q.obs_state !== undefined) &&
+      (!Number.isInteger(port) ||
+        port < 1 ||
+        port > 65535 ||
+        !/^[-\w]{1,256}$/.test(obsState))
+    )
+      return c.json({ error: "Invalid OBS return address" }, 400)
+
+    const f: Flow = {
+      state: randomToken(),
+      verifier: randomToken(),
+      purpose,
+      user: purpose === "login" ? "" : who!.userId,
+      port,
+      obsState,
+      expires: Date.now() + 600000,
+    }
+
+    setCookie(c, cookie, await encrypt(env, JSON.stringify(f)), {
+      path,
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+      maxAge: 600,
+    })
+
+    const url = new URL(
+      (local(env.GOOGLE_OAUTH) ?? "https://accounts.google.com") +
+        "/o/oauth2/v2/auth"
+    )
+
+    url.search = new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      redirect_uri: callback(c),
+      response_type: "code",
+      state: f.state,
+      scope: [
+        "openid",
+        "email",
+        ...basic,
+        ...(purpose === "manage" ? [manage] : []),
+      ].join(" "),
+      access_type: "offline",
+      include_granted_scopes: "true",
+      prompt: "consent",
+      code_challenge: await sha256(f.verifier),
+      code_challenge_method: "S256",
+    }).toString()
+
+    return c.redirect(url.href)
+  })
+  app.get(path + "/callback", async (c) => {
+    const env: HostedEnv = c.env,
+      db = env.DB!,
+      sealed = getCookie(c, cookie)
+
+    deleteCookie(c, cookie, { path, secure: true })
+
+    try {
+      const f: Flow = JSON.parse(
+        await decrypt(env, sealed ?? "", currentVersion(env)).catch(
+          () => "null"
+        )
+      )
+
+      if (!f || f.state !== c.req.query("state") || Date.now() > f.expires)
+        throw new Error("Sign-in expired. Try again.")
+
+      if (f.user && (await signedIn(c))?.userId !== f.user)
+        throw new Error("Your sign-in changed. Start again.")
+
+      if (!c.req.query("code"))
+        throw new Error("YouTube sign-in was cancelled.")
+
+      const t = await tokenRequest(env, {
+        code: c.req.query("code")!,
+        grant_type: "authorization_code",
+        code_verifier: f.verifier,
+        redirect_uri: callback(c),
+      })
+
+      const granted = new Set(t.scope?.split(" "))
+
+      if (
+        !t.access_token ||
+        ![...basic, ...(f.purpose === "manage" ? [manage] : [])].every((s) =>
+          granted.has(s)
+        )
+      )
+        throw new Error(
+          "Grant the requested YouTube permissions and try again."
+        )
+
+      const me = await (
+        await google(env, t.access_token, "/oauth2/v3/userinfo")
+      ).json<{ sub: string; email: string }>()
+
+      const ch = await myChannel(env, t.access_token)
+
+      if (!me.sub || !me.email || !ch)
+        throw new Error("Create a YouTube channel first, then try again.")
+
+      const linked = await db
+        .prepare("SELECT user_id FROM youtube_accounts WHERE subject=?")
+        .bind(me.sub)
+        .first<{ user_id: string }>()
+
+      const user = f.user || linked?.user_id || `google:${me.sub}`
+      const old = await account(env, user)
+
+      if (
+        (linked && linked.user_id !== user) ||
+        (old && (old.subject !== me.sub || old.channel_id !== ch.id)) ||
+        (f.purpose === "manage" && !old)
+      )
+        throw new Error("Choose the originally connected YouTube channel.")
+
+      if (!f.user && !linked)
+        await db
+          .prepare(
+            "INSERT INTO users(id,email,created) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email"
+          )
+          .bind(user, me.email, Date.now())
+          .run()
+
+      const refresh =
+        t.refresh_token ??
+        (old && (await decrypt(env, old.refresh_enc, old.key_version)))
+
+      if (!refresh)
+        throw new Error(
+          "Google did not grant offline access. Reconnect YouTube."
+        )
+
+      const saved = await db
+        .prepare(
+          `INSERT INTO youtube_accounts(user_id,subject,channel_id,channel_title,scopes,refresh_enc,key_version,checked) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET channel_title=excluded.channel_title,scopes=excluded.scopes,refresh_enc=excluded.refresh_enc,key_version=excluded.key_version WHERE subject=excluded.subject AND channel_id=excluded.channel_id`
+        )
+        .bind(
+          user,
+          me.sub,
+          ch.id,
+          ch.snippet.title,
+          t.scope,
+          await encrypt(env, refresh),
+          currentVersion(env),
+          Date.now()
+        )
+        .run()
+
+      if (!saved.meta.changes)
+        throw new Error("The connected channel changed. Try again.")
+
+      if (!f.user) await startSession(c, user)
+
+      if (!f.port) return c.redirect("/")
+      const code = randomToken()
+      await db
+        .prepare("INSERT INTO youtube_codes VALUES(?,?,?)")
+        .bind(await sha256(code), user, Date.now() + 300000)
+        .run()
+
+      return c.redirect(
+        `http://127.0.0.1:${f.port}/callback?` +
+          new URLSearchParams({ state: f.obsState, code })
+      )
+    } catch (err) {
+      return c.redirect(
+        "/?auth_error=" +
+          encodeURIComponent(
+            err instanceof Error && !err.message.includes("D1_")
+              ? err.message
+              : "YouTube sign-in failed. Try again."
+          )
+      )
+    }
+  })
+  app.post(path + "/obs/exchange", async (c) => {
+    const env: HostedEnv = c.env
+
+    const db = env.DB!,
+      { code } = await c.req.json(),
+      uploadToken = randomToken()
+
+    const a = await db
+      .prepare(
+        "DELETE FROM youtube_codes WHERE hash=? AND expires>? RETURNING user_id"
+      )
+      .bind(await sha256(String(code)), Date.now())
+      .first<{ user_id: string }>()
+
+    if (!a)
+      return c.json(
+        { error: "The connection code expired or was already used." },
+        401
+      )
+
+    const info = await db
+      .prepare(
+        "UPDATE youtube_accounts SET obs_hash=? WHERE user_id=? RETURNING channel_id AS channelId,channel_title AS channelTitle"
+      )
+      .bind(await sha256(uploadToken), a.user_id)
+      .first()
+
+    if (!info) return c.json({ error: reconnect }, 401)
+
+    return c.json({ ...info, uploadToken }, 200, {
+      "cache-control": "no-store",
+    })
+  })
+  app.post(path + "/upload/start", async (c) => {
+    const env: HostedEnv = c.env,
+      a = await obs(c)
+
+    if (!a) return c.json({ error: reconnect }, 401)
+
+    const { title, description, privacy, size, category, recordedAt } =
+      await c.req.json()
+
+    if (
+      !titleOk(title) ||
+      !descriptionOk(description) ||
+      !privacyOk(privacy) ||
+      !Number.isSafeInteger(size) ||
+      size <= 0 ||
+      !isText(category) ||
+      !isText(recordedAt) ||
+      !Number.isFinite(Date.parse(recordedAt))
+    )
+      return c.json({ error: "Invalid clip details" }, 400)
+
+    const res = await google(
+      env,
+      await access(env, a),
+      "/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-upload-content-type": "video/mp4",
+          "x-upload-content-length": String(size),
+        },
+        body: JSON.stringify({
+          snippet: { title, description, categoryId: "20" },
+          status: { privacyStatus: privacy },
+        }),
+      }
+    )
+
+    const sessionUrl = res.headers.get("location"),
+      clipId = crypto.randomUUID()
+
+    if (!sessionUrl) throw new Error("YouTube did not open the upload.")
+    await env
+      .DB!.prepare(
+        "INSERT INTO youtube_clips(id,user_id,title,description,privacy,category,recordedAt,uploaded,session_enc,session_key_version,size) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+      )
+      .bind(
+        clipId,
+        a.user_id,
+        title,
+        description,
+        privacy,
+        category,
+        new Date(recordedAt).toISOString(),
+        new Date().toISOString(),
+        await encrypt(env, sessionUrl),
+        currentVersion(env),
+        size
+      )
+      .run()
+
+    return c.json({ sessionUrl, clipId }, 200, { "cache-control": "no-store" })
+  })
+  app.post(path + "/upload/complete", async (c) => {
+    const env: HostedEnv = c.env,
+      a = await obs(c)
+
+    if (!a) return c.json({ error: reconnect }, 401)
+    const { clipId, videoId } = await c.req.json()
+
+    if (!isText(videoId) || !/^[-\w]{11}$/.test(videoId))
+      return c.json({ error: "Invalid video ID" }, 400)
+
+    const clip = await env
+      .DB!.prepare(
+        "SELECT videoId,session_enc,session_key_version,size FROM youtube_clips WHERE id=? AND user_id=?"
+      )
+      .bind(clipId, a.user_id)
+      .first<{
+        videoId: string | null
+        session_enc: string
+        session_key_version: number
+        size: number
+      }>()
+
+    if (!clip) return c.json({ error: "Upload not found" }, 404)
+
+    if (!clip.videoId) {
+      // Do not let an OBS token enroll arbitrary existing videos for management.
+      const session = await decrypt(
+        env,
+        clip.session_enc,
+        clip.session_key_version
+      )
+
+      const receipt = await fetch(session, {
+        method: "PUT",
+        headers: {
+          "content-range": `bytes */${clip.size}`,
+          "content-length": "0",
+        },
+        redirect: "manual",
+        body: "",
+      })
+
+      if (!receipt.ok || (await receipt.json<{ id: string }>()).id !== videoId)
+        return c.json(
+          { error: "YouTube has not confirmed this video yet." },
+          409
+        )
+    }
+
+    const result = await env
+      .DB!.prepare(
+        "UPDATE youtube_clips SET videoId=?,session_enc=NULL,session_key_version=NULL,status=CASE WHEN videoId IS NULL THEN 'processing' ELSE status END WHERE id=? AND user_id=? AND (videoId IS NULL OR videoId=?)"
+      )
+      .bind(videoId, clipId, a.user_id, videoId)
+      .run()
+
+    if (!result.meta.changes) return c.json({ error: "Upload not found" }, 404)
+
+    return c.json({ url: `https://youtu.be/${videoId}` })
+  })
+  app.get(path + "/upload/status", async (c) => {
+    const env: HostedEnv = c.env,
+      a = await obs(c)
+
+    if (!a) return c.json({ error: reconnect }, 401)
+    const id = c.req.query("clipId") ?? ""
+
+    const clip = await env
+      .DB!.prepare(
+        "SELECT videoId,status FROM youtube_clips WHERE user_id=? AND id=? AND videoId IS NOT NULL"
+      )
+      .bind(a.user_id, id)
+      .first<{ videoId: string; status: string }>()
+
+    if (!clip) return c.json({ error: "Clip not found" }, 404)
+    let status = clip.status
+
+    if (status === "processing") {
+      await sync(env, a, await access(env, a), [clip.videoId])
+      status =
+        (await env
+          .DB!.prepare(
+            "SELECT status FROM youtube_clips WHERE user_id=? AND id=?"
+          )
+          .bind(a.user_id, id)
+          .first<string>("status")) ?? "failed"
+    }
+
+    return c.json({ status, url: `https://youtu.be/${clip.videoId}` }, 200, {
+      "cache-control": "no-store",
+    })
+  })
+  app.on(
+    ["PATCH", "PUT", "DELETE"],
+    [path + "/clips/:id", path + "/clips/:id/cut"],
+    async (c) => {
+      const env: HostedEnv = c.env,
+        db = env.DB!,
+        user = c.get("who").userId,
+        a = await account(env, user),
+        id = c.req.param("id")
+
+      if (!a?.scopes.split(" ").includes(manage))
+        return c.json(
+          {
+            error: "Allow Clips to manage your YouTube videos.",
+            needs: "manage",
+          },
+          403
+        )
+
+      const clip = await db
+        .prepare(
+          "SELECT videoId,durationSeconds FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
+        )
+        .bind(id, user)
+        .first<{ videoId: string; durationSeconds: number | null }>()
+
+      if (!clip) return c.json({ error: "Clip not found" }, 404)
+
+      if (c.req.path.endsWith("/cut")) {
+        if (c.req.method !== "PUT")
+          return c.json({ error: "Use PUT for cuts" }, 405)
+        const cut = await c.req.json()
+
+        if (
+          cut !== null &&
+          (!Number.isSafeInteger(cut?.start) ||
+            !Number.isSafeInteger(cut?.end) ||
+            cut.start < 0 ||
+            cut.end <= cut.start ||
+            (clip.durationSeconds !== null &&
+              cut.end > Math.ceil(clip.durationSeconds)))
+        )
+          return c.json({ error: "Invalid whole-second cut" }, 400)
+        await db
+          .prepare(
+            "UPDATE youtube_clips SET start=?,end=? WHERE id=? AND user_id=?"
+          )
+          .bind(cut?.start ?? null, cut?.end ?? null, id, user)
+          .run()
+      } else if (c.req.method === "DELETE") {
+        await google(
+          env,
+          await access(env, a),
+          `/youtube/v3/videos?id=${clip.videoId}`,
+          { method: "DELETE" }
+        )
+        await db
+          .prepare("DELETE FROM youtube_clips WHERE id=? AND user_id=?")
+          .bind(id, user)
+          .run()
+      } else if (c.req.method === "PATCH") {
+        const { title, description, privacy } = await c.req.json()
+
+        if (
+          (title !== undefined && !titleOk(title)) ||
+          (description !== undefined && !descriptionOk(description)) ||
+          (privacy !== undefined && !privacyOk(privacy)) ||
+          [title, description, privacy].every((v) => v === undefined)
+        )
+          return c.json({ error: "Invalid clip details" }, 400)
+
+        const token = await access(env, a),
+          [v] = await videos(env, token, [clip.videoId])
+
+        if (!v || v.snippet.channelId !== a.channel_id)
+          return c.json({ error: "Clip not found" }, 404)
+
+        type UpdateParts = {
+          snippet?: Omit<Video["snippet"], "channelId">
+          status?: Omit<Video["status"], "uploadStatus">
+        }
+
+        const parts: UpdateParts = {}
+
+        if (title !== undefined || description !== undefined)
+          parts.snippet = {
+            title: title ?? v.snippet.title,
+            description: description ?? v.snippet.description,
+            categoryId: v.snippet.categoryId,
+            tags: v.snippet.tags,
+            defaultLanguage: v.snippet.defaultLanguage,
+          }
+
+        if (privacy !== undefined) {
+          const {
+            license,
+            embeddable,
+            publicStatsViewable,
+            selfDeclaredMadeForKids,
+            containsSyntheticMedia,
+            publishAt,
+          } = v.status
+
+          parts.status = {
+            privacyStatus: privacy,
+            license,
+            embeddable,
+            publicStatsViewable,
+            selfDeclaredMadeForKids,
+            containsSyntheticMedia,
+            publishAt: privacy === "private" ? publishAt : undefined,
+          }
+        }
+
+        await google(
+          env,
+          token,
+          "/youtube/v3/videos?part=" + Object.keys(parts).join(","),
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: v.id, ...parts }),
+          }
+        )
+        await db
+          .prepare(
+            "UPDATE youtube_clips SET title=?,description=?,privacy=? WHERE id=? AND user_id=?"
+          )
+          .bind(
+            title ?? v.snippet.title,
+            description ?? v.snippet.description,
+            privacy ?? v.status.privacyStatus,
+            id,
+            user
+          )
+          .run()
+      } else return c.json({ error: "Use PATCH to edit clips" }, 405)
+
+      return c.json({ ok: true })
+    }
+  )
+  app.post(path + "/disconnect", async (c) => {
+    const env: HostedEnv = c.env,
+      a = c.req.header("authorization")
+        ? await obs(c)
+        : await account(env, c.get("who").userId)
+
+    if (!a) return c.json({ error: reconnect }, 401)
+
+    const res = await fetch(oauth(env) + "/revoke", {
+      method: "POST",
+      body: new URLSearchParams({
+        token: await decrypt(env, a.refresh_enc, a.key_version),
+      }),
+    })
+
+    if (!res.ok && res.status !== 400)
+      return c.json(
+        { error: "Google could not confirm disconnection. Try again." },
+        502
+      )
+    await env
+      .DB!.prepare("DELETE FROM youtube_accounts WHERE user_id=?")
+      .bind(a.user_id)
+      .run()
+
+    return c.json({ ok: true })
+  })
+}
