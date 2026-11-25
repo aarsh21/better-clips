@@ -41,7 +41,7 @@ import { copyYouTubeLink, PRIVACY_OPTIONS, privacyOption } from "@/lib/youtube"
 export const YOUTUBE_RED = "text-[#ff0033]"
 
 /* Marks a clip on YouTube, with who can watch it. */
-export function YouTubeChip({ privacy }: { privacy: Privacy }) {
+export function YouTubeChip({ privacy }: { privacy: Privacy | null }) {
   return (
     <span className="flex h-5 items-center gap-1 bg-black/70 pr-1.5 pl-1 text-[10px] font-medium text-white backdrop-blur-sm">
       <YoutubeLogoIcon weight="fill" className={cn("size-3.5", YOUTUBE_RED)} />
@@ -116,7 +116,7 @@ export function PrivacyMenu({
   align,
   children,
 }: {
-  privacy: Privacy
+  privacy: Privacy | null
   onChange: (privacy: Privacy) => void
   align?: "start" | "end"
   children: React.ReactElement
@@ -154,7 +154,7 @@ export function PrivacyButton({
   privacy,
   onChange,
 }: {
-  privacy: Privacy
+  privacy: Privacy | null
   onChange: (privacy: Privacy) => void
 }) {
   const { label, icon: Icon } = privacyOption(privacy)

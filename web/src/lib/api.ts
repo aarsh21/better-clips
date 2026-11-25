@@ -45,6 +45,8 @@ type ApiYouTubeClip = {
   /** The game or scene. */
   category: string
   privacy: Privacy
+  pendingPrivacy: Privacy | null
+  pendingTitle: string | null
   recordedAt: string
   uploaded: string
   durationSeconds: number | null
@@ -55,7 +57,9 @@ type ApiYouTubeClip = {
   url: string
 }
 
-export type YouTubeClip = ApiYouTubeClip & {
+export type YouTubeClip = Omit<ApiYouTubeClip, "privacy"> & {
+  /** Null until a read confirms the visibility; never use the requested value as a badge. */
+  privacy: Privacy | null
   source: "youtube"
   /** "youtube/<id>", which can't clash with a bucket key. */
   key: string
@@ -109,6 +113,7 @@ export function parseYouTubeClip(raw: ApiYouTubeClip): YouTubeClip {
 
   return {
     ...raw,
+    privacy: raw.pendingPrivacy === null ? raw.privacy : null,
     source: "youtube",
     key: `youtube/${raw.id}`,
     /* Written like bucket clips' categories, which come from file names, so
@@ -141,12 +146,17 @@ export const sizeOf = (clip: Clip) => (clip.source === "bucket" ? clip.size : 0)
 export const bucketBytes = (clips: Clip[]) =>
   clips.reduce((n, c) => n + sizeOf(c), 0)
 
+export const displayTitle = (c: Clip) =>
+  c.source === "youtube" && c.pendingTitle
+    ? `Pending: ${c.pendingTitle}`
+    : c.title
+
 /* "Clip 3 · Counter Strike 2", for toasts and confirmations outside the
  * grid, where the category isn't shown next to the title. */
 export const longTitle = (c: Clip) =>
   c.category && !c.title.includes(c.category)
-    ? `${c.title} · ${c.category}`
-    : c.title
+    ? `${displayTitle(c)} · ${c.category}`
+    : displayTitle(c)
 
 /* Gives each clip its title. An unnamed clip is numbered within its category
  * and day in recording order, counting every folder, so moving a clip to the

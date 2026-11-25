@@ -10,7 +10,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import type { Clip } from "@/lib/api"
+import { displayTitle, type Clip } from "@/lib/api"
 import type { ClipNav } from "@/lib/clip-actions"
 
 /* The pieces both viewers share: bucket clips (clip-viewer.tsx) and YouTube
@@ -54,7 +54,7 @@ export function ViewerHeader({
             className="w-fit max-w-full truncate text-left text-sm font-semibold outline-none hover:text-primary focus-visible:text-primary focus-visible:underline"
             title="Rename (E)"
           >
-            {clip.title}
+            {displayTitle(clip)}
           </DialogTitle>
         )}
         <span className="truncate text-[11px] text-muted-foreground tabular-nums">

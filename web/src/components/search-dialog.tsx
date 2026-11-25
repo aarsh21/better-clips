@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/command"
 import {
   dayLabel,
+  displayTitle,
   durationOf,
   formatDuration,
   thumbnailOf,
@@ -198,7 +199,7 @@ function ClipRow({ clip }: { clip: Clip }) {
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex items-center gap-1.5 truncate font-medium">
-          {clip.title}
+          {displayTitle(clip)}
           {clip.source === "youtube" ? (
             <YoutubeLogoIcon
               weight="fill"

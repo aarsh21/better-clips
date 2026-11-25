@@ -119,7 +119,9 @@ export function YouTubeViewer({
     dayLabel(clip.day),
     clipTime(clip.time, true),
     formatDuration(durationOf(clip)),
-    `${privacyOption(clip.privacy).label} on YouTube`,
+    clip.privacy
+      ? `${privacyOption(clip.privacy).label} on YouTube`
+      : "Waiting for YouTube to confirm visibility",
     clip.cut && `cut ${seconds(clip.cut.start)}–${seconds(clip.cut.end)}`,
   ]
 

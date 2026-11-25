@@ -1,5 +1,5 @@
 import type * as React from "react"
-import { GlobeIcon, LinkIcon, LockIcon } from "@phosphor-icons/react"
+import { ClockIcon, GlobeIcon, LinkIcon, LockIcon } from "@phosphor-icons/react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
@@ -41,8 +41,11 @@ export const PRIVACY_OPTIONS = [
   icon: React.ElementType
 }[]
 
-export const privacyOption = (privacy: Privacy) =>
-  PRIVACY_OPTIONS.find((p) => p.value === privacy) ?? PRIVACY_OPTIONS[1]
+export const privacyOption = (privacy: Privacy | null) =>
+  PRIVACY_OPTIONS.find((p) => p.value === privacy) ?? {
+    label: "Visibility pending",
+    icon: ClockIcon,
+  }
 
 /* One change to a clip on YouTube. */
 export type YouTubeChange =
@@ -68,9 +71,9 @@ function send(clip: YouTubeClip, change: YouTubeChange) {
 function changed(clip: YouTubeClip, change: YouTubeChange) {
   switch (change.kind) {
     case "title":
-      return { ...clip, title: change.title }
+      return { ...clip, title: change.title, pendingTitle: change.title }
     case "privacy":
-      return { ...clip, privacy: change.privacy }
+      return { ...clip, privacy: null, pendingPrivacy: change.privacy }
     case "cut":
       return { ...clip, cut: change.cut }
     case "delete":
@@ -81,9 +84,9 @@ function changed(clip: YouTubeClip, change: YouTubeChange) {
 function doneText(change: YouTubeChange) {
   switch (change.kind) {
     case "title":
-      return "Renamed on YouTube"
+      return "Title change submitted"
     case "privacy":
-      return `${privacyOption(change.privacy).label} on YouTube`
+      return "Visibility change submitted"
     case "cut":
       return change.cut ? "Cut saved" : "Cut removed"
     case "delete":
@@ -142,6 +145,8 @@ export function copyYouTubeLink(clip: YouTubeClip) {
 
   if (clip.privacy === "private")
     notes.push("It's private: only you can watch it.")
+  else if (clip.privacy === null)
+    notes.push("YouTube visibility isn't confirmed yet.")
 
   return copyLink(youtubeLink(clip), notes.join(" ") || undefined)
 }

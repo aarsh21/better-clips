@@ -22,7 +22,9 @@ export function useClips() {
     /* New clips from OBS show up on their own. */
     refetchInterval: (query) =>
       query.state.data?.some(
-        (c) => c.source === "youtube" && c.status === "processing"
+        (c) =>
+          c.source === "youtube" &&
+          (c.status === "processing" || c.pendingTitle || c.pendingPrivacy)
       )
         ? 5_000
         : 30_000,

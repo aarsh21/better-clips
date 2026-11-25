@@ -266,15 +266,20 @@ class Google(BaseHTTPRequestHandler):
                 items = []
                 for i in q["id"].split(","):
                     if i in videos:
-                        items.append(
+                        video = (
                             stale_reads[i].pop() if stale_reads.get(i) else videos[i]
                         )
+                        items.append({**video, "etag": digest(json.dumps(video))})
                 return self.reply(200, {"items": items})
             assert PREFIX + "force-ssl" in access
             if self.command == "DELETE":
                 del videos[q["id"]]
                 return self.reply(204)
             v = json.loads(body)
+            version = self.headers.get("if-match")
+            current = digest(json.dumps(videos[v["id"]]))
+            if version and version != f'"{current}"':
+                return self.reply(412, {})
             stale_reads[v["id"]] = [copy.deepcopy(videos[v["id"]])] * 2
             for part in q["part"].split(","):
                 videos[v["id"]][part].update(v[part])
@@ -675,6 +680,32 @@ def exercise():
         videos[vid]["snippet"]["title"] == "Concurrent"
         and videos[vid]["snippet"]["description"] == "Independent"
     )
+    # Studio changes both fields before the app has ever read back its write.
+    call(endpoint, "PATCH", {"title": "Library title", "privacy": "private"})
+    videos[vid]["snippet"]["title"] = "Newer Studio title"
+    videos[vid]["status"]["privacyStatus"] = "public"
+    stale_reads[vid].clear()
+    sync_due()
+    row = call("/api/clips")["youtube"][0]
+    check(row.get("pendingPrivacy") == "private", "requested Private is unconfirmed")
+    # Age the edit past the grace period without sleeping or faking a Google read.
+    sql("UPDATE youtube_clips SET editedAt=? WHERE videoId=?",
+        (int(time.time() * 1000) - 31000, vid))
+    for _ in range(3):
+        sync_due()
+        row = call("/api/clips")["youtube"][0]
+        check(
+            (row["privacy"], row.get("pendingPrivacy")) == ("public", None),
+            f"fresh Studio visibility wins: library={row['privacy']}, Google=public",
+        )
+
+    call(endpoint, "PATCH", {"title": "Another library title"})
+    videos[vid]["snippet"]["title"] = "Latest Studio title"
+    stale_reads[vid].clear()
+    call(endpoint, "PATCH", {"description": "Description only"})
+    title = videos[vid]["snippet"]["title"]
+    check(title == "Latest Studio title",
+          f"description-only PATCH preserved Studio title: {title}")
     sync_due()  # Finish the post-edit refresh before making the video disappear.
     del videos[vid]
     sql("UPDATE youtube_clips SET uploaded='2020-01-01' WHERE videoId=?", (vid,))

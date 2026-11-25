@@ -27,6 +27,7 @@ import {
   bucketBytes,
   dayLabel,
   daysLeft,
+  displayTitle,
   durationOf,
   formatBytes,
   formatDuration,
@@ -210,7 +211,9 @@ function ClipCard({
         </div>
         <div className="flex flex-col gap-0.5 px-0.5">
           <div className="flex items-baseline justify-between gap-3">
-            <span className="truncate text-xs font-medium">{clip.title}</span>
+            <span className="truncate text-xs font-medium">
+              {displayTitle(clip)}
+            </span>
             <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
               {left !== null && left <= 5 ? (
                 <span className={cn(left <= 2 && "text-destructive")}>

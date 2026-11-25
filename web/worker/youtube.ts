@@ -38,6 +38,7 @@ const cookie = "clips_youtube_oauth"
 const path = "/api/youtube"
 const day = 86400000
 const readyInterval = 15 * 60000
+const editGrace = 30000
 
 type Account = {
   user_id: string
@@ -69,6 +70,7 @@ type Flow = {
 
 type Video = {
   id: string
+  etag: string
   snippet: {
     channelId: string
     title: string
@@ -306,18 +308,22 @@ async function sync(
         ]
       const thumbs = v.snippet.thumbnails
       const status = v.status.uploadStatus
+      const inGrace = now < editedAt + editGrace
 
       return env
         .DB!.prepare(
           `UPDATE youtube_clips SET
-                title=coalesce(pendingTitle,?2),pendingTitle=nullif(pendingTitle,?2),
-                description=coalesce(pendingDescription,?3),pendingDescription=nullif(pendingDescription,?3),
-                privacy=coalesce(pendingPrivacy,?4),pendingPrivacy=nullif(pendingPrivacy,?4),
+                title=?2,pendingTitle=CASE WHEN ?11 THEN nullif(pendingTitle,?2) END,
+                description=?3,pendingDescription=CASE WHEN ?11 THEN nullif(pendingDescription,?3) END,
+                privacy=?4,pendingPrivacy=CASE WHEN ?11 THEN nullif(pendingPrivacy,?4) END,
                 durationSeconds=?5,thumbnail=?6,status=?7,misses=0,nextSync=?1
                 WHERE videoId=?8 AND editedAt=?9 AND nextSync=?10 AND editLease=0`
         )
         .bind(
-          Date.now() + (status === "uploaded" ? 3000 : readyInterval),
+          Math.min(
+            Date.now() + (status === "uploaded" ? 3000 : readyInterval),
+            inGrace ? editedAt + editGrace : Infinity
+          ),
           v.snippet.title,
           v.snippet.description,
           v.status.privacyStatus,
@@ -333,7 +339,8 @@ async function sync(
               : "processing",
           id,
           editedAt,
-          lease
+          lease,
+          Number(inGrace)
         )
     })
   )
@@ -357,7 +364,10 @@ export async function youtubeClips(
 
   const { results } = await db
     .prepare(
-      "SELECT id,videoId,title,description,category,privacy,recordedAt,uploaded,durationSeconds,thumbnail,status,start,end FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL ORDER BY recordedAt DESC"
+      `SELECT id,videoId,coalesce(pendingTitle,title) AS title,pendingTitle,
+       coalesce(pendingDescription,description) AS description,pendingDescription,category,
+       coalesce(pendingPrivacy,privacy) AS privacy,pendingPrivacy,recordedAt,uploaded,durationSeconds,thumbnail,status,start,end
+       FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL ORDER BY recordedAt DESC`
     )
     .bind(user)
     .all()
@@ -724,7 +734,7 @@ export function youtubeRoutes(app: Hono<any>) {
     if (!sessionUrl) throw new Error("YouTube did not open the upload.")
     await env
       .DB!.prepare(
-        "INSERT INTO youtube_clips(id,user_id,title,description,privacy,category,recordedAt,uploaded,session_enc,session_key_version,size) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+        "INSERT INTO youtube_clips(id,user_id,title,description,privacy,category,recordedAt,uploaded,session_enc,session_key_version,size,pendingTitle,pendingDescription,pendingPrivacy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?3,?4,?5)"
       )
       .bind(
         clipId,
@@ -903,14 +913,12 @@ export function youtubeRoutes(app: Hono<any>) {
 
       const clip = await db
         .prepare(
-          "SELECT videoId,durationSeconds,pendingTitle,pendingDescription FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
+          "SELECT videoId,durationSeconds FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
         )
         .bind(id, user)
         .first<{
           videoId: string
           durationSeconds: number | null
-          pendingTitle: string | null
-          pendingDescription: string | null
         }>()
 
       if (!clip) return c.json({ error: "Clip not found" }, 404)
@@ -958,73 +966,99 @@ export function youtubeRoutes(app: Hono<any>) {
         )
           return c.json({ error: "Invalid clip details" }, 400)
 
-        const token = await access(env, a),
-          [v] = await videos(env, token, [clip.videoId])
+        const token = await access(env, a)
 
-        if (!v || v.snippet.channelId !== a.channel_id)
-          return c.json({ error: "Clip not found" }, 404)
+        for (let attempt = 0; ; attempt++) {
+          const [v] = await videos(env, token, [clip.videoId])
 
-        type UpdateParts = {
-          snippet?: Omit<Video["snippet"], "channelId">
-          status?: Omit<Video["status"], "uploadStatus">
+          if (!v || v.snippet.channelId !== a.channel_id)
+            return c.json({ error: "Clip not found" }, 404)
+
+          type UpdateParts = {
+            snippet?: Omit<Video["snippet"], "channelId">
+            status?: Omit<Video["status"], "uploadStatus">
+          }
+
+          const parts: UpdateParts = {}
+
+          if (title !== undefined || description !== undefined)
+            parts.snippet = {
+              title: title ?? v.snippet.title,
+              description: description ?? v.snippet.description,
+              categoryId: v.snippet.categoryId,
+              tags: v.snippet.tags,
+              defaultLanguage: v.snippet.defaultLanguage,
+            }
+
+          if (privacy !== undefined) {
+            const {
+              license,
+              embeddable,
+              publicStatsViewable,
+              selfDeclaredMadeForKids,
+              containsSyntheticMedia,
+              publishAt,
+            } = v.status
+
+            parts.status = {
+              privacyStatus: privacy,
+              license,
+              embeddable,
+              publicStatsViewable,
+              selfDeclaredMadeForKids,
+              containsSyntheticMedia,
+              publishAt: privacy === "private" ? publishAt : undefined,
+            }
+          }
+
+          // YouTube replaces whole parts. Re-read and rebuild on a stale ETag;
+          // never fill an untouched field from our pending edit.
+          if (!v.etag)
+            throw new Error("YouTube didn't return a video version. Try again.")
+
+          try {
+            await google(
+              env,
+              token,
+              "/youtube/v3/videos?part=" + Object.keys(parts).join(","),
+              {
+                method: "PUT",
+                headers: {
+                  "content-type": "application/json",
+                  "if-match": v.etag.startsWith('"') ? v.etag : `"${v.etag}"`,
+                },
+                body: JSON.stringify({ id: v.id, ...parts }),
+              }
+            )
+          } catch (err) {
+            if (
+              err instanceof HTTPException &&
+              err.status === 412 &&
+              attempt < 2
+            )
+              continue
+            throw err
+          }
+
+          await db
+            .prepare(
+              `UPDATE youtube_clips SET title=?,description=?,privacy=?,pendingTitle=?,pendingDescription=?,pendingPrivacy=?,
+             editedAt=max(editedAt+1,?),nextSync=0 WHERE id=? AND user_id=?`
+            )
+            .bind(
+              v.snippet.title,
+              v.snippet.description,
+              v.status.privacyStatus,
+              title ?? null,
+              description ?? null,
+              privacy ?? null,
+              Date.now(),
+              id,
+              user
+            )
+            .run()
+          break
         }
-
-        const parts: UpdateParts = {}
-
-        // A partial edit must not send a stale sibling field back to YouTube.
-        const nextTitle = title ?? clip.pendingTitle ?? v.snippet.title
-
-        const nextDescription =
-          description ?? clip.pendingDescription ?? v.snippet.description
-
-        if (title !== undefined || description !== undefined)
-          parts.snippet = {
-            title: nextTitle,
-            description: nextDescription,
-            categoryId: v.snippet.categoryId,
-            tags: v.snippet.tags,
-            defaultLanguage: v.snippet.defaultLanguage,
-          }
-
-        if (privacy !== undefined) {
-          const {
-            license,
-            embeddable,
-            publicStatsViewable,
-            selfDeclaredMadeForKids,
-            containsSyntheticMedia,
-            publishAt,
-          } = v.status
-
-          parts.status = {
-            privacyStatus: privacy,
-            license,
-            embeddable,
-            publicStatsViewable,
-            selfDeclaredMadeForKids,
-            containsSyntheticMedia,
-            publishAt: privacy === "private" ? publishAt : undefined,
-          }
-        }
-
-        await google(
-          env,
-          token,
-          "/youtube/v3/videos?part=" + Object.keys(parts).join(","),
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: v.id, ...parts }),
-          }
-        )
-        await db
-          .prepare(
-            `UPDATE youtube_clips SET title=coalesce(?1,title),pendingTitle=coalesce(?1,pendingTitle),
-            description=coalesce(?2,description),pendingDescription=coalesce(?2,pendingDescription),
-            privacy=coalesce(?3,privacy),pendingPrivacy=coalesce(?3,pendingPrivacy),editedAt=editedAt+1,nextSync=0 WHERE id=?4 AND user_id=?5`
-          )
-          .bind(title ?? null, description ?? null, privacy ?? null, id, user)
-          .run()
       } else return c.json({ error: "Use PATCH to edit clips" }, 405)
 
       return c.json({ ok: true })
