@@ -7,6 +7,7 @@ the web app ships from `main`.
 
 ### Web app
 
+- A **12-hour / 24-hour** time setting in Settings → Appearance.
 - Clips have a **category**, the window or scene OBS saved from, and a title:
   the name you give it, or "Clip 1", "Clip 2" and so on. Renaming keeps the
   category.
@@ -27,6 +28,14 @@ the web app ships from `main`.
 - Share links are pinned to the recording and thumbnail they were made from.
 - Cleanup in a connected bucket waits until you confirm the lengths, and only
   deletes `.mp4` clips.
+
+## [0.1.7] - 2026-11-25
+
+### Plugin
+
+- A clip's category is the app you're using, such as "Google Chrome", not its
+  window title, so every tab or document of one app lands in one category.
+  On Hyprland, the app's installed name is used.
 
 ## [0.1.6] - 2026-11-25
 
@@ -89,6 +98,7 @@ the web app ships from `main`.
   clips to Cloudflare R2 without writing them to disk.
 - The clips web app to browse, preview, trim, keep, delete and share clips.
 
+[0.1.7]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.7
 [0.1.6]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.6
 [0.1.5]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.5
 [0.1.4]: https://github.com/aarsh21/obs-replay-r2/releases/tag/0.1.4

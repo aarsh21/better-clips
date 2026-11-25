@@ -38,7 +38,7 @@
     },
     "name": "obs-replay-r2",
     "displayName": "Replay to R2",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "author": "aarsh",
     "website": "https://github.com/aarsh21/obs-replay-r2",
     "email": "aarshpersonal@proton.me"
