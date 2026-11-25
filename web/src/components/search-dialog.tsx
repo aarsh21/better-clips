@@ -32,6 +32,7 @@ import {
   type Clip,
 } from "@/lib/api"
 import { useClipTime } from "@/lib/clock"
+import { useAccount } from "@/lib/settings"
 import type { View } from "@/lib/view"
 
 const VIEW_ITEMS = [
@@ -71,6 +72,8 @@ export function SearchDialog({
   views: View[]
 }) {
   const { theme, setTheme } = useTheme()
+  /* YouTube is only on the hosted app, like its Settings tab. */
+  const hosted = useAccount() !== null
 
   const run = (action: () => void) => () => {
     onOpenChange(false)
@@ -134,13 +137,15 @@ export function SearchDialog({
               <HardDrivesIcon />
               Storage and cleanup
             </CommandItem>
-            <CommandItem
-              keywords={["google", "channel"]}
-              onSelect={run(() => onSettings("youtube"))}
-            >
-              <YoutubeLogoIcon />
-              YouTube
-            </CommandItem>
+            {hosted && (
+              <CommandItem
+                keywords={["google", "channel"]}
+                onSelect={run(() => onSettings("youtube"))}
+              >
+                <YoutubeLogoIcon />
+                YouTube
+              </CommandItem>
+            )}
             {THEMES.map(({ theme: value, label, icon: Icon }) => (
               <CommandItem
                 key={value}
