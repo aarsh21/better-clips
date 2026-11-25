@@ -94,10 +94,11 @@ curl -fsSL https://raw.githubusercontent.com/aarsh21/better-clips/main/install.s
 irm https://raw.githubusercontent.com/aarsh21/better-clips/main/install.ps1 | iex
 ```
 
-The script waits for OBS to close and installs the latest release. If you used
-Replay to R2 before, it removes the old plugin and Better Clips keeps your
-settings. On Linux, only removing an old system-wide install may need sudo; on
-Windows, it asks once for permission.
+The script waits for OBS to close, installs the latest release and cleans up
+the version you had before, so running it again is also how you update. If you
+used Replay to R2, it removes that plugin too, and Better Clips keeps its
+settings, sign-ins and hotkey. On Linux, only removing an old system-wide
+install may need sudo; on Windows, it asks once for permission.
 
 **2. Choose where clips go.** In OBS, open **Tools → Better Clips Settings** and
 pick a **Destination**:
