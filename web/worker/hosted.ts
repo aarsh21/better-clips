@@ -23,6 +23,8 @@ export type HostedEnv = {
   CREDS_KEY_PREVIOUS?: string
   OAUTH_CLIENT_ID?: string
   OAUTH_CLIENT_SECRET?: string
+  /* The bucket automatic setup uses, or creates when it's missing. */
+  AUTO_BUCKET?: string
   /* Only honoured when they point at this computer, for tests. */
   CF_DASH?: string
   CF_API?: string
@@ -674,8 +676,14 @@ async function cf<T>(
 
 const R2_DISABLED = 10042
 
-/* What one setup attempt made, so a failure can take it back. */
-type Made = { account: string; bucket?: string; tokenId?: string }
+/* What one setup attempt made, so a failure can take it back. created is
+ * false when the bucket was already there. */
+type Made = {
+  account: string
+  bucket?: string
+  created?: boolean
+  tokenId?: string
+}
 
 async function autoSetup(env: HostedEnv, token: string, userId: string) {
   const accounts = await cf<{ id: string; name: string }[]>(
@@ -718,34 +726,28 @@ async function makeStorage(
 ) {
   const account = made.account
 
-  /* Never reuse an existing bucket: its files could fall under clean-up rules
-   * they were never meant for. Take clips, or clips-<random> when it's used. */
-  for (const name of ["clips", `clips-${crypto.randomUUID().slice(0, 6)}`]) {
-    const res = await cf(env, token, `/accounts/${account}/r2/buckets`, {
-      method: "POST",
-      body: JSON.stringify({ name }),
-    })
+  /* One clips bucket per account: use it when it's already there, so
+   * setting up again (another browser, after disconnecting) finds your
+   * clips instead of starting an empty bucket. */
+  const bucket = env.AUTO_BUCKET || "clips"
 
-    if (res.ok) {
-      made.bucket = name
-      break
-    }
+  const res = await cf(env, token, `/accounts/${account}/r2/buckets`, {
+    method: "POST",
+    body: JSON.stringify({ name: bucket }),
+  })
 
-    if (res.body?.errors?.some((e) => e.code === R2_DISABLED))
-      throw new UserError(
-        "R2 isn't turned on in your Cloudflare account yet. Open R2 in the Cloudflare dashboard, turn it on (it's free up to 10 GB), then try again."
-      )
+  if (res.body?.errors?.some((e) => e.code === R2_DISABLED))
+    throw new UserError(
+      "R2 isn't turned on in your Cloudflare account yet. Open R2 in the Cloudflare dashboard, turn it on (it's free up to 10 GB), then try again."
+    )
 
-    if (res.status !== 409)
-      throw new UserError(
-        `Couldn't create a bucket: ${res.body?.errors?.[0]?.message ?? res.status}`
-      )
-  }
+  if (!res.ok && res.status !== 409)
+    throw new UserError(
+      `Couldn't create a bucket: ${res.body?.errors?.[0]?.message ?? res.status}`
+    )
 
-  const bucket = made.bucket
-
-  if (!bucket)
-    throw new UserError("Couldn't find a free bucket name. Try again.")
+  made.bucket = bucket
+  made.created = res.ok
 
   const minted = await cf<{ id: string; value: string }>(
     env,
@@ -777,22 +779,29 @@ async function makeStorage(
   made.tokenId = minted.body.result.id
 
   /* Unfinished uploads clean themselves up after a day. Best effort: the
-   * app works without it. */
-  await cf(env, token, `/accounts/${account}/r2/buckets/${bucket}/lifecycle`, {
-    method: "PUT",
-    body: JSON.stringify({
-      rules: [
-        {
-          id: "Abort unfinished uploads",
-          enabled: true,
-          conditions: { prefix: "" },
-          abortMultipartUploadsTransition: {
-            condition: { maxAge: 86_400, type: "Age" },
-          },
-        },
-      ],
-    }),
-  })
+   * app works without it. Only on a new bucket: this replaces every rule,
+   * and an existing bucket keeps its own. */
+  if (made.created)
+    await cf(
+      env,
+      token,
+      `/accounts/${account}/r2/buckets/${bucket}/lifecycle`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          rules: [
+            {
+              id: "Abort unfinished uploads",
+              enabled: true,
+              conditions: { prefix: "" },
+              abortMultipartUploadsTransition: {
+                condition: { maxAge: 86_400, type: "Age" },
+              },
+            },
+          ],
+        }),
+      }
+    )
 
   /* An API token's S3 secret is the SHA-256 of its value. */
   await saveTenant(env, userId, {
@@ -800,13 +809,16 @@ async function makeStorage(
     bucket,
     accessKeyId: made.tokenId,
     secretAccessKey: await sha256Hex(minted.body.result.value),
-    createdByApp: true,
+    /* An existing bucket may hold clips the app hasn't seen: its cleanup
+     * waits until you confirm the lengths, as with your own key. */
+    createdByApp: made.created,
+    newKey: true,
   })
 }
 
 /* Deletes the key and the (still empty) bucket a failed setup made. Never
- * touches anything it didn't make; Cloudflare refuses to delete a bucket
- * with files in it anyway. */
+ * touches anything it didn't make, such as a bucket that was already
+ * there; Cloudflare refuses to delete a bucket with files in it anyway. */
 async function undo(env: HostedEnv, token: string, userId: string, made: Made) {
   /* Each step is tried a few times; a 404 means it's already gone. */
   const remove = async (path: string) => {
@@ -827,6 +839,7 @@ async function undo(env: HostedEnv, token: string, userId: string, made: Made) {
 
   const bucketGone =
     !made.bucket ||
+    !made.created ||
     (await remove(`/accounts/${made.account}/r2/buckets/${made.bucket}`))
 
   if (keyGone && bucketGone) return ""
@@ -883,15 +896,20 @@ async function unlockSetup(env: HostedEnv, userId: string) {
  * with a new file of its own that it removes again. A brand-new key can take
  * a few seconds to start working. */
 async function checkBucket(store: Store, patient: boolean) {
-  const probe = `config/.clips-check-${randomToken(9)}`
+  /* A new key can write before it can delete, so each attempt writes its
+   * own file, and the files of earlier attempts go once deleting works. */
+  const probes: string[] = []
 
   for (let attempt = 0; ; attempt++) {
     try {
       await store.list("config/")
 
+      const probe = `config/.clips-check-${randomToken(9)}`
+
       if (!(await store.put(probe, "ok", { createOnly: true })))
         throw new StorageError(409, "Storage error: the check file exists")
-      await store.delete([probe])
+      probes.push(probe)
+      await store.delete(probes)
 
       return
     } catch (err) {
@@ -913,11 +931,13 @@ async function saveTenant(
     accessKeyId: string
     secretAccessKey: string
     createdByApp: boolean
+    /* The key was just made, and can take a few seconds to work. */
+    newKey: boolean
   }
 ) {
   const store = s3Store(b)
 
-  await checkBucket(store, b.createdByApp)
+  await checkBucket(store, b.newKey)
 
   /* Settings shows the lengths the bucket was set to before, as a starting
    * point; nothing is cleared until you confirm them. */
@@ -1128,6 +1148,7 @@ export function hostedRoutes(app: Hono<any>) {
         accessKeyId,
         secretAccessKey,
         createdByApp: false,
+        newKey: false,
       })
     } catch (err) {
       if (!(err instanceof StorageError)) throw err
