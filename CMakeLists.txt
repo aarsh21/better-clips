@@ -51,12 +51,14 @@ target_sources(
     src/settings-dialog.cpp
     src/sha256.cpp
     src/uploader.cpp
-    src/window-title.cpp
+    src/focused-app.cpp
 )
 
-# The focused window's name, for clip names.
+# The focused app's name, for clip categories.
 if(APPLE)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "-framework CoreGraphics")
+elseif(WIN32)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE version)
 endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

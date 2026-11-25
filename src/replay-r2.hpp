@@ -134,6 +134,6 @@ void register_replay_r2_output();
 /* Asks a running replay_r2_output to save the last N seconds. */
 void replay_r2_request_save(obs_output_t *output);
 
-/* The focused window's name, or "" when OBS is focused or it's unknown
- * (window-title.cpp). */
-std::string focused_window_name();
+/* The focused app's name, or "" when OBS is focused or it's unknown
+ * (focused-app.cpp). */
+std::string focused_app_name();

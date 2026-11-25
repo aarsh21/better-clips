@@ -165,9 +165,10 @@ flowchart LR
 3. It uploads the MP4 in 50 MB parts through your clips app, which checks the
    upload token and writes to R2. The upload runs on its own thread and never
    blocks OBS.
-4. Clips are named by day, time and the window you were using (usually the
-   game), such as `replays/2026-11-24/14-35-07_Valorant.mp4`. When OBS itself
-   is focused, or on Linux desktops other than Hyprland, the scene name is used.
+4. Clips are named by day, time and the app you were using (usually the
+   game), such as `replays/2026-11-24/14-35-07_Valorant.mp4`; the app is the
+   clip's category in the web app. When OBS itself is focused, or on Linux
+   desktops other than Hyprland, the scene name is used.
 
 The app is a single Cloudflare Worker next to your bucket, so bucket keys never
 reach the browser. See [web/README.md](web/README.md) for its design, bucket
