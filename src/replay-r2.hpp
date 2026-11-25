@@ -90,6 +90,7 @@ struct Clip {
 	std::vector<AudioTrack> audio;
 	std::vector<encoder_packet> packets; /* referenced, sorted by dts_usec */
 	R2Config config;
+	std::string save_dir; /* OBS's recording folder, for a clip that can't upload */
 
 	Clip() = default;
 	Clip(const Clip &) = delete;
@@ -123,7 +124,7 @@ bool secure_url(const std::string &url);
 std::string object_key(const R2Config &config, const std::string &name);
 
 void uploader_start();
-void uploader_stop();              /* finishes queued uploads first */
+void uploader_stop();              /* finishes queued uploads, or saves them to disk */
 void uploader_enqueue(Clip *clip); /* takes ownership */
 
 /* ---- The output that keeps the replay in memory (replay-output.cpp) ---- */

@@ -25,8 +25,9 @@ what it uploads.
 OBS's Replay Buffer writes every clip to disk, and then you still have to find
 the file, upload it somewhere and copy a link. Replay to R2 skips all of that:
 
-- **Never touches disk.** The plugin keeps its own replay buffer in memory,
-  packages the clip as an MP4 in memory and uploads it in the background.
+- **Skips the disk.** The plugin keeps its own replay buffer in memory,
+  packages the clip as an MP4 in memory and uploads it in the background. A
+  clip only touches disk if it can't be uploaded.
 - **No extra encoding.** It reuses the frames OBS already encoded for its
   Replay Buffer, so it costs no GPU or CPU while you play.
 - **Your storage, your clips.** Clips go to your own R2 bucket. R2 has no
@@ -44,7 +45,7 @@ the file, upload it somewhere and copy a link. Replay to R2 skips all of that:
 
 - **Save Replay to R2** hotkey and a dock next to Controls
 - Change the replay length live, without restarting the buffer
-- Retries failed uploads for about 2 minutes
+- Retries failed uploads, then saves the clip to your recording folder
 - H.264, HEVC and AV1 video, AAC and Opus audio, every audio track
 - One build works on OBS 31, 32 and 33
 - One-line installer for Windows, macOS and Linux
@@ -176,9 +177,12 @@ layout and deployment options.
 <details>
 <summary><b>What happens if my internet drops while saving?</b></summary>
 
-The plugin retries for about 2 minutes. Because the clip only exists in memory,
-it's lost if every retry fails, and OBS's status bar tells you. Up to 3 clips
-can wait in the queue at once.
+The plugin retries for about 2 minutes. If every retry fails, it saves the clip
+to OBS's recording folder (**Settings → Output**) instead, as
+`Replay 2026-11-24 14-35-07_Valorant.mp4`, and the status bar shows where. Up to
+3 clips wait to upload at once; if you save more while they're stuck, the extra
+ones go straight to the recording folder. Clips that are still uploading when you
+close OBS are saved there too.
 
 </details>
 
