@@ -2,7 +2,14 @@ import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import { api, mediaUrl, type Clip, type Folder } from "@/lib/api"
+import {
+  api,
+  longTitle,
+  mediaUrl,
+  withTitles,
+  type Clip,
+  type Folder,
+} from "@/lib/api"
 
 const KEY = ["clips"]
 
@@ -35,12 +42,21 @@ export function useMoveClip(onMoved?: (from: string, to: string) => void) {
     onMutate: async ({ clip, to, name }) => {
       await qc.cancelQueries({ queryKey: KEY })
       const previous = qc.getQueryData<Clip[]>(KEY)
-      qc.setQueryData<Clip[]>(KEY, (clips) =>
-        clips?.map((c) =>
-          c.key === clip.key
-            ? { ...c, folder: to ?? c.folder, title: name?.trim() || c.title }
-            : c
-        )
+      qc.setQueryData<Clip[]>(
+        KEY,
+        (clips) =>
+          clips &&
+          withTitles(
+            clips.map((c) =>
+              c.key === clip.key
+                ? {
+                    ...c,
+                    folder: to ?? c.folder,
+                    name: name === undefined ? c.name : name.trim(),
+                  }
+                : c
+            )
+          )
       )
 
       return { previous }
@@ -125,7 +141,7 @@ export function useNewClipToasts(
       )
 
       for (const clip of fresh.slice(0, 3)) {
-        toast(`New clip · ${clip.title}`, {
+        toast(`New clip · ${longTitle(clip)}`, {
           description: clip.time,
           action: { label: "Watch", onClick: () => open(clip.key) },
         })

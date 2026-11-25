@@ -26,14 +26,17 @@ Worker (Hono) serving a React app, so the browser never sees bucket keys.
   Appearance**, which also has a System option.
 - **Cleanup:** a daily job deletes old clips using the Storage settings.
 
-Keyboard: `/` or `⌘K` search, `1` `2` `3` tabs, then in a clip `←` `→` next and
-previous, `K` keep, `T` trim, `E` rename, `Del` delete, `Space` play. While
+Keyboard: `/` or `⌘K` search, `1` `2` `3` tabs, then in a clip `↑` `↓` or `H` `L`
+previous and next, `←` `→` seek 5 seconds, `K` keep, `T` trim, `E` rename, `Del` delete, `Space` play. While
 trimming: `I` `O` set in and out, `Enter` save, `Esc` cancel.
 
 ## Bucket layout
 
 ```
-replays/<day>/<time>_<scene>.mp4   from OBS, deleted after N days (Settings)
+replays/<day>/<time>_<category>[__<name>].mp4
+                                   from OBS, deleted after N days (Settings);
+                                   the category is the window or scene, the
+                                   name is one you give it in the app
 saved/<day>/...                    kept clips, never deleted
 trash/<day>/...                    deleted clips, purged after N days (Settings)
 thumbs/<clip key>.jpg              made in the browser the first time a clip is seen

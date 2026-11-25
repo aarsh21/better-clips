@@ -14,6 +14,7 @@ import { cn } from "cn"
 import { toast } from "sonner"
 
 import { ClipGrid } from "@/components/clip-grid"
+import { ClipToolbar } from "@/components/clip-toolbar"
 import { ConnectStorage } from "@/components/connect-storage"
 import type { SettingsTab } from "@/components/settings-dialog"
 import { ObsConnect } from "@/components/setup-steps"
@@ -44,8 +45,11 @@ import { useClips, useNewClipToasts, useThumbnailWorker } from "@/lib/clips"
 import { retentionText, useSettings } from "@/lib/settings"
 import {
   byNewest,
+  sortsByDay,
+  useCategories,
   useGlobalKeys,
   useOpenClipSync,
+  useSort,
   useViewCounts,
   useVisibleClips,
   VIEWS,
@@ -151,7 +155,16 @@ export default function App() {
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [settingsTab, setSettingsTab] = React.useState<SettingsTab>("obs")
-  const visible = useVisibleClips(clips, view)
+  const [sort, setSort] = useSort()
+  const [chosenCategory, setCategory] = React.useState<string | null>(null)
+  const categories = useCategories(clips, view)
+
+  /* A category with no clips left in this tab shows them all. */
+  const category = categories.some((c) => c.name === chosenCategory)
+    ? chosenCategory
+    : null
+
+  const visible = useVisibleClips(clips, view, sort, category)
   const { clip, openClip, follow } = useOpenClipSync(clips, view, setView)
   const openSearch = React.useCallback(() => setSearchOpen(true), [])
 
@@ -201,6 +214,16 @@ export default function App() {
           pending={isPending}
           error={error}
           onOpen={(c) => openClip(c.key)}
+          toolbar={
+            <ClipToolbar
+              categories={categories}
+              category={category}
+              onCategory={setCategory}
+              sort={sort}
+              onSort={setSort}
+            />
+          }
+          byDay={sortsByDay(sort)}
         />
       </main>
 
@@ -405,6 +428,8 @@ function ClipsBody({
   pending,
   error,
   onOpen,
+  toolbar,
+  byDay,
 }: {
   clips: Clip[] | undefined
   visible: Clip[]
@@ -412,6 +437,8 @@ function ClipsBody({
   pending: boolean
   error: Error | null
   onOpen: (clip: Clip) => void
+  toolbar: React.ReactNode
+  byDay: boolean
 }) {
   const { data: settings } = useSettings()
 
@@ -432,7 +459,8 @@ function ClipsBody({
     return (
       <>
         {view === "trash" && <TrashBar clips={visible} settings={settings} />}
-        <ClipGrid clips={visible} onOpen={onOpen} />
+        {toolbar}
+        <ClipGrid clips={visible} byDay={byDay} onOpen={onOpen} />
       </>
     )
 

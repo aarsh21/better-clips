@@ -11,6 +11,7 @@
  *
  * Bucket layout (both):
  *   replays/<day>/<time>_<label>.mp4   uploaded by OBS, deleted after N days
+ *     (label: <category>[__<name>][-trim-N], see clip-title.ts)
  *   saved/<day>/<time>_<label>.mp4     kept clips, never deleted
  *   trash/<day>/<time>_<label>.mp4     deleted clips, purged after N days
  *   thumbs/<clip key>.jpg             thumbnail
@@ -22,7 +23,7 @@ import { Hono, type Context, type Next } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
 import { createRemoteJWKSet, jwtVerify } from "jose"
 
-import { clipTitle } from "./clip-title"
+import { clipTitle, labelParts } from "./clip-title"
 import {
   cleanupDone,
   currentObsToken,
@@ -695,10 +696,13 @@ app.post("/api/move", async (c) => {
   const parts = clip.key.split("/")
   let file = parts.pop()!
 
+  /* A rename sets the name and keeps the category and any trim number;
+   * an empty name goes back to the numbered default. */
   if (name !== undefined) {
-    const time = file.match(/^\d{2}-\d{2}-\d{2}/)?.[0]
-    const label = slug(name)
-    file = [time, label].filter(Boolean).join("_") + ".mp4"
+    const m = file.match(/^(\d{2}-\d{2}-\d{2})?_?(.*)\.mp4$/)
+    const parts = labelParts(m?.[2] ?? "")
+    const label = [parts.category, slug(name)].filter(Boolean).join("__")
+    file = [m?.[1], label].filter(Boolean).join("_") + parts.trimSuffix + ".mp4"
   }
 
   parts[0] = folder
@@ -899,7 +903,12 @@ function sharePage(key: string | null, url: string, thumb?: ThumbMeta | null) {
     .replace(/\.mp4$/, "")
 
   const label = file.match(/^\d{2}-\d{2}-\d{2}_?(.*)$/)?.[1] ?? file
-  const title = escapeHtml(clipTitle(label).title || "Clip")
+  const t = clipTitle(label)
+
+  const title = escapeHtml(
+    [t.name || t.category || "Clip", t.trim].filter(Boolean).join(" · ")
+  )
+
   const width = dimension(thumb?.width, 1280)
   const height = dimension(thumb?.height, 720)
   const video = `${url}/clip.mp4`

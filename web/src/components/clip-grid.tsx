@@ -2,11 +2,13 @@ import * as React from "react"
 import {
   ArrowCounterClockwiseIcon,
   BookmarkSimpleIcon,
+  LinkIcon,
   ScissorsIcon,
   TrashIcon,
 } from "@phosphor-icons/react"
 import { cn } from "cn"
 
+import { ShareMenu } from "@/components/share-menu"
 import {
   Tooltip,
   TooltipContent,
@@ -27,14 +29,19 @@ import {
 import { useClipMoves, type ClipMoves } from "@/lib/clip-actions"
 import { useSettings } from "@/lib/settings"
 
+/* clips arrive in display order. Sorted by time, they're grouped under day
+ * headings; in any other order, they're one list. */
 export function ClipGrid({
   clips,
+  byDay,
   onOpen,
 }: {
   clips: Clip[]
+  byDay: boolean
   onOpen: (clip: Clip) => void
 }) {
   const days = React.useMemo(() => {
+    if (!byDay) return [["", clips] as const]
     const groups = new Map<string, Clip[]>()
 
     for (const clip of clips) {
@@ -44,7 +51,7 @@ export function ClipGrid({
     }
 
     return [...groups]
-  }, [clips])
+  }, [clips, byDay])
 
   const { data: settings } = useSettings()
   const moves = useClipMoves()
@@ -53,9 +60,11 @@ export function ClipGrid({
     <TooltipProvider delay={400}>
       <div className="flex flex-col gap-10">
         {days.map(([day, list]) => (
-          <section key={day}>
+          <section key={day || "all"}>
             <div className="sticky top-14 z-20 -mx-1 mb-3 flex items-baseline gap-3 bg-background/80 px-1 py-2 backdrop-blur-md">
-              <h2 className="text-xs font-semibold">{dayLabel(day)}</h2>
+              {day && (
+                <h2 className="text-xs font-semibold">{dayLabel(day)}</h2>
+              )}
               <span className="text-[11px] text-muted-foreground tabular-nums">
                 {list.length} {list.length === 1 ? "clip" : "clips"} ·{" "}
                 {formatBytes(list.reduce((n, c) => n + c.size, 0))}
@@ -66,6 +75,7 @@ export function ClipGrid({
                 <ClipCard
                   key={clip.key}
                   clip={clip}
+                  byDay={byDay}
                   settings={settings}
                   moves={moves}
                   onOpen={() => onOpen(clip)}
@@ -79,15 +89,17 @@ export function ClipGrid({
   )
 }
 
-/* Hovering for a moment plays a muted preview from the start. Keep and
- * delete sit on the thumbnail, so they work without opening the clip. */
+/* Hovering for a moment plays a muted preview from the start. Keep, share
+ * and delete sit on the thumbnail, so they work without opening the clip. */
 function ClipCard({
   clip,
+  byDay,
   settings,
   moves,
   onOpen,
 }: {
   clip: Clip
+  byDay: boolean
   settings: Settings | undefined
   moves: ClipMoves
   onOpen: () => void
@@ -159,15 +171,22 @@ function ClipCard({
             ) : null}
           </div>
         </div>
-        <div className="flex items-baseline justify-between gap-3 px-0.5">
-          <span className="truncate text-xs font-medium">{clip.title}</span>
-          <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
-            {left !== null && left <= 5 ? (
-              <span className={cn(left <= 2 && "text-destructive")}>
-                {left}d left ·{" "}
-              </span>
-            ) : null}
-            {clip.time.slice(0, 5)}
+        <div className="flex flex-col gap-0.5 px-0.5">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="truncate text-xs font-medium">{clip.title}</span>
+            <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+              {left !== null && left <= 5 ? (
+                <span className={cn(left <= 2 && "text-destructive")}>
+                  {left}d left ·{" "}
+                </span>
+              ) : null}
+              {byDay
+                ? clip.time.slice(0, 5)
+                : `${dayLabel(clip.day)} ${clip.time.slice(0, 5)}`}
+            </span>
+          </div>
+          <span className="truncate text-[11px] text-muted-foreground">
+            {clip.category || "No category"}
           </span>
         </div>
       </button>
@@ -186,6 +205,12 @@ function ClipCard({
               active={kept}
               onClick={() => moves.keep(clip)}
             />
+            <ShareMenu
+              align="end"
+              onShare={(days) => void moves.share(clip, days)}
+            >
+              <CardAction label="Share" icon={LinkIcon} />
+            </ShareMenu>
             <CardAction
               label="Move to trash"
               icon={TrashIcon}
@@ -199,20 +224,21 @@ function ClipCard({
   )
 }
 
-/* A button on the thumbnail. It shows on hover or focus; a kept clip's
- * bookmark always shows, and touch screens always show them all. */
+/* A button on the thumbnail. It shows on hover or focus, and while its menu
+ * is open; a kept clip's bookmark always shows, and touch screens always show
+ * them all. Other props, such as a menu trigger's, go to the button. */
 function CardAction({
   label,
   icon: Icon,
   active,
   destructive,
-  onClick,
-}: {
+  className,
+  ...props
+}: React.ComponentProps<"button"> & {
   label: string
   icon: React.ElementType
   active?: boolean
   destructive?: boolean
-  onClick: () => void
 }) {
   return (
     <Tooltip>
@@ -222,11 +248,12 @@ function CardAction({
             type="button"
             aria-label={label}
             aria-pressed={active}
-            onClick={onClick}
+            {...props}
             className={cn(
-              "flex size-7 items-center justify-center bg-black/70 text-white backdrop-blur-sm transition-[opacity,color,background-color] outline-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-black/90 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary [@media(hover:none)]:opacity-100",
+              "flex size-7 items-center justify-center bg-black/70 text-white backdrop-blur-sm transition-[opacity,color,background-color] outline-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-black/90 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary data-popup-open:opacity-100 [@media(hover:none)]:opacity-100",
               active ? "text-primary" : "opacity-0",
-              destructive && "hover:text-red-400"
+              destructive && "hover:text-red-400",
+              className
             )}
           />
         }

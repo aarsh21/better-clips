@@ -1,20 +1,41 @@
-/* The title shown for a clip file's label, the part after its time:
- * "Valorant-Ranked" is "Valorant Ranked", and the trim editor's
- * "Valorant-Ranked-trim-2" is "Valorant Ranked · Trim 2". Shared by the
- * app and the share page. */
-export function clipTitle(label: string) {
+/* A clip file's label is the part after its time:
+ * <Category>[__<Name>][-trim-N]. The category is the window or scene OBS saved
+ * from, such as "Counter-Strike-2"; the name is one you gave the clip. Neither
+ * part contains "_", so "__" can't be confused with either. Shared by the
+ * app, the share page and renames. */
+export function labelParts(label: string) {
   /* -trim-N, or an older -trim, -trim-2 or -trim-trim. */
   const trim = label.match(/(?:-trim)+(?:-(\d+))?$/)
+  const base = label.slice(0, trim?.index ?? label.length)
+  const sep = base.indexOf("__")
 
-  const name = label
-    .slice(0, trim?.index ?? label.length)
-    .replace(/_[a-z2-9]{6,8}$/, "") /* the plugin's old random link code */
-    .replace(/[-_]+/g, " ")
-    .trim()
+  return {
+    /* Without the plugin's old random link code. */
+    category: (sep < 0 ? base : base.slice(0, sep)).replace(
+      /_[a-z2-9]{6,8}$/,
+      ""
+    ),
+    name: sep < 0 ? "" : base.slice(sep + 2),
+    /* The raw suffix, such as "-trim-2", kept when a trim is renamed. */
+    trimSuffix: trim?.[0] ?? "",
+    trimNumber: trim?.[1],
+  }
+}
 
-  if (!trim) return { title: name, trimmed: false }
+const words = (part: string) => part.replace(/[-_]+/g, " ").trim()
 
-  const suffix = trim[1] ? `Trim ${trim[1]}` : "Trim"
+/* "Counter-Strike-2__Ace-round-trim-2" is category "Counter Strike 2", name
+ * "Ace round" and trim "Trim 2". */
+export function clipTitle(label: string) {
+  const parts = labelParts(label)
 
-  return { title: name ? `${name} · ${suffix}` : suffix, trimmed: true }
+  return {
+    category: words(parts.category),
+    name: words(parts.name),
+    trim: parts.trimSuffix
+      ? parts.trimNumber
+        ? `Trim ${parts.trimNumber}`
+        : "Trim"
+      : null,
+  }
 }

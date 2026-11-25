@@ -83,7 +83,12 @@ export function SearchDialog({
                 <CommandItem
                   key={clip.key}
                   value={clip.key}
-                  keywords={[clip.title, clip.day, dayLabel(clip.day)]}
+                  keywords={[
+                    clip.title,
+                    clip.category,
+                    clip.day,
+                    dayLabel(clip.day),
+                  ]}
                   onSelect={run(() => onOpenClip(clip.key))}
                 >
                   <ClipRow clip={clip} />
@@ -172,6 +177,7 @@ function ClipRow({ clip }: { clip: Clip }) {
           )}
         </span>
         <span className="text-[11px] text-muted-foreground tabular-nums">
+          {clip.category && `${clip.category} · `}
           {dayLabel(clip.day)} · {clip.time.slice(0, 5)}
           {clip.thumb?.duration
             ? ` · ${formatDuration(clip.thumb.duration)}`

@@ -16,7 +16,14 @@ export type Clip = ApiClip & {
   day: string
   /** HH:MM:SS, the PC's local time. */
   time: string
-  /** Scene name or the name you gave it. */
+  /** The window or scene OBS saved from, such as "Counter Strike 2". */
+  category: string
+  /** The name you gave it, or "". */
+  name: string
+  /** "Trim 2" for a trim, else null. */
+  trim: string | null
+  /** The name, or "Clip 3" for the third recording in its category that day,
+   * with " · Trim 2" for a trim. Set by withTitles. */
   title: string
   trimmed: boolean
 }
@@ -43,9 +50,47 @@ export function parseClip(raw: ApiClip): Clip {
     label = file
   }
 
-  const { title, trimmed } = clipTitle(label)
+  const { category, name, trim } = clipTitle(label)
 
-  return { ...raw, day, time, title: title || "Untitled", trimmed }
+  return {
+    ...raw,
+    day,
+    time,
+    category,
+    name,
+    trim,
+    title: name,
+    trimmed: trim !== null,
+  }
+}
+
+/* "Clip 3 · Counter Strike 2", for toasts and confirmations outside the
+ * grid, where the category isn't shown next to the title. */
+export const longTitle = (c: Clip) =>
+  c.category ? `${c.title} · ${c.category}` : c.title
+
+/* Gives each clip its title. An unnamed clip is numbered within its category
+ * and day in recording order, counting every folder, so moving a clip to the
+ * trash doesn't renumber the others; a trim shares its source's number. */
+export function withTitles(clips: Clip[]) {
+  const times = new Map<string, Set<string>>()
+
+  for (const c of clips) {
+    const group = `${c.day}/${c.category}`
+    times.set(group, (times.get(group) ?? new Set()).add(c.time))
+  }
+
+  const numbers = new Map<string, number>()
+
+  for (const [group, set] of times)
+    [...set].sort().forEach((t, i) => numbers.set(`${group}/${t}`, i + 1))
+
+  return clips.map((c) => {
+    const base =
+      c.name || `Clip ${numbers.get(`${c.day}/${c.category}/${c.time}`)}`
+
+    return { ...c, title: c.trim ? `${base} · ${c.trim}` : base }
+  })
 }
 
 export function localDay(d: Date) {
@@ -284,7 +329,7 @@ export function errorMessage(cause: unknown) {
 export const api = {
   clips: () =>
     request<{ clips: ApiClip[] }>("/api/clips").then((d) =>
-      d.clips.map(parseClip)
+      withTitles(d.clips.map(parseClip))
     ),
   move: (key: string, body: { to?: Folder; name?: string }) =>
     request<{ key: string }>("/api/move", {

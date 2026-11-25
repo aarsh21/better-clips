@@ -67,12 +67,86 @@ export function useOpenClip() {
 export const byNewest = (a: Clip, b: Clip) =>
   (b.day + b.time).localeCompare(a.day + a.time)
 
-/* The clips in the current tab, newest first. */
-export function useVisibleClips(clips: Clip[] | undefined, view: View) {
+export type Sort = "newest" | "oldest" | "longest" | "largest" | "name"
+
+export const SORTS: { value: Sort; label: string }[] = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "longest", label: "Longest first" },
+  { value: "largest", label: "Largest first" },
+  { value: "name", label: "Name" },
+]
+
+const length = (c: Clip) => c.thumb?.duration ?? 0
+
+const COMPARE: Record<Sort, (a: Clip, b: Clip) => number> = {
+  newest: byNewest,
+  oldest: (a, b) => byNewest(b, a),
+  longest: (a, b) => length(b) - length(a) || byNewest(a, b),
+  largest: (a, b) => b.size - a.size || byNewest(a, b),
+  name: (a, b) =>
+    a.title.localeCompare(b.title, undefined, { numeric: true }) ||
+    a.category.localeCompare(b.category) ||
+    byNewest(a, b),
+}
+
+/* Sorting by time keeps the grid's day headings; other orders are one list. */
+export const sortsByDay = (sort: Sort) => sort === "newest" || sort === "oldest"
+
+const SORT_KEY = "clips:sort"
+
+const isSort = (v: string | null): v is Sort => SORTS.some((s) => s.value === v)
+
+/* The chosen order, remembered in this browser. */
+export function useSort() {
+  const [sort, setSort] = React.useState<Sort>(() => {
+    const saved = localStorage.getItem(SORT_KEY)
+
+    return isSort(saved) ? saved : "newest"
+  })
+
+  const choose = React.useCallback((next: Sort) => {
+    localStorage.setItem(SORT_KEY, next)
+    setSort(next)
+  }, [])
+
+  return [sort, choose] as const
+}
+
+/* The clips in the current tab, in one category when category isn't null,
+ * in the chosen order. */
+export function useVisibleClips(
+  clips: Clip[] | undefined,
+  view: View,
+  sort: Sort,
+  category: string | null
+) {
   return React.useMemo(
-    () => (clips ?? []).filter((c) => inView(c, view)).sort(byNewest),
-    [clips, view]
+    () =>
+      (clips ?? [])
+        .filter(
+          (c) =>
+            inView(c, view) && (category === null || c.category === category)
+        )
+        .sort(COMPARE[sort]),
+    [clips, view, sort, category]
   )
+}
+
+/* The categories in the current tab with their clip counts, most clips
+ * first. */
+export function useCategories(clips: Clip[] | undefined, view: View) {
+  return React.useMemo(() => {
+    const counts = new Map<string, number>()
+
+    for (const c of clips ?? [])
+      if (inView(c, view))
+        counts.set(c.category, (counts.get(c.category) ?? 0) + 1)
+
+    return [...counts]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [clips, view])
 }
 
 export function useViewCounts(clips: Clip[] | undefined) {

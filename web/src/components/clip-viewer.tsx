@@ -12,6 +12,7 @@ import {
 } from "@phosphor-icons/react"
 import { cn } from "cn"
 
+import { ShareMenu } from "@/components/share-menu"
 import { TrimBar } from "@/components/trim-bar"
 import {
   AlertDialog,
@@ -26,14 +27,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button-variants"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuGroup,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Kbd } from "@/components/ui/kbd"
 import {
   Tooltip,
@@ -48,6 +41,7 @@ import {
   downloadUrl,
   formatBytes,
   formatDuration,
+  longTitle,
   mediaUrl,
   thumbUrl,
   type Clip,
@@ -123,6 +117,9 @@ function Viewer({ clip, onOpen, ...nav }: Props & { clip: Clip }) {
       if (isEditableTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey)
         return
 
+      /* An open menu, such as Share, keeps its own arrow keys. */
+      if (e.target instanceof Element && e.target.closest("[role=menu]")) return
+
       const run = keyAction(e, {
         clip,
         nav,
@@ -137,9 +134,10 @@ function Viewer({ clip, onOpen, ...nav }: Props & { clip: Clip }) {
       run()
     }
 
-    window.addEventListener("keydown", onKey)
+    /* Capture: the dialog stops arrow keys before they reach the window. */
+    window.addEventListener("keydown", onKey, true)
 
-    return () => window.removeEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey, true)
   })
 
   return (
@@ -211,7 +209,9 @@ type KeyContext = {
   setMode: (mode: Mode) => void
 }
 
-/* The viewer's keyboard shortcuts. Returns nothing for keys it doesn't use. */
+/* The viewer's keyboard shortcuts. Returns nothing for keys it doesn't use.
+ * Up and down (or H and L) change clips; left and right seek, as they do in
+ * the browser's own player, which handles them itself when it has focus. */
 function keyAction(e: KeyboardEvent, ctx: KeyContext) {
   const { clip, nav, actions, video } = ctx
   const live = clip.folder !== "trash"
@@ -229,8 +229,12 @@ function keyAction(e: KeyboardEvent, ctx: KeyContext) {
 
   const bindings = new Map<string, (() => void) | undefined>([
     [" ", () => togglePlay(video)],
-    ["ArrowLeft", e.shiftKey ? skip(-5) : prev],
-    ["ArrowRight", e.shiftKey ? skip(5) : next],
+    ["ArrowUp", prev],
+    ["ArrowDown", next],
+    ["h", prev],
+    ["l", next],
+    ["ArrowLeft", e.target === video ? undefined : skip(-5)],
+    ["ArrowRight", e.target === video ? undefined : skip(5)],
     ["k", live ? actions.keep : undefined],
     ["t", live ? () => ctx.setMode("trim") : undefined],
     ["e", () => ctx.setMode("rename")],
@@ -245,6 +249,8 @@ function keyAction(e: KeyboardEvent, ctx: KeyContext) {
 
 function clipMeta(clip: Clip, duration: number, settings?: Settings) {
   const parts = [dayLabel(clip.day), clip.time, formatBytes(clip.size)]
+
+  if (clip.category) parts.unshift(clip.category)
   const left = daysLeft(clip, settings)
 
   if (duration) parts.push(formatDuration(duration))
@@ -277,10 +283,7 @@ function ViewerHeader({
     <div className="flex items-center gap-2 border-b px-3 py-2">
       <div className="flex min-w-0 flex-1 flex-col">
         {renaming ? (
-          <RenameInput
-            initial={clip.title === "Untitled" ? "" : clip.title}
-            onDone={onRenamed}
-          />
+          <RenameInput initial={clip.name} onDone={onRenamed} />
         ) : (
           <DialogTitle
             render={<button type="button" />}
@@ -298,7 +301,7 @@ function ViewerHeader({
       <div className="flex items-center">
         <IconButton
           label="Previous"
-          kbd="←"
+          kbd="↑"
           disabled={!nav.hasPrev}
           onClick={() => nav.onNavigate(clip, -1)}
         >
@@ -306,7 +309,7 @@ function ViewerHeader({
         </IconButton>
         <IconButton
           label="Next"
-          kbd="→"
+          kbd="↓"
           disabled={!nav.hasNext}
           onClick={() => nav.onNavigate(clip, 1)}
         >
@@ -362,7 +365,12 @@ function ActionBar({
         onClick={actions.keep}
       />
       <Action icon={ScissorsIcon} label="Trim" kbd="T" onClick={onTrim} />
-      <ShareMenu onShare={(days) => void actions.share(days)} />
+      <ShareMenu onShare={(days) => void actions.share(days)}>
+        <Button variant="ghost" size="sm">
+          <LinkIcon />
+          Share
+        </Button>
+      </ShareMenu>
       <a
         href={downloadUrl(clip.key)}
         download
@@ -383,35 +391,6 @@ function ActionBar({
   )
 }
 
-const SHARE_OPTIONS = [
-  { label: "1 day", days: 1 },
-  { label: "7 days", days: 7 },
-  { label: "30 days", days: 30 },
-  { label: "Forever", days: null },
-]
-
-function ShareMenu({ onShare }: { onShare: (days: number | null) => void }) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>
-        <LinkIcon />
-        Share
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-44">
-        {/* Base UI only allows a menu label inside a group. */}
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Copy a link that works for</DropdownMenuLabel>
-          {SHARE_OPTIONS.map(({ label, days }) => (
-            <DropdownMenuItem key={label} onClick={() => onShare(days)}>
-              {label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 function DeleteDialog({
   clip,
   open,
@@ -429,7 +408,8 @@ function DeleteDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this clip forever?</AlertDialogTitle>
           <AlertDialogDescription>
-            {clip.title} will be removed from your bucket. This can't be undone.
+            {longTitle(clip)} will be removed from your bucket. This can't be
+            undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
