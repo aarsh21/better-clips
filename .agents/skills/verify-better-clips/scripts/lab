@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# One disposable checkout/orb per run: the protocol exercise fixes its port and D1 path.
+set -euo pipefail
+action=${1:-help}; id=${2:-}
+usage() { echo 'lab {start|doctor|protocol|legacy|obs|quit|upgrade|gates|stop} RUN_ID (1–8 lowercase letters/digits)'; }
+[[ $action != help && $action != --help ]] || { usage; exit; }
+[[ $id =~ ^[a-z0-9]{1,8}$ ]] || { usage >&2; exit 2; }
+cd "$(git rev-parse --show-toplevel)"
+S=$PWD/.agents/skills/verify-better-clips/scripts
+export R="/dev/shm/better-clips-$UID-$id" E="$PWD/.amp/in/artifacts/bc-$id" DISPLAY=:97 BC_BROWSER=yt-$id
+C=$R/config/obs-studio; n=bc-$id
+clearproxy='unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy;'
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+export NO_PROXY=localhost,127.0.0.1,::1
+ports=8787,8788,9393,9394,9229,9230
+rule=(! -d 127.0.0.0/8 -p tcp -m multiport --dports "$ports" -m comment --comment "$n" -j REJECT)
+die() { echo "$*" >&2; exit 1; }
+svc() { echo "$1" >>"$R/services"; amp orb service start "$n-$1" --cwd "$PWD" --command "${clearproxy} $2"; }
+waiturl() { for ((i=0;i<100;i++)); do curl -sS -o /dev/null --max-time 1 "$1" 2>/dev/null && return; sleep .2; done; die "Not ready: $1"; }
+noobs() { ! pgrep -x obs >/dev/null || die 'Quit OBS first. Never edit its live config.'; }
+if [[ $action != start ]]; then [[ -f $R/owner && $(cat "$R/owner") == "$PWD" ]] || die 'No matching run in this checkout'; fi
+case "$action" in
+start)
+  noobs
+  for path in "$R" "$E" web/.dev.vars web/.wrangler/state /tmp/.X97-lock; do [[ ! -e $path && ! -L $path ]] || die "Already exists: $path. Use a fresh checkout/orb or stop its owner."; done
+  for port in ${ports//,/ }; do [[ -z $(ss -Hlt "sport = :$port") ]] || die "Busy port $port"; done
+  umask 077; mkdir -m 700 "$R"; echo "$PWD" >"$R/owner"; mkdir -p "$E" "$R/state" web/.wrangler
+  ln -s "$R/state" web/.wrangler/state
+  printf 'CREDS_KEY=%s\nGOOGLE_CLIENT_ID=test-client\nGOOGLE_CLIENT_SECRET=test-secret\nGOOGLE_OAUTH=http://127.0.0.1:9393\nYOUTUBE_API=http://127.0.0.1:9393\nAPP_PASSWORD=local-only-clips-verification\n' "$(openssl rand -base64 32)" >"$R/vars"
+  ln -s "$R/vars" web/.dev.vars
+  # Orbs can forward loopback listeners onto eth0. Scope a temporary rule to these lab ports.
+  sudo -n iptables -I INPUT "${rule[@]}"
+  pnpm --dir web build >"$E/web-build.log" 2>&1
+  (cd web; pnpm exec wrangler d1 migrations apply clips-app --local -c wrangler.app.jsonc) >"$E/migrations.log" 2>&1
+  svc host 'cd web && exec pnpm exec wrangler dev --local -c wrangler.app.jsonc --ip 127.0.0.1 --port 8787 --inspector-port 9229'
+  svc r2 "cd web && exec pnpm exec wrangler dev --local -c wrangler.jsonc --assets dist/client --ip 127.0.0.1 --port 8788 --inspector-port 9230 --persist-to '$R/r2'"
+  svc s3 'exec moto_server -H 127.0.0.1 -p 9394'
+  svc x 'exec Xvfb :97 -screen 0 1440x900x24 -s 0 -nolisten tcp'
+  for i in {1..30}; do xdpyinfo >/dev/null 2>&1 && break; sleep .2; done
+  svc wm 'exec env DISPLAY=:97 openbox'
+  waiturl http://127.0.0.1:9394/
+  curl -fsS -X PUT http://127.0.0.1:9394/clips >/dev/null
+  curl -fsS -X PUT 'http://127.0.0.1:9394/clips?policy' -H 'Content-Type: application/json' -d '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::clips/*"]}]}'
+  waiturl http://localhost:8787/api/me; waiturl http://localhost:8788/api/me
+  "$0" doctor "$id" ;;
+doctor)
+  for port in ${ports//,/ }; do
+    for addr in $(hostname -I); do
+      [[ $addr == *:* ]] && addr="[$addr]"
+      ! curl -gs --max-time 1 -o /dev/null "http://$addr:$port/" || die "Lab port $port responds off loopback"
+    done
+  done
+  for pair in 8787:cloudflare 8788:password; do
+    curl -sS "http://localhost:${pair%:*}/api/me" | jq -e --arg a "${pair#*:}" '.auth==$a' >/dev/null
+  done
+  db=$(find "$R/state/v3/d1" -name '*.sqlite' ! -name metadata.sqlite)
+  diff <(printf '%s\n' web/migrations/*.sql | sed 's|.*/||') <(sqlite3 -readonly "$db" 'select name from d1_migrations order by name')
+  curl -fsS http://127.0.0.1:9394/ | grep -q '<Name>clips</Name>'; xdpyinfo >/dev/null
+  echo "Hosted/password sign-in, migrations, S3 and Xvfb ready; non-loopback checks passed. Evidence: $E"
+  if pgrep -x obs >/dev/null; then grep -h 'plugin loaded successfully' "$(ls -t "$C"/logs/*.txt | head -1)"; fi ;;
+protocol)
+  # This exercise owns 9393; --serve must not run at the same time.
+  "$0" doctor "$id" >"$E/before-protocol.log"; curl -sS http://localhost:8787/api/me >>"$E/before-protocol.log"
+  python3 web/worker/tests/youtube_local.py >"$E/protocol.log" 2>&1
+  "$S/no-qt-tls.sh" >"$E/no-qt-tls.log" 2>&1
+  svc google 'exec python3 web/worker/tests/youtube_local.py --serve'; waiturl http://127.0.0.1:9393/ ;;
+legacy)
+  noobs; mkdir "$R/old"; gh release download 0.2.0 --repo aarsh21/better-clips -p '*-x86_64-linux-gnu.deb' -D "$R/old"
+  dpkg-deb -x "$R/old/"*.deb "$R/old/tree"; o=$C/plugins/obs-replay-r2; mkdir -p "$o/bin/64bit" "$C/basic/profiles/Untitled"
+  cp "$R/old/tree"/usr/lib/*/obs-plugins/obs-replay-r2.so "$o/bin/64bit/"; cp -R "$R/old/tree/usr/share/obs/obs-plugins/obs-replay-r2" "$o/data"
+  printf '[SimpleOutput]\nRecRB=true\nRecRBTime=8\nRecEncoder=x264\n[Video]\nBaseCX=640\nBaseCY=360\nOutputCX=640\nOutputCY=360\n' >"$C/basic/profiles/Untitled/basic.ini"
+  "$0" obs "$id" ;;
+obs)
+  noobs
+  svc obs "export DISPLAY=:97 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 XDG_CONFIG_HOME='$R/config' LIBGL_ALWAYS_SOFTWARE=1 BC_BROWSER='$BC_BROWSER' BROWSER='$S/xdg-open' PATH='$S':\$PATH YOUTUBE_AUTH_BASE=http://127.0.0.1:9393 YOUTUBE_TOKEN_BASE=http://127.0.0.1:9393 YOUTUBE_API=http://127.0.0.1:9393; exec obs --disable-shutdown-check"
+  timeout 20 xdotool search --sync --onlyvisible --name '^OBS .*Profile:' >/dev/null
+  # The X window exists before Qt registers its controls on the accessibility bus.
+  for i in {1..30}; do "$S/obs-ui" --has Exit && break; sleep .2; done
+  "$S/obs-ui" --has Exit ;;
+quit)
+  win=$(xdotool search --onlyvisible --name '^OBS .*Profile:' | tail -1); xdotool windowactivate --sync "$win"
+  "$S/obs-ui" Exit --role button
+  if timeout 3 xdotool search --sync --onlyvisible --name '^Exit OBS\?$' >/dev/null; then "$S/obs-ui" Yes --role button; fi
+  for i in {1..50}; do ! pgrep -x obs >/dev/null && break; sleep .1; done
+  noobs; amp orb service stop "$n-obs" ;;
+upgrade)
+  noobs
+  # install.sh removes system-wide legacy installs too. Only exercise the run's own per-user copy.
+  [[ $(dpkg-query -W -f='${db:Status-Status}' obs-replay-r2 2>/dev/null || :) != installed ]] || die 'System package present'
+  for p in /usr /usr/local; do for f in "$p"/lib/*/obs-plugins/obs-replay-r2.so "$p/lib/obs-plugins/obs-replay-r2.so" "$p/share/obs/obs-plugins/obs-replay-r2"; do [[ ! -e $f ]] || die "System plugin present: $f"; done; done
+  cmake --preset ubuntu-x86_64 -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DYOUTUBE_CLIENT_ID=test-client -DYOUTUBE_CLIENT_SECRET=test-secret >"$E/plugin-build.log"
+  cmake --build build_x86_64 --parallel 2 >>"$E/plugin-build.log"
+  cpack --config build_x86_64/CPackConfig.cmake -G DEB >>"$E/plugin-build.log"
+  pkg=$(ls -t release/better-clips-*-x86_64-linux-gnu.deb | head -1)
+  env -u DISPLAY -u WAYLAND_DISPLAY -u CLIPS_SETUP_CODE XDG_CONFIG_HOME="$R/config" OBS_R2_PACKAGE="$PWD/$pkg" sh install.sh >"$E/install.log"
+  test ! -e "$C/plugins/obs-replay-r2"; test -s "$C/plugins/better-clips/bin/64bit/better-clips.so"; "$0" obs "$id" ;;
+gates)
+  rc=0
+  gate() { local name=$1; shift; if "$@" >"$E/$name.log" 2>&1; then echo "PASS $name"; else echo "FAIL $name (see $E/$name.log)"; rc=1; fi; }
+  gate clang19 bash -c 'clang-format --version | grep "version 19\." && build-aux/run-clang-format --fail-error --check'
+  gate gersemi build-aux/run-gersemi --fail-error --check
+  gate web-check pnpm --dir web check; gate web-build pnpm --dir web build; exit "$rc" ;;
+stop)
+  for session in "r2-$id" "$BC_BROWSER"; do agent-browser --session "$session" close >/dev/null 2>&1 || :; done
+  if [[ -f $R/services ]]; then
+    while read -r name; do
+      if amp orb service list | grep -Fq "amp-svc-$n-$name.service "; then amp orb service stop "$n-$name"; fi
+    done < <(tac "$R/services" | awk '!seen[$0]++')
+  fi
+  for target in web/.dev.vars web/.wrangler/state; do [[ $(readlink "$target" || :) == "$R/"* ]] && rm "$target"; done
+  if sudo -n iptables -C INPUT "${rule[@]}" 2>/dev/null; then sudo -n iptables -D INPUT "${rule[@]}"; fi
+  rm -rf -- "$R"; echo "Retained evidence: $E" ;;
+*) usage; exit 2 ;;
+esac

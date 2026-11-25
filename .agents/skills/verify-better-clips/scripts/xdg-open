@@ -1,0 +1,9 @@
+#!/bin/sh
+# OBS asks the desktop browser to follow the pairing URL. Route that request
+# to the same local browser session as the dashboard; never log OAuth URLs.
+case "$1" in
+http://localhost:8787/*|http://127.0.0.1:9393/*)
+    unset XDG_CONFIG_HOME
+    exec agent-browser --session "${BC_BROWSER:?}" open "$1" >/dev/null 2>&1 ;;
+*) exit 1 ;;
+esac

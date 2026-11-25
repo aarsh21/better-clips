@@ -1,0 +1,43 @@
+#!/usr/bin/python3
+"""Find Qt controls by their accessible name, then click with real X input."""
+import argparse
+import os
+import subprocess
+import pyatspi as a
+
+p = argparse.ArgumentParser(description=__doc__)
+p.add_argument('name', nargs='?', help='exact accessible name; omit to list visible controls')
+p.add_argument('--role', help='e.g. push button or text')
+p.add_argument('--last', action='store_true', help='choose the last matching visible widget')
+p.add_argument('--has', help='check for visible text without activating a control')
+args = p.parse_args()
+assert os.environ.get('DISPLAY') == ':97', 'Use only the private lab display'
+matches = []
+
+def walk(obj):
+    if obj is None:
+        return
+    role, name = obj.getRoleName(), obj.name
+    if args.has and obj.getState().contains(a.STATE_SHOWING) and args.has in (name or ''):
+        matches.append(name)
+    elif not args.has and 'Component' in obj.get_interfaces() and obj.getState().contains(a.STATE_SHOWING) and role not in ('application', 'label'):
+        r = obj.queryComponent().getExtents(a.DESKTOP_COORDS)
+        if r.width > 0 and r.height > 0:
+            if args.name is None:
+                if role not in ('menu item', 'filler', 'panel', 'scroll pane'):
+                    print(role, repr(name), (r.x, r.y, r.width, r.height))
+            elif name == args.name and (not args.role or role == args.role):
+                matches.append((r.x + r.width // 2, r.y + r.height // 2))
+    for child in obj:
+        walk(child)
+
+for app in a.Registry.getDesktop(0):
+    if app.name.lower() in ('obs', 'obs studio'):
+        walk(app)
+if args.has:
+    raise SystemExit(0 if matches else 1)
+if args.name is not None:
+    if not matches or (len(matches) != 1 and not args.last):
+        raise SystemExit(f'{len(matches)} visible matches for {args.name!r}; list controls or use --role/--last')
+    x, y = matches[-1]
+    subprocess.run(['xdotool', 'mousemove', str(x), str(y), 'click', '1'], check=True)

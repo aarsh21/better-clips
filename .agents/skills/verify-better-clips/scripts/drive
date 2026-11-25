@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Run one chapter against the local stack. No HTTP mutation substitutes for a UI action.
+set -euo pipefail
+phase=${1:-help}; id=${2:-}; S=$(dirname "$(realpath "$0")")
+if [[ ! $id =~ ^[a-z0-9]{1,8}$ ]]; then echo 'drive {upgrade|stores|library|channel|edit|direct} RUN_ID'; exit 2; fi
+cd "$(git rev-parse --show-toplevel)"; export DISPLAY=:97 R=/dev/shm/better-clips-$UID-$id E=$PWD/.amp/in/artifacts/bc-$id
+[[ -f $R/owner && $(cat "$R/owner") == "$PWD" ]] || { echo 'Start this run with lab start first'; exit 1; }
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+C=$R/config/obs-studio; cfg=$C/plugin_config/better-clips/config.json; old=$C/plugin_config/obs-replay-r2/config.json
+db=$(find "$R/state/v3/d1" -name '*.sqlite' ! -name metadata.sqlite)
+session=r2-$id; b(){ agent-browser --session "$session" "$@"; }; button(){ b find role button click --name "$1"; }
+o(){ "$S/obs-ui" "$@"; }; osnap(){ import -window root -resize 1100 "$E/$1.jpg"; }; bsnap(){ b screenshot "$E/$1.png"; }
+settings(){ o Settings --role button --last; }; dest(){ o "$1" --role 'combo box'; xdotool key "$2" Return; }
+field(){ o "$1"; xdotool key ctrl+a; xdotool type --clearmodifiers "$2"; }; hotkey(){ xdotool keydown Shift_L keydown F8 sleep .25 keyup F8 keyup Shift_L; }
+waitfor(){ for i in {1..100}; do "$@" >/dev/null 2>&1 && return; sleep .4; done; echo "Timed out waiting for $1" >&2; return 1; }
+sql(){ sqlite3 -readonly "$db" "$1"; }; row(){ [[ $(sql "$1") == "$2" ]]; }; log(){ grep '\[better-clips\]' "$(ls -t "$C"/logs/*.txt | head -1)"; }
+uploads(){ [[ $(log | grep -c 'Uploaded ') -ge $1 ]]; }; clip(){ xclip -sel clipboard -o 2>/dev/null; }; copied(){ [[ $(clip) == $1* && $(clip) != "${2:-}" ]]; }
+pair(){ jq -e --argjson route "$1" '.youtube_channel_title=="Local channel" and .youtube_route==$route' "$cfg"; }
+range(){
+  local x y right p
+  b wait '[data-handle=end]'
+  read -r x y right < <(b eval '(()=>{const a=document.querySelector("[data-handle=start]").getBoundingClientRect(),z=document.querySelector("[data-handle=end]").getBoundingClientRect();return [a.x+a.width/2,a.y+a.height/2,z.x+z.width/2].map(Math.round).join(" ")})()' | tr -d '"')
+  for p in "$x:$((x+(right-x)*2/13))" "$right:$((x+(right-x)*8/13))"; do b mouse move "${p%:*}" "$y"; b mouse down left; b mouse move "${p#*:}" "$y"; b mouse up left; done
+}
+case "$phase" in
+upgrade)
+  b open http://localhost:8788; b set viewport 1100 740 2; b wait 'input[type=password]'; bsnap before-login
+  b fill 'input[type=password]' local-only-clips-verification; button 'Sign in'; b wait --text 'Waiting for OBS'; bsnap r2-unpaired
+  button Copy; b wait --text Copied
+  # Chrome clipboard-read is denied. Paste the copied command as inert text, never execute it.
+  b tab new about:blank; b eval 'document.body.appendChild(document.createElement("textarea")).focus()'; b press Control+v
+  b eval 'document.querySelector("textarea").value.match(/r2obs2:[A-Za-z0-9+/=]+/)[0]' | tr -d '"\n' >"$R/setup"; b tab close; grep -q '^r2obs2:' "$R/setup"
+  "$S/lab" legacy "$id"; timeout 15 xdotool search --sync --onlyvisible --name 'Auto-Configuration Wizard' >/dev/null
+  waitfor o --has 'Auto-Configuration Wizard'; xdotool key Escape
+  if timeout 4 xdotool search --sync --onlyvisible --name '^No Sources$' >/dev/null; then waitfor o --has Yes; o Yes --role button; fi
+  sleep 1; osnap legacy; grep 'plugin loaded successfully (version 0.2.0)' "$(ls -t "$C"/logs/*.txt | head -1)" >"$E/upgrade.log"
+  "$S/lab" quit "$id"; "$S/scene.py"; cp "$R/setup" "${old%/*}/setup-code.txt"
+  jq '.save_hotkey=[{key:"OBS_KEY_F8",shift:true}]' "$old" >"$R/new"; mv "$R/new" "$old"
+  "$S/lab" obs "$id"; waitfor jq -e '.app_url=="http://localhost:8788" and (.upload_token|length)>0' "$old"; sleep 1; "$S/lab" quit "$id"
+  "$S/lab" upgrade "$id"; waitfor test -f "$cfg"; cmp <(jq -Sc '{app_url,upload_token,save_hotkey,folder}' "$old") <(jq -Sc '{app_url,upload_token,save_hotkey,folder}' "$cfg")
+  jq -e '.save_hotkey==[{key:"OBS_KEY_F8",shift:true}]' "$cfg" >/dev/null
+  log | grep 'plugin loaded successfully' >>"$E/upgrade.log"; test ! -e "$C/plugins/obs-replay-r2"; osnap upgraded ;;
+stores)
+  osnap r2-before; sleep 2
+  ffmpeg -loglevel error -f x11grab -draw_mouse 1 -video_size 1440x900 -framerate 12 -i :97 -t 9 -vf scale=1008:-2 -threads 2 -c:v libx264 -pix_fmt yuv420p -crf 27 -y "$E/obs.mp4" & recorder=$!
+  sleep 1; o 'Save Replay to R2'; waitfor uploads 1; sleep 1.2; hotkey; waitfor uploads 2; osnap r2-after; wait "$recorder"
+  settings; dest 'Better Clips app (R2)' s; field 'S3 API URL' http://127.0.0.1:9394/clips; field 'Access Key ID' verify; field 'Secret Access Key' local-verification; field Folder verified; field 'Public URL' http://127.0.0.1:9394/clips
+  o 'Test Upload'; sleep .5; osnap s3-settings; o Save --role button; sleep 1; o 'Save Replay to S3'; waitfor copied http://127.0.0.1:9394/clips/verified/
+  curl -fsS "$(clip)" -o "$R/saved.mp4"; ffprobe -v error -show_entries stream=codec_name,width,height:format=duration,size -of compact "$R/saved.mp4" | tee "$E/s3.log"; grep -q codec_name=h264 "$E/s3.log"; log | grep -E '(Saved replay|Built |Uploaded )' >"$E/stores.log"; osnap s3-after ;;
+library)
+  b open http://localhost:8788; b wait --text '2 clips'; bsnap library-before
+  b record start "$E/dashboard.mp4" --fps 15 --cursor; trap 'b record stop >/dev/null 2>&1 || :' EXIT
+  b mouse move 120 130; b mouse move 300 190; button 'Clip 2'; b wait --fn 'document.querySelector("video[controls]")?.currentTime > 0.3'
+  b eval 'document.querySelector("video[controls]").currentTime' >"$E/play-times.log"; sleep .7; b eval 'document.querySelector("video[controls]").currentTime' >>"$E/play-times.log"; awk 'NR==1{a=$1} END{exit !($1>a)}' "$E/play-times.log"; bsnap player
+  b press e; b find role textbox fill 'Calibration replay' --name 'Clip name'; b press Enter; b wait --text 'Calibration replay'; sleep 1
+  button Trim; b wait --fn 'document.querySelector("video:not([controls])")?.duration>0'; range; button 'Save trim'; b wait --text 'Saved as a new clip'; b wait --text 'Trim 1'; bsnap trim; b record stop; trap - EXIT
+  button Close; b reload; b wait --text '3 clips'; b snapshot -i >"$E/library-after.txt"; grep -q 'Calibration replay · Trim 1' "$E/library-after.txt" ;;
+channel)
+  session=yt-$id; b open http://localhost:8787; b set viewport 1100 740 2; b wait --text 'Sign in with Google'; bsnap google-before; b find role link click --name 'Sign in with Google'; b wait --text 'No clips yet'
+  settings; dest 'S3 bucket' y; field 'Better Clips app' http://localhost:8787; o 'Sign in with YouTube'; waitfor pair 0; osnap paired; o Save --role button; sleep 1; o 'Save Replay to YouTube'
+  waitfor copied https://youtu.be/test; clip >"$E/host-link.txt"; osnap host-upload; waitfor row "select status from youtube_clips where videoId='$(basename "$(clip)")'" ready
+  # The ready state is fetched by the plugin. Capture the dock, not just the database.
+  waitfor o --has 'is ready to play'; [[ $(clip) == "$(cat "$E/host-link.txt")" ]]; osnap ready; b open http://localhost:8787; b wait --text '1 clip'; bsnap hosted-library ;;
+edit)
+  session=yt-$id; bsnap edit-before; button 'Unlisted 0:13'; b press e; b find role textbox fill 'Night practice' --name 'Clip name'; b press Enter; b wait --text 'Renamed on YouTube'
+  button Unlisted; b wait '[role=menuitem]'; b find role menuitem click --name 'Private Only you can watch it'; waitfor row "select privacy from youtube_clips where title='Night practice'" private
+  button Cut; range
+  button 'Save cut'; b wait --text 'Cut saved'; b wait --text '0:02–0:08'; bsnap cut; sql 'select title,privacy,start,end,status from youtube_clips' | tee "$E/edited.txt"; grep -qx 'Night practice|private|2|8|ready' "$E/edited.txt"
+  button Delete; b wait --text 'Delete this video from YouTube?'; button 'Delete from YouTube'; b wait --text 'No clips yet'; row 'select count(*) from youtube_clips' 0
+  # Verify deletion survives a reload and the closing confirmation no longer covers Settings.
+  b reload; b wait --text 'Clips you save in OBS go to your YouTube channel'
+  button Settings; b wait '[role=tablist]'; sleep .4; b find role tab click --name YouTube; b wait --text 'Disconnect YouTube'; sleep .4
+  button 'Disconnect YouTube'; b wait --text 'Your videos stay on YouTube'; button Disconnect; b wait --text 'Connect YouTube'; row 'select count(*) from youtube_accounts' 0; bsnap web-disconnected ;;
+direct)
+  settings; osnap direct-before; o Disconnect; waitfor jq -e '.youtube_upload_token==""' "$cfg"; osnap hosted-unpaired; o 'Directly to YouTube'; o 'Sign in with YouTube'; waitfor pair 1; osnap direct-paired
+  o 'Review each clip before uploading'; o Save --role button; sleep 1; hotkey; w=$(timeout 20 xdotool search --sync --onlyvisible --name '^Upload this clip to YouTube\?' | tail -1); xdotool windowactivate --sync "$w"; osnap review; o Upload --role button
+  waitfor copied https://youtu.be/test "$(cat "$E/host-link.txt")"; clip >"$E/direct-link.txt"; row 'select count(*) from youtube_clips' 0; waitfor o --has 'is ready to play'; osnap direct-uploaded
+  settings; o Disconnect; waitfor jq -e '.youtube_refresh_token=="" and .youtube_channel_title==""' "$cfg"; osnap direct-disconnected; o Cancel --role button
+  log | grep -E '(plugin loaded|In-memory replay buffer|Saved replay|Built |Uploaded |YouTube upload failed)' >"$E/plugin.log" ;;
+*) echo "Unknown chapter: $phase" >&2; exit 2 ;;
+esac
+echo "PASS $phase; inspect $E"
