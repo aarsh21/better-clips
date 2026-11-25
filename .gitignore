@@ -2,6 +2,9 @@
 /*
 
 # Except for default project files
+!/.agents/
+/.agents/*
+!/.agents/setup
 !/.github
 !/build-aux
 !/cmake

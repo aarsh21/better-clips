@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+
+echo 'Installing missing Linux build tools'
+packages=(build-essential ninja-build pkg-config libobs-dev qt6-base-dev libcurl4-openssl-dev zsh)
+missing=()
+for package in "${packages[@]}"; do
+  if [[ $(dpkg-query -W -f='${Status}' "$package" 2>/dev/null) != 'install ok installed' ]]; then
+    missing+=("$package")
+  fi
+done
+if ((${#missing[@]})); then
+  time sudo -n apt-get update -qq
+  time sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+else
+  echo 'Linux build tools are already installed'
+fi
+
+echo 'Installing CMake and formatters'
+# Pin the formatter version required by build-aux/run-clang-format.
+time uv tool install --no-progress clang-format==19.1.1
+time uv tool install --no-progress cmake==3.31.6
+time uv tool install --no-progress gersemi==0.29.2
+
+echo 'Installing web dependencies from the lockfile'
+time CI=true pnpm --dir web install --frozen-lockfile
