@@ -1,11 +1,14 @@
 import * as React from "react"
 import { DesktopIcon, MoonIcon, SunIcon } from "@phosphor-icons/react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
 
 import { useSignOut } from "@/components/connect-storage"
+import { YouTubeObsSteps } from "@/components/youtube"
+import { YouTubeSettings } from "@/components/youtube-settings"
 import { Segmented } from "@/components/segmented"
 import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button-variants"
 import { ObsConnect } from "@/components/setup-steps"
 import { useTheme } from "@/components/theme-provider"
 import { setClock, useClock } from "@/lib/clock"
@@ -19,9 +22,16 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { announceAccountChange, api, formatBytes, type Clip } from "@/lib/api"
 import { useClips } from "@/lib/clips"
-import { retentionText, useSaveSettings, useSettings } from "@/lib/settings"
+import {
+  retentionText,
+  useAccount,
+  useHasBucket,
+  useMe,
+  useSaveSettings,
+  useSettings,
+} from "@/lib/settings"
 
-export type SettingsTab = "obs" | "storage" | "appearance"
+export type SettingsTab = "obs" | "storage" | "youtube" | "appearance"
 
 const FREE_BYTES = 10 * 1024 ** 3
 
@@ -36,6 +46,10 @@ export function SettingsDialog({
   onOpenChange: (open: boolean) => void
   onTab: (tab: SettingsTab) => void
 }) {
+  /* YouTube is only on the hosted app. */
+  const hosted = useAccount() !== null
+  const hasBucket = useHasBucket()
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Pinned near the top, so switching tabs or connecting OBS changes the
@@ -44,7 +58,8 @@ export function SettingsDialog({
         <DialogHeader className="px-5 pt-5 pb-3">
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription className="sr-only">
-            Connect OBS, choose how long clips are kept, and pick a theme.
+            Connect OBS, choose how long clips are kept, connect YouTube, and
+            pick a theme.
           </DialogDescription>
         </DialogHeader>
         <Tabs
@@ -58,15 +73,21 @@ export function SettingsDialog({
           >
             <TabsTrigger value="obs">OBS</TabsTrigger>
             <TabsTrigger value="storage">Storage</TabsTrigger>
+            {hosted && <TabsTrigger value="youtube">YouTube</TabsTrigger>}
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
           </TabsList>
           <div className="px-5 py-5">
             <TabsContent value="obs">
-              <ObsConnect />
+              {hasBucket ? <ObsConnect /> : <YouTubeObsSteps />}
             </TabsContent>
             <TabsContent value="storage">
               <StorageSettings />
             </TabsContent>
+            {hosted && (
+              <TabsContent value="youtube">
+                <YouTubeSettings />
+              </TabsContent>
+            )}
             <TabsContent value="appearance">
               <AppearanceSettings />
             </TabsContent>
@@ -84,6 +105,31 @@ function StorageSettings() {
   const { data: settings } = useSettings()
   const { data: clips } = useClips()
   const save = useSaveSettings()
+  const hasBucket = useHasBucket()
+
+  if (!hasBucket)
+    return (
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-2">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Your clips are on YouTube, so they take no storage here. Want clips
+            you can download, trim losslessly and share with expiring links? Add
+            an R2 bucket in your own Cloudflare account, free up to 10 GB.
+          </p>
+          <a
+            href="/api/auth/setup"
+            className={buttonVariants({
+              variant: "outline",
+              size: "sm",
+              className: "self-start",
+            })}
+          >
+            Set up a bucket
+          </a>
+        </div>
+        <AccountSettings />
+      </div>
+    )
 
   return (
     <div className="flex flex-col gap-6">
@@ -148,7 +194,7 @@ function StorageSettings() {
 
 /* On the hosted app: who is signed in and which bucket is connected. */
 function AccountSettings() {
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me })
+  const { data: me } = useMe()
   const signOut = useSignOut()
   const [confirming, setConfirming] = React.useState(false)
 
@@ -213,7 +259,7 @@ function AccountSettings() {
           </Button>
         </div>
       )}
-      {confirming ? (
+      {!me.storage ? null : confirming ? (
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             clips stops using this bucket right away, and OBS stops uploading.
@@ -254,7 +300,8 @@ function AccountSettings() {
 function Usage({ clips }: { clips: Clip[] }) {
   const sizes = { replays: 0, saved: 0, trash: 0 }
 
-  for (const clip of clips) sizes[clip.folder] += clip.size
+  for (const clip of clips)
+    if (clip.source === "bucket") sizes[clip.folder] += clip.size
 
   const parts = [
     { label: "New", bytes: sizes.replays, className: "bg-primary" },

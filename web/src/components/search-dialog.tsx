@@ -8,9 +8,11 @@ import {
   ScissorsIcon,
   SunIcon,
   TrashIcon,
+  YoutubeLogoIcon,
 } from "@phosphor-icons/react"
 
 import type { SettingsTab } from "@/components/settings-dialog"
+import { YOUTUBE_RED } from "@/components/youtube"
 import { useTheme } from "@/components/theme-provider"
 import {
   Command,
@@ -22,7 +24,13 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command"
-import { dayLabel, formatDuration, thumbUrl, type Clip } from "@/lib/api"
+import {
+  dayLabel,
+  durationOf,
+  formatDuration,
+  thumbnailOf,
+  type Clip,
+} from "@/lib/api"
 import { useClipTime } from "@/lib/clock"
 import type { View } from "@/lib/view"
 
@@ -51,6 +59,7 @@ export function SearchDialog({
   onOpenClip,
   onView,
   onSettings,
+  views,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -58,6 +67,8 @@ export function SearchDialog({
   onOpenClip: (key: string) => void
   onView: (view: View) => void
   onSettings: (tab: SettingsTab) => void
+  /** The tabs this account has. */
+  views: View[]
 }) {
   const { theme, setTheme } = useTheme()
 
@@ -89,6 +100,7 @@ export function SearchDialog({
                     clip.category,
                     clip.day,
                     dayLabel(clip.day),
+                    clip.source,
                   ]}
                   onSelect={run(() => onOpenClip(clip.key))}
                 >
@@ -98,13 +110,17 @@ export function SearchDialog({
             </CommandGroup>
           )}
           <CommandGroup heading="Go to">
-            {VIEW_ITEMS.map(({ view, label, icon: Icon, key }) => (
-              <CommandItem key={view} onSelect={run(() => onView(view))}>
-                <Icon />
-                {label}
-                <CommandShortcut>{key}</CommandShortcut>
-              </CommandItem>
-            ))}
+            {VIEW_ITEMS.flatMap(({ view, label, icon: Icon, key }) =>
+              views.includes(view) ? (
+                <CommandItem key={view} onSelect={run(() => onView(view))}>
+                  <Icon />
+                  {label}
+                  <CommandShortcut>{key}</CommandShortcut>
+                </CommandItem>
+              ) : (
+                []
+              )
+            )}
           </CommandGroup>
           <CommandGroup heading="Settings">
             <CommandItem onSelect={run(() => onSettings("obs"))}>
@@ -117,6 +133,13 @@ export function SearchDialog({
             >
               <HardDrivesIcon />
               Storage and cleanup
+            </CommandItem>
+            <CommandItem
+              keywords={["google", "channel"]}
+              onSelect={run(() => onSettings("youtube"))}
+            >
+              <YoutubeLogoIcon />
+              YouTube
             </CommandItem>
             {THEMES.map(({ theme: value, label, icon: Icon }) => (
               <CommandItem
@@ -152,13 +175,15 @@ function matchWords(value: string, search: string, keywords?: string[]) {
 
 function ClipRow({ clip }: { clip: Clip }) {
   const clipTime = useClipTime()
+  const thumbnail = thumbnailOf(clip)
+  const duration = durationOf(clip)
 
   return (
     <>
       <span className="relative aspect-video w-14 shrink-0 overflow-hidden bg-muted">
-        {clip.thumb && (
+        {thumbnail && (
           <img
-            src={thumbUrl(clip)}
+            src={thumbnail}
             alt=""
             loading="lazy"
             decoding="async"
@@ -169,22 +194,33 @@ function ClipRow({ clip }: { clip: Clip }) {
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex items-center gap-1.5 truncate font-medium">
           {clip.title}
-          {clip.trimmed && (
-            <ScissorsIcon className="size-3 text-muted-foreground" />
-          )}
-          {clip.folder === "saved" && (
-            <BookmarkSimpleIcon weight="fill" className="size-3 text-primary" />
-          )}
-          {clip.folder === "trash" && (
-            <TrashIcon className="size-3 text-muted-foreground" />
+          {clip.source === "youtube" ? (
+            <YoutubeLogoIcon
+              weight="fill"
+              aria-label="On YouTube"
+              className={`size-3.5 ${YOUTUBE_RED}`}
+            />
+          ) : (
+            <>
+              {clip.trimmed && (
+                <ScissorsIcon className="size-3 text-muted-foreground" />
+              )}
+              {clip.folder === "saved" && (
+                <BookmarkSimpleIcon
+                  weight="fill"
+                  className="size-3 text-primary"
+                />
+              )}
+              {clip.folder === "trash" && (
+                <TrashIcon className="size-3 text-muted-foreground" />
+              )}
+            </>
           )}
         </span>
         <span className="text-[11px] text-muted-foreground tabular-nums">
           {clip.category && `${clip.category} · `}
           {dayLabel(clip.day)} · {clipTime(clip.time)}
-          {clip.thumb?.duration
-            ? ` · ${formatDuration(clip.thumb.duration)}`
-            : ""}
+          {duration ? ` · ${formatDuration(duration)}` : ""}
         </span>
       </span>
     </>

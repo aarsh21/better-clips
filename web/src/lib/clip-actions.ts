@@ -1,7 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import { api, errorMessage, longTitle, type Clip } from "@/lib/api"
+import {
+  api,
+  errorMessage,
+  longTitle,
+  type BucketClip,
+  type Clip,
+} from "@/lib/api"
 import { useMoveClip } from "@/lib/clips"
 import { retentionText, useSettings } from "@/lib/settings"
 
@@ -30,7 +36,7 @@ export function useClipMoves(onMoved?: (from: string, to: string) => void) {
   const moved = (vars: Parameters<typeof move.mutateAsync>[0]) =>
     move.mutateAsync(vars).catch(() => null)
 
-  const keep = (clip: Clip) => {
+  const keep = (clip: BucketClip) => {
     const kept = clip.folder === "saved"
 
     void moved({ clip, to: kept ? "replays" : "saved" }).then(
@@ -45,7 +51,7 @@ export function useClipMoves(onMoved?: (from: string, to: string) => void) {
     )
   }
 
-  const trash = (clip: Clip) => {
+  const trash = (clip: BucketClip) => {
     const from = clip.folder
 
     void moved({ clip, to: "trash" }).then(
@@ -65,17 +71,17 @@ export function useClipMoves(onMoved?: (from: string, to: string) => void) {
     )
   }
 
-  const restore = (clip: Clip) => {
+  const restore = (clip: BucketClip) => {
     void moved({ clip, to: "replays" }).then(
       (done) => done && toast("Restored")
     )
   }
 
-  const rename = (clip: Clip, name: string) => {
+  const rename = (clip: BucketClip, name: string) => {
     void moved({ clip, name }).then((done) => done && toast("Renamed"))
   }
 
-  const share = async (clip: Clip, days: number | null) => {
+  const share = async (clip: BucketClip, days: number | null) => {
     const pending = toast.loading("Creating link…")
 
     try {
@@ -86,14 +92,22 @@ export function useClipMoves(onMoved?: (from: string, to: string) => void) {
       if (key !== clip.key) {
         qc.setQueryData<Clip[]>(["clips"], (list) =>
           list?.map((c) =>
-            c.key === clip.key ? { ...c, key, folder: "saved" } : c
+            c.key === clip.key && c.source === "bucket"
+              ? { ...c, key, folder: "saved" }
+              : c
           )
         )
         onMoved?.(clip.key, key)
       }
 
       await qc.invalidateQueries({ queryKey: ["clips"] })
-      await copyLink(url, days, pending)
+      await copyLink(
+        url,
+        days
+          ? `Works for ${days} ${days === 1 ? "day" : "days"}.`
+          : "Never expires.",
+        pending
+      )
     } catch (err) {
       toast.error(errorMessage(err), { id: pending })
     }
@@ -106,7 +120,7 @@ export function useClipMoves(onMoved?: (from: string, to: string) => void) {
  * current view step to a neighbour first, so the viewer never follows a clip
  * into the trash. */
 export function useClipActions(
-  clip: Clip,
+  clip: BucketClip,
   nav: ClipNav,
   askDelete: () => void
 ) {
@@ -156,11 +170,12 @@ export function useClipActions(
   return { keep, trash, restore, rename, destroy, share }
 }
 
-async function copyLink(url: string, days: number | null, id: string | number) {
-  const description = days
-    ? `Works for ${days} ${days === 1 ? "day" : "days"}.`
-    : "Never expires."
-
+/* Copies a link and says so; id replaces a loading toast. */
+export async function copyLink(
+  url: string,
+  description?: string,
+  id?: string | number
+) {
   try {
     await navigator.clipboard.writeText(url)
     toast.success("Link copied", { id, description })

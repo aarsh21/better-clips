@@ -10,6 +10,13 @@ import { cn } from "cn"
 
 import { ShareMenu } from "@/components/share-menu"
 import {
+  CutLinkDialog,
+  DeleteYouTubeDialog,
+  useYouTubeShare,
+  YouTubeChip,
+  YouTubeStatus,
+} from "@/components/youtube"
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -17,18 +24,23 @@ import {
 } from "@/components/ui/tooltip"
 
 import {
+  bucketBytes,
   dayLabel,
   daysLeft,
+  durationOf,
   formatBytes,
   formatDuration,
   mediaUrl,
-  thumbUrl,
+  thumbnailOf,
+  type BucketClip,
   type Clip,
   type Settings,
+  type YouTubeClip,
 } from "@/lib/api"
 import { useClipMoves, type ClipMoves } from "@/lib/clip-actions"
 import { useClipTime } from "@/lib/clock"
 import { useSettings } from "@/lib/settings"
+import { useYouTubeChange } from "@/lib/youtube"
 
 /* clips arrive in display order. Sorted by time, they're grouped under day
  * headings; in any other order, they're one list. */
@@ -56,6 +68,15 @@ export function ClipGrid({
 
   const { data: settings } = useSettings()
   const moves = useClipMoves()
+  const youtube = useYouTubeChange()
+  const { share, dialog } = useYouTubeShare()
+  const [deleting, setDeleting] = React.useState<YouTubeClip | null>(null)
+
+  const cardActions: CardActions = {
+    moves,
+    shareYouTube: share,
+    deleteYouTube: setDeleting,
+  }
 
   return (
     <TooltipProvider delay={400}>
@@ -67,8 +88,7 @@ export function ClipGrid({
                 <h2 className="text-xs font-semibold">{dayLabel(day)}</h2>
               )}
               <span className="text-[11px] text-muted-foreground tabular-nums">
-                {list.length} {list.length === 1 ? "clip" : "clips"} ·{" "}
-                {formatBytes(list.reduce((n, c) => n + c.size, 0))}
+                {groupSummary(list)}
               </span>
             </div>
             <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-x-4 gap-y-6">
@@ -78,7 +98,7 @@ export function ClipGrid({
                   clip={clip}
                   byDay={byDay}
                   settings={settings}
-                  moves={moves}
+                  actions={cardActions}
                   onOpen={() => onOpen(clip)}
                 />
               ))}
@@ -86,23 +106,48 @@ export function ClipGrid({
           </section>
         ))}
       </div>
+      <CutLinkDialog {...dialog} />
+      <DeleteYouTubeDialog
+        clip={deleting}
+        onOpenChange={(open) => !open && setDeleting(null)}
+        onConfirm={(clip) => {
+          setDeleting(null)
+          youtube.mutate({ clip, change: { kind: "delete" } })
+        }}
+      />
     </TooltipProvider>
   )
 }
 
-/* Hovering for a moment plays a muted preview from the start. Keep, share
- * and delete sit on the thumbnail, so they work without opening the clip. */
+/* "4 clips · 1.2 GB", leaving out the size when they're all on YouTube. */
+function groupSummary(list: Clip[]) {
+  const count = `${list.length} ${list.length === 1 ? "clip" : "clips"}`
+  const bytes = bucketBytes(list)
+
+  return bytes ? `${count} · ${formatBytes(bytes)}` : count
+}
+
+/* What the buttons on a card do. */
+type CardActions = {
+  moves: ClipMoves
+  shareYouTube: (clip: YouTubeClip) => void
+  deleteYouTube: (clip: YouTubeClip) => void
+}
+
+/* Hovering a bucket clip for a moment plays a muted preview from the start;
+ * YouTube clips have no file to preview. Keep, share and delete sit on the
+ * thumbnail, so they work without opening the clip. */
 function ClipCard({
   clip,
   byDay,
   settings,
-  moves,
+  actions,
   onOpen,
 }: {
   clip: Clip
   byDay: boolean
   settings: Settings | undefined
-  moves: ClipMoves
+  actions: CardActions
   onOpen: () => void
 }) {
   const [loaded, setLoaded] = React.useState(false)
@@ -111,7 +156,10 @@ function ClipCard({
   const left = daysLeft(clip, settings)
   const clipTime = useClipTime()
 
+  const thumbnail = thumbnailOf(clip)
+
   const startPreview = () => {
+    if (clip.source === "youtube") return
     timer.current = window.setTimeout(() => setPreview(true), 350)
   }
 
@@ -119,8 +167,6 @@ function ClipCard({
     window.clearTimeout(timer.current)
     setPreview(false)
   }
-
-  const kept = clip.folder === "saved"
 
   return (
     <div
@@ -135,9 +181,9 @@ function ClipCard({
         className="flex w-full flex-col gap-2 text-left outline-none"
       >
         <div className="relative aspect-video w-full overflow-hidden bg-muted ring-1 ring-foreground/5 transition-shadow group-hover:ring-foreground/20 group-focus-visible:ring-2 group-focus-visible:ring-primary">
-          {clip.thumb ? (
+          {thumbnail ? (
             <img
-              src={thumbUrl(clip)}
+              src={thumbnail}
               alt=""
               loading="lazy"
               decoding="async"
@@ -150,7 +196,7 @@ function ClipCard({
           ) : (
             <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted to-secondary" />
           )}
-          {preview && (
+          {preview && clip.source === "bucket" && (
             <video
               src={mediaUrl(clip.key)}
               autoPlay
@@ -160,18 +206,7 @@ function ClipCard({
               className="absolute inset-0 size-full animate-in object-cover duration-200 fade-in-0"
             />
           )}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-1.5">
-            <div className="flex gap-1">
-              {clip.trimmed && (
-                <Chip>
-                  <ScissorsIcon className="size-3" />
-                </Chip>
-              )}
-            </div>
-            {clip.thumb?.duration ? (
-              <Chip>{formatDuration(clip.thumb.duration)}</Chip>
-            ) : null}
-          </div>
+          <ThumbnailBadges clip={clip} />
         </div>
         <div className="flex flex-col gap-0.5 px-0.5">
           <div className="flex items-baseline justify-between gap-3">
@@ -193,36 +228,101 @@ function ClipCard({
         </div>
       </button>
       <div className="absolute top-1.5 right-1.5 flex gap-1">
-        {clip.folder === "trash" ? (
-          <CardAction
-            label="Restore"
-            icon={ArrowCounterClockwiseIcon}
-            onClick={() => moves.restore(clip)}
-          />
+        {clip.source === "youtube" ? (
+          <YouTubeCardActions clip={clip} actions={actions} />
         ) : (
-          <>
-            <CardAction
-              label={kept ? "Kept forever · click to undo" : "Keep forever"}
-              icon={BookmarkSimpleIcon}
-              active={kept}
-              onClick={() => moves.keep(clip)}
-            />
-            <ShareMenu
-              align="end"
-              onShare={(days) => void moves.share(clip, days)}
-            >
-              <CardAction label="Share" icon={LinkIcon} />
-            </ShareMenu>
-            <CardAction
-              label="Move to trash"
-              icon={TrashIcon}
-              destructive
-              onClick={() => moves.trash(clip)}
-            />
-          </>
+          <BucketCardActions clip={clip} moves={actions.moves} />
         )}
       </div>
     </div>
+  )
+}
+
+function BucketCardActions({
+  clip,
+  moves,
+}: {
+  clip: BucketClip
+  moves: ClipMoves
+}) {
+  if (clip.folder === "trash")
+    return (
+      <CardAction
+        label="Restore"
+        icon={ArrowCounterClockwiseIcon}
+        onClick={() => moves.restore(clip)}
+      />
+    )
+
+  const kept = clip.folder === "saved"
+
+  return (
+    <>
+      <CardAction
+        label={kept ? "Kept forever · click to undo" : "Keep forever"}
+        icon={BookmarkSimpleIcon}
+        active={kept}
+        onClick={() => moves.keep(clip)}
+      />
+      <ShareMenu align="end" onShare={(days) => void moves.share(clip, days)}>
+        <CardAction label="Share" icon={LinkIcon} />
+      </ShareMenu>
+      <CardAction
+        label="Move to trash"
+        icon={TrashIcon}
+        destructive
+        onClick={() => moves.trash(clip)}
+      />
+    </>
+  )
+}
+
+/* A YouTube clip has nothing to keep or trash: copy its link, or delete it
+ * from YouTube after asking. */
+function YouTubeCardActions({
+  clip,
+  actions,
+}: {
+  clip: YouTubeClip
+  actions: CardActions
+}) {
+  return (
+    <>
+      <CardAction
+        label="Copy YouTube link"
+        icon={LinkIcon}
+        onClick={() => actions.shareYouTube(clip)}
+      />
+      <CardAction
+        label="Delete from YouTube"
+        icon={TrashIcon}
+        destructive
+        onClick={() => actions.deleteYouTube(clip)}
+      />
+    </>
+  )
+}
+
+/* On the thumbnail: a YouTube clip YouTube hasn't finished, then where the
+ * clip lives, whether it's cut, and its length, above that. */
+function ThumbnailBadges({ clip }: { clip: Clip }) {
+  const duration = durationOf(clip)
+
+  return (
+    <>
+      {clip.source === "youtube" && <YouTubeStatus clip={clip} />}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-1.5">
+        <div className="flex gap-1">
+          {clip.source === "youtube" && <YouTubeChip privacy={clip.privacy} />}
+          {(clip.source === "youtube" ? !!clip.cut : clip.trimmed) && (
+            <Chip>
+              <ScissorsIcon className="size-3" />
+            </Chip>
+          )}
+        </div>
+        {duration ? <Chip>{formatDuration(duration)}</Chip> : null}
+      </div>
+    </>
   )
 }
 

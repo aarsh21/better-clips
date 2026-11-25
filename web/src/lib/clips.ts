@@ -8,6 +8,7 @@ import {
   longTitle,
   mediaUrl,
   withTitles,
+  type BucketClip,
   type Clip,
   type Folder,
 } from "@/lib/api"
@@ -36,7 +37,7 @@ export function useMoveClip(onMoved?: (from: string, to: string) => void) {
       to,
       name,
     }: {
-      clip: Clip
+      clip: BucketClip
       to?: Folder
       name?: string
     }) => api.move(clip.key, { to, name }),
@@ -49,7 +50,7 @@ export function useMoveClip(onMoved?: (from: string, to: string) => void) {
           clips &&
           withTitles(
             clips.map((c) =>
-              c.key === clip.key
+              c.key === clip.key && c.source === "bucket"
                 ? {
                     ...c,
                     folder: to ?? c.folder,
@@ -86,7 +87,10 @@ export function useThumbnailWorker(clips: Clip[] | undefined) {
   React.useEffect(() => {
     const started = startedRef.current
 
-    const todo = (clips ?? []).filter((c) => !c.thumb && !started.has(c.key))
+    const todo = (clips ?? []).filter(
+      (c): c is BucketClip =>
+        c.source === "bucket" && !c.thumb && !started.has(c.key)
+    )
 
     if (!todo.length || typeof VideoDecoder === "undefined") return
     todo.forEach((c) => started.add(c.key))
@@ -110,7 +114,9 @@ export function useThumbnailWorker(clips: Clip[] | undefined) {
           }
 
           qc.setQueryData<Clip[]>(KEY, (list) =>
-            list?.map((c) => (c.key === clip.key ? { ...c, thumb } : c))
+            list?.map((c) =>
+              c.key === clip.key && c.source === "bucket" ? { ...c, thumb } : c
+            )
           )
         } catch (err) {
           console.warn("Thumbnail failed for", clip.key, err)
@@ -127,6 +133,10 @@ export function useThumbnailWorker(clips: Clip[] | undefined) {
   }, [clips, qc])
 }
 
+/* A clip OBS just saved: not one you trimmed or moved here. */
+const fromObs = (c: Clip) =>
+  c.source === "youtube" || (c.folder === "replays" && !c.trimmed)
+
 /* Tells you when a new clip lands while the app is open. */
 export function useNewClipToasts(
   clips: Clip[] | undefined,
@@ -139,9 +149,7 @@ export function useNewClipToasts(
     if (!clips) return
 
     if (seen.current) {
-      const fresh = clips.filter(
-        (c) => c.folder === "replays" && !c.trimmed && !seen.current!.has(c.key)
-      )
+      const fresh = clips.filter((c) => fromObs(c) && !seen.current!.has(c.key))
 
       for (const clip of fresh.slice(0, 3)) {
         toast(`New clip · ${longTitle(clip)}`, {

@@ -2,15 +2,11 @@ import * as React from "react"
 import {
   ArrowCounterClockwiseIcon,
   BookmarkSimpleIcon,
-  CaretLeftIcon,
-  CaretRightIcon,
   DownloadSimpleIcon,
   LinkIcon,
   ScissorsIcon,
   TrashIcon,
-  XIcon,
 } from "@phosphor-icons/react"
-import { cn } from "cn"
 
 import { ShareMenu } from "@/components/share-menu"
 import { TrimBar } from "@/components/trim-bar"
@@ -26,14 +22,10 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button-variants"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import { Kbd } from "@/components/ui/kbd"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { Action, ViewerHeader } from "@/components/viewer-parts"
+import { YouTubeViewer } from "@/components/youtube-viewer"
 import {
   dayLabel,
   daysLeft,
@@ -44,6 +36,7 @@ import {
   longTitle,
   mediaUrl,
   thumbUrl,
+  type BucketClip,
   type Clip,
 } from "@/lib/api"
 import {
@@ -81,15 +74,21 @@ export function ClipViewer(props: Props) {
         className="flex max-h-[100dvh] w-full max-w-[min(100vw,1280px)] flex-col gap-0 bg-background p-0 sm:max-w-[min(94vw,1280px)]"
       >
         <TooltipProvider delay={300}>
-          {clip && <Viewer {...props} clip={clip} key={clip.key} />}
+          {clip?.source === "youtube" ? (
+            <YouTubeViewer clip={clip} nav={props} key={clip.key} />
+          ) : (
+            clip && <Viewer {...props} clip={clip} key={clip.key} />
+          )}
         </TooltipProvider>
       </DialogContent>
     </Dialog>
   )
 }
 
-function Viewer({ clip, onOpen, ...nav }: Props & { clip: Clip }) {
+function Viewer({ clip, onOpen, ...nav }: Props & { clip: BucketClip }) {
   const video = React.useRef<HTMLVideoElement>(null)
+  const { data: settings } = useSettings()
+  const clipTime = useClipTime()
   const [mode, setMode] = React.useState<Mode>("view")
   const [confirmDelete, setConfirmDelete] = React.useState(false)
   const [duration, setDuration] = React.useState(clip.thumb?.duration ?? 0)
@@ -145,7 +144,9 @@ function Viewer({ clip, onOpen, ...nav }: Props & { clip: Clip }) {
     <>
       <ViewerHeader
         clip={clip}
-        duration={duration}
+        meta={clipMeta(clip, clipTime(clip.time, true), duration, settings)}
+        name={clip.name}
+        maxLength={40}
         nav={nav}
         renaming={mode === "rename"}
         onStartRename={() => setMode("rename")}
@@ -203,7 +204,7 @@ function Viewer({ clip, onOpen, ...nav }: Props & { clip: Clip }) {
 }
 
 type KeyContext = {
-  clip: Clip
+  clip: BucketClip
   nav: ClipNav
   actions: ClipActions
   video: HTMLVideoElement | null
@@ -249,7 +250,7 @@ function keyAction(e: KeyboardEvent, ctx: KeyContext) {
 }
 
 function clipMeta(
-  clip: Clip,
+  clip: BucketClip,
   time: string,
   duration: number,
   settings?: Settings
@@ -268,75 +269,13 @@ function clipMeta(
   return parts.join(" · ")
 }
 
-function ViewerHeader({
-  clip,
-  duration,
-  nav,
-  renaming,
-  onStartRename,
-  onRenamed,
-}: {
-  clip: Clip
-  duration: number
-  nav: ClipNav
-  renaming: boolean
-  onStartRename: () => void
-  onRenamed: (name: string | null) => void
-}) {
-  const { data: settings } = useSettings()
-  const clipTime = useClipTime()
-
-  return (
-    <div className="flex items-center gap-2 border-b px-3 py-2">
-      <div className="flex min-w-0 flex-1 flex-col">
-        {renaming ? (
-          <RenameInput initial={clip.name} onDone={onRenamed} />
-        ) : (
-          <DialogTitle
-            render={<button type="button" />}
-            onClick={onStartRename}
-            className="w-fit max-w-full truncate text-left text-sm font-semibold outline-none hover:text-primary focus-visible:text-primary focus-visible:underline"
-            title="Rename (E)"
-          >
-            {clip.title}
-          </DialogTitle>
-        )}
-        <span className="truncate text-[11px] text-muted-foreground tabular-nums">
-          {clipMeta(clip, clipTime(clip.time, true), duration, settings)}
-        </span>
-      </div>
-      <div className="flex items-center">
-        <IconButton
-          label="Previous"
-          kbd="↑"
-          disabled={!nav.hasPrev}
-          onClick={() => nav.onNavigate(clip, -1)}
-        >
-          <CaretLeftIcon />
-        </IconButton>
-        <IconButton
-          label="Next"
-          kbd="↓"
-          disabled={!nav.hasNext}
-          onClick={() => nav.onNavigate(clip, 1)}
-        >
-          <CaretRightIcon />
-        </IconButton>
-        <IconButton label="Close" kbd="Esc" onClick={nav.onClose}>
-          <XIcon />
-        </IconButton>
-      </div>
-    </div>
-  )
-}
-
 function ActionBar({
   clip,
   actions,
   onTrim,
   onAskDelete,
 }: {
-  clip: Clip
+  clip: BucketClip
   actions: ClipActions
   onTrim: () => void
   onAskDelete: () => void
@@ -404,7 +343,7 @@ function DeleteDialog({
   onOpenChange,
   onConfirm,
 }: {
-  clip: Clip
+  clip: BucketClip
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
@@ -427,112 +366,5 @@ function DeleteDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  )
-}
-
-function RenameInput({
-  initial,
-  onDone,
-}: {
-  initial: string
-  onDone: (name: string | null) => void
-}) {
-  const [value, setValue] = React.useState(initial)
-  const input = React.useRef<HTMLInputElement>(null)
-
-  React.useEffect(() => {
-    input.current?.focus()
-    input.current?.select()
-  }, [])
-
-  return (
-    <input
-      ref={input}
-      aria-label="Clip name"
-      value={value}
-      maxLength={40}
-      placeholder="Name this clip"
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => onDone(value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onDone(value)
-
-        if (e.key === "Escape") {
-          e.stopPropagation()
-          onDone(null)
-        }
-      }}
-      className="h-5 w-full max-w-sm border-b border-primary bg-transparent text-sm font-semibold outline-none"
-    />
-  )
-}
-
-function Action({
-  icon: Icon,
-  label,
-  kbd,
-  active,
-  destructive,
-  onClick,
-}: {
-  icon: React.ElementType
-  label: string
-  kbd?: string
-  active?: boolean
-  destructive?: boolean
-  onClick: () => void
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClick}
-            className={cn(
-              active && "text-primary",
-              destructive &&
-                "text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-            )}
-          />
-        }
-      >
-        <Icon weight={active ? "fill" : "regular"} />
-        <span className={cn(destructive && "hidden sm:inline")}>{label}</span>
-      </TooltipTrigger>
-      {kbd && (
-        <TooltipContent>
-          {label} <Kbd>{kbd}</Kbd>
-        </TooltipContent>
-      )}
-    </Tooltip>
-  )
-}
-
-function IconButton({
-  label,
-  kbd,
-  children,
-  ...props
-}: React.ComponentProps<typeof Button> & { label: string; kbd: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={label}
-            {...props}
-          />
-        }
-      >
-        {children}
-      </TooltipTrigger>
-      <TooltipContent>
-        {label} <Kbd>{kbd}</Kbd>
-      </TooltipContent>
-    </Tooltip>
   )
 }

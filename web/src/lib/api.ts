@@ -11,7 +11,8 @@ type ApiClip = {
   thumb?: { duration: number; width: number; height: number; v: string }
 }
 
-export type Clip = ApiClip & {
+export type BucketClip = ApiClip & {
+  source: "bucket"
   /** YYYY-MM-DD the clip was recorded, from its folder (the PC's local day). */
   day: string
   /** HH:MM:SS, the PC's local time. */
@@ -28,8 +29,45 @@ export type Clip = ApiClip & {
   trimmed: boolean
 }
 
+export type Privacy = "private" | "unlisted" | "public"
+
+/* A whole-second cut, applied by YouTube's player. */
+export type Cut = { start: number; end: number }
+
+/* What GET /api/clips returns for a clip on YouTube (hosted app). */
+type ApiYouTubeClip = {
+  /** Our row's ID. */
+  id: string
+  videoId: string
+  title: string
+  description: string
+  /** The game or scene. */
+  category: string
+  privacy: Privacy
+  recordedAt: string
+  uploaded: string
+  durationSeconds: number | null
+  thumbnail: string | null
+  status: "uploading" | "processing" | "ready" | "failed"
+  cut: Cut | null
+  /** https://youtu.be/<videoId> */
+  url: string
+}
+
+export type YouTubeClip = ApiYouTubeClip & {
+  source: "youtube"
+  /** "youtube/<id>", which can't clash with a bucket key. */
+  key: string
+  /** The day and time it was recorded, in this browser's time zone. */
+  day: string
+  time: string
+}
+
+/* Every clip in the library: a file in your bucket, or a video on YouTube. */
+export type Clip = BucketClip | YouTubeClip
+
 /* replays/2026-11-24/14-35-07_Valorant-Ranked_k3f9x2.mp4 */
-export function parseClip(raw: ApiClip): Clip {
+export function parseClip(raw: ApiClip): BucketClip {
   const parts = raw.key.split("/")
   const file = parts[parts.length - 1].replace(/\.mp4$/, "")
   const uploaded = new Date(raw.uploaded)
@@ -54,6 +92,7 @@ export function parseClip(raw: ApiClip): Clip {
 
   return {
     ...raw,
+    source: "bucket",
     day,
     time,
     category,
@@ -64,10 +103,49 @@ export function parseClip(raw: ApiClip): Clip {
   }
 }
 
+export function parseYouTubeClip(raw: ApiYouTubeClip): YouTubeClip {
+  const recorded = new Date(raw.recordedAt)
+
+  return {
+    ...raw,
+    source: "youtube",
+    key: `youtube/${raw.id}`,
+    /* Written like bucket clips' categories, which come from file names, so
+     * one game is one category. */
+    category: raw.category.replace(/[-_]+/g, " ").trim(),
+    day: localDay(recorded),
+    time: recorded.toTimeString().slice(0, 8),
+  }
+}
+
+/* The clip's thumbnail, or null while there's none yet. */
+export function thumbnailOf(clip: Clip) {
+  if (clip.source === "youtube") return clip.thumbnail
+
+  return clip.thumb ? thumbUrl(clip) : null
+}
+
+/* Seconds, after a YouTube clip's cut; 0 while unknown. */
+export function durationOf(clip: Clip) {
+  if (clip.source === "bucket") return clip.thumb?.duration ?? 0
+
+  if (clip.cut) return clip.cut.end - clip.cut.start
+
+  return clip.durationSeconds ?? 0
+}
+
+/* Bytes in your bucket. YouTube clips take none. */
+export const sizeOf = (clip: Clip) => (clip.source === "bucket" ? clip.size : 0)
+
+export const bucketBytes = (clips: Clip[]) =>
+  clips.reduce((n, c) => n + sizeOf(c), 0)
+
 /* "Clip 3 · Counter Strike 2", for toasts and confirmations outside the
  * grid, where the category isn't shown next to the title. */
 export const longTitle = (c: Clip) =>
-  c.category ? `${c.title} · ${c.category}` : c.title
+  c.category && !c.title.includes(c.category)
+    ? `${c.title} · ${c.category}`
+    : c.title
 
 /* Gives each clip its title. An unnamed clip is numbered within its category
  * and day in recording order, counting every folder, so moving a clip to the
@@ -76,6 +154,7 @@ export function withTitles(clips: Clip[]) {
   const times = new Map<string, Set<string>>()
 
   for (const c of clips) {
+    if (c.source === "youtube") continue
     const group = `${c.day}/${c.category}`
     times.set(group, (times.get(group) ?? new Set()).add(c.time))
   }
@@ -85,7 +164,9 @@ export function withTitles(clips: Clip[]) {
   for (const [group, set] of times)
     [...set].sort().forEach((t, i) => numbers.set(`${group}/${t}`, i + 1))
 
-  return clips.map((c) => {
+  return clips.map((c): Clip => {
+    if (c.source === "youtube") return c
+
     const base =
       c.name || `Clip ${numbers.get(`${c.day}/${c.category}/${c.time}`)}`
 
@@ -129,6 +210,9 @@ export type Settings = {
 
 /* Days left before the daily cleanup removes a clip, or null if it stays. */
 export function daysLeft(clip: Clip, settings: Settings | undefined) {
+  /* Cleanup never touches YouTube. */
+  if (clip.source === "youtube") return null
+
   const ttl =
     clip.folder === "replays"
       ? settings?.replaysDays
@@ -186,6 +270,19 @@ export class SignInError extends Error {
   }
 }
 
+/* Thrown by a YouTube change that needs the permission to edit videos,
+ * which clips asks for the first time you rename, change visibility, cut or
+ * delete. */
+export class NeedsManageError extends Error {}
+
+/* Where Google sign-in starts: signing in to clips, connecting YouTube to an
+ * account, or allowing clips to edit your videos. */
+export const youtubeConnectUrl = (purpose: "login" | "connect" | "manage") =>
+  `/api/youtube/connect?purpose=${purpose}`
+
+export const youtubeStudioUrl = (videoId: string) =>
+  `https://studio.youtube.com/video/${encodeURIComponent(videoId)}/editor`
+
 /* Thrown on the hosted app until you connect a bucket. */
 export class NoStorageError extends Error {
   constructor() {
@@ -200,6 +297,13 @@ export type Me =
       hosted?: true
       email: string
       storage: { id: string; bucket: string; auto: boolean } | null
+      /** The connected channel. canManage: clips may rename, change
+       * visibility, cut and delete its videos. */
+      youtube?: {
+        channelId: string
+        channelTitle: string
+        canManage: boolean
+      } | null
     }
 
 /* The account this tab started with (hosted app). If a request answers for
@@ -262,6 +366,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       throw new SignInError(data.auth)
 
     if (data.storage === "none") throw new NoStorageError()
+
+    if (data.needs === "manage") throw new NeedsManageError(data.error)
 
     if (data.account === "changed") {
       location.reload()
@@ -326,11 +432,40 @@ export function errorMessage(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
+const youtubeClip = (id: string) =>
+  `/api/youtube/clips/${encodeURIComponent(id)}`
+
 export const api = {
+  /* Bucket clips and YouTube clips, in one list. An app without YouTube
+   * leaves youtube out. */
   clips: () =>
-    request<{ clips: ApiClip[] }>("/api/clips").then((d) =>
-      withTitles(d.clips.map(parseClip))
+    request<{ clips: ApiClip[]; youtube?: ApiYouTubeClip[] }>(
+      "/api/clips"
+    ).then((d) =>
+      withTitles([
+        ...d.clips.map(parseClip),
+        ...(d.youtube ?? []).map(parseYouTubeClip),
+      ])
     ),
+  updateYouTube: (
+    id: string,
+    body: { title?: string; description?: string; privacy?: Privacy }
+  ) =>
+    request<{ ok?: boolean }>(youtubeClip(id), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  cutYouTube: (id: string, cut: Cut | null) =>
+    request<{ ok?: boolean }>(`${youtubeClip(id)}/cut`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cut),
+    }),
+  deleteYouTube: (id: string) =>
+    request<{ ok?: boolean }>(youtubeClip(id), { method: "DELETE" }),
+  disconnectYouTube: () =>
+    request<{ ok?: boolean }>("/api/youtube/disconnect", { method: "POST" }),
   move: (key: string, body: { to?: Folder; name?: string }) =>
     request<{ key: string }>("/api/move", {
       method: "POST",

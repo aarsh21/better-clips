@@ -5,6 +5,26 @@ import { api, type Settings } from "@/lib/api"
 
 const KEY = ["settings"]
 
+/* Who is signed in, on the hosted app. */
+export function useMe() {
+  return useQuery({ queryKey: ["me"], queryFn: api.me })
+}
+
+/* The hosted app's account, or null when self-hosted or still loading. */
+export function useAccount() {
+  const { data: me } = useMe()
+
+  return me && "email" in me ? me : null
+}
+
+/* A self-hosted app always has its bucket; a hosted account may only use
+ * YouTube. Assumes a bucket until the account loads. */
+export function useHasBucket() {
+  const account = useAccount()
+
+  return account === null || account.storage !== null
+}
+
 /* Polls while waiting for OBS, so the app notices Test Upload right away. */
 export function useSettings(waitForObs = false) {
   return useQuery({

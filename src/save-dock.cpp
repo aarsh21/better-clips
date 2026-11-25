@@ -12,6 +12,7 @@ the Free Software Foundation; either version 2 of the License, or
  * of the last save, next to OBS's own Controls. */
 
 #include "replay-r2.hpp"
+#include "youtube.hpp"
 
 #include <obs-frontend-api.h>
 
@@ -76,9 +77,13 @@ public:
 	void refresh()
 	{
 		bool running = obs_frontend_replay_buffer_active();
-		save->setText(running ? "Save Replay to R2" : "Start Replay Buffer");
-		save->setToolTip(running ? "Uploads the last few seconds to your clips app"
-					 : "Starts OBS's Replay Buffer so you can save clips");
+		bool youtube = get_youtube_settings().destination == Destination::YouTube;
+		save->setText(!running  ? "Start Replay Buffer"
+			      : youtube ? "Save Replay to YouTube"
+					: "Save Replay to R2");
+		save->setToolTip(!running  ? "Starts OBS's Replay Buffer so you can save clips"
+				 : youtube ? "Uploads the last few seconds to your YouTube channel"
+					   : "Uploads the last few seconds to your clips app");
 
 		int seconds = get_replay_seconds();
 		if (seconds > 0 && !length->hasFocus() && length->value() != seconds) {

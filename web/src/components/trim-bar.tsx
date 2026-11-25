@@ -11,7 +11,7 @@ import {
   errorMessage,
   formatTimecode,
   mediaUrl,
-  type Clip,
+  type BucketClip,
 } from "@/lib/api"
 import { seekTo, togglePlay, usePlaying } from "@/lib/video"
 
@@ -29,7 +29,7 @@ export function TrimBar({
   onCancel,
   onSaved,
 }: {
-  clip: Clip
+  clip: BucketClip
   video: React.RefObject<HTMLVideoElement | null>
   duration: number
   onCancel: () => void
@@ -310,7 +310,13 @@ export function TrimBar({
   )
 }
 
-function TrimHandle({ side, at }: { side: "start" | "end"; at: number }) {
+export function TrimHandle({
+  side,
+  at,
+}: {
+  side: "start" | "end"
+  at: number
+}) {
   return (
     <div
       data-handle={side}

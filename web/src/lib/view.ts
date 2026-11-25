@@ -1,17 +1,27 @@
 import * as React from "react"
 import { useIsMutating } from "@tanstack/react-query"
 
-import type { Clip } from "@/lib/api"
+import { durationOf, sizeOf, type Clip } from "@/lib/api"
 import { isEditableTarget } from "@/lib/keys"
 
 /* "All" holds everything not in the trash, so keeping a clip doesn't move it
- * out from under you. */
+ * out from under you. YouTube clips are only in "All": they're never cleaned
+ * up, and deleting one is for good. */
 export type View = "all" | "saved" | "trash"
 
 export const VIEWS: View[] = ["all", "saved", "trash"]
 
-export const inView = (c: Clip, v: View) =>
-  v === "all" ? c.folder !== "trash" : c.folder === v
+/* Without a bucket, there's nothing to keep or trash. */
+export const viewsFor = (hasBucket: boolean): View[] =>
+  hasBucket ? VIEWS : ["all"]
+
+export const inView = (c: Clip, v: View) => {
+  if (c.source === "youtube") return v === "all"
+
+  return v === "all" ? c.folder !== "trash" : c.folder === v
+}
+
+const inTrash = (c: Clip) => c.source === "bucket" && c.folder === "trash"
 
 function readHash() {
   if (!location.hash.startsWith("#/clip/")) return null
@@ -77,13 +87,11 @@ export const SORTS: { value: Sort; label: string }[] = [
   { value: "name", label: "Name" },
 ]
 
-const length = (c: Clip) => c.thumb?.duration ?? 0
-
 const COMPARE: Record<Sort, (a: Clip, b: Clip) => number> = {
   newest: byNewest,
   oldest: (a, b) => byNewest(b, a),
-  longest: (a, b) => length(b) - length(a) || byNewest(a, b),
-  largest: (a, b) => b.size - a.size || byNewest(a, b),
+  longest: (a, b) => durationOf(b) - durationOf(a) || byNewest(a, b),
+  largest: (a, b) => sizeOf(b) - sizeOf(a) || byNewest(a, b),
   name: (a, b) =>
     a.title.localeCompare(b.title, undefined, { numeric: true }) ||
     a.category.localeCompare(b.category) ||
@@ -153,13 +161,8 @@ export function useViewCounts(clips: Clip[] | undefined) {
   return React.useMemo(() => {
     const counts = { all: 0, saved: 0, trash: 0 }
 
-    for (const c of clips ?? []) {
-      if (c.folder !== "trash") counts.all++
-
-      if (c.folder === "saved") counts.saved++
-
-      if (c.folder === "trash") counts.trash++
-    }
+    for (const c of clips ?? [])
+      for (const v of VIEWS) if (inView(c, v)) counts[v]++
 
     return counts
   }, [clips])
@@ -180,7 +183,7 @@ export function useOpenClipSync(
   if (clip && openKey !== shownKey) {
     setShownKey(openKey)
 
-    if (!inView(clip, view)) setView(clip.folder === "trash" ? "trash" : "all")
+    if (!inView(clip, view)) setView(inTrash(clip) ? "trash" : "all")
   }
 
   React.useEffect(() => {
@@ -203,10 +206,11 @@ export function useOpenClipSync(
   return { clip, openClip, follow }
 }
 
-/* "/" and ⌘K open search; 1, 2 and 3 switch tabs. Off while a clip or a
- * dialog is open. */
+/* "/" and ⌘K open search; 1, 2 and 3 switch between the tabs shown. Off
+ * while a clip or a dialog is open. */
 export function useGlobalKeys(
   enabled: boolean,
+  views: View[],
   onSearch: () => void,
   setView: (view: View) => void
 ) {
@@ -224,7 +228,7 @@ export function useGlobalKeys(
       }
 
       if (isEditableTarget(e.target) || e.metaKey || e.ctrlKey) return
-      const tab = VIEWS[Number(e.key) - 1]
+      const tab = views[Number(e.key) - 1]
 
       if (tab) setView(tab)
     }
@@ -232,5 +236,5 @@ export function useGlobalKeys(
     window.addEventListener("keydown", onKey)
 
     return () => window.removeEventListener("keydown", onKey)
-  }, [enabled, onSearch, setView])
+  }, [enabled, views, onSearch, setView])
 }

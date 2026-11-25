@@ -33,8 +33,10 @@ import {
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ManagePermissionDialog, YouTubeObsSteps } from "@/components/youtube"
 import {
   api,
+  bucketBytes,
   formatBytes,
   NoStorageError,
   SignInError,
@@ -42,7 +44,8 @@ import {
   type Settings,
 } from "@/lib/api"
 import { useClips, useNewClipToasts, useThumbnailWorker } from "@/lib/clips"
-import { retentionText, useSettings } from "@/lib/settings"
+import { retentionText, useHasBucket, useSettings } from "@/lib/settings"
+import { useResumeYouTubeChange } from "@/lib/youtube"
 import {
   byNewest,
   sortsByDay,
@@ -52,7 +55,7 @@ import {
   useSort,
   useViewCounts,
   useVisibleClips,
-  VIEWS,
+  viewsFor,
   type View,
 } from "@/lib/view"
 
@@ -139,19 +142,29 @@ function useAuthFlash() {
 
     if (error) toast.error(error, { id: "auth" })
 
-    if (connected)
+    if (params.get("connected") === "youtube")
+      toast.success("YouTube connected", {
+        id: "auth",
+        description: "Clips you upload from OBS show up here.",
+      })
+    else if (connected)
       toast.success("Storage connected", {
         id: "auth",
         description: "Now connect OBS with the command below.",
       })
 
-    if (error || connected) history.replaceState(null, "", location.pathname)
+    if (error || connected)
+      history.replaceState(null, "", location.pathname + location.hash)
   }, [])
 }
 
 export default function App() {
   const { data: clips, isPending, error } = useClips()
-  const [view, setView] = React.useState<View>("all")
+  const hasBucket = useHasBucket()
+  const views = viewsFor(hasBucket)
+  const [chosenView, setView] = React.useState<View>("all")
+  /* Without a bucket, "All" is the only tab. */
+  const view = views.includes(chosenView) ? chosenView : "all"
   const [searchOpen, setSearchOpen] = React.useState(false)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [settingsTab, setSettingsTab] = React.useState<SettingsTab>("obs")
@@ -175,7 +188,8 @@ export default function App() {
 
   useThumbnailWorker(clips)
   useNewClipToasts(clips, openClip)
-  useGlobalKeys(!clip && !settingsOpen, openSearch, setView)
+  useGlobalKeys(!clip && !settingsOpen, views, openSearch, setView)
+  useResumeYouTubeChange(clips)
   usePreload()
   useAuthFlash()
 
@@ -200,6 +214,8 @@ export default function App() {
     <div className="min-h-svh">
       <AppHeader
         clips={clips}
+        views={views}
+        hasBucket={hasBucket}
         view={view}
         onView={setView}
         onSearch={openSearch}
@@ -213,6 +229,7 @@ export default function App() {
           view={view}
           pending={isPending}
           error={error}
+          hasBucket={hasBucket}
           onOpen={(c) => openClip(c.key)}
           toolbar={
             <ClipToolbar
@@ -245,6 +262,7 @@ export default function App() {
             onOpenClip={openClip}
             onView={setView}
             onSettings={openSettings}
+            views={views}
           />
         )}
         {settingsOpen && (
@@ -256,25 +274,30 @@ export default function App() {
           />
         )}
       </React.Suspense>
+      <ManagePermissionDialog />
     </div>
   )
 }
 
 function AppHeader({
   clips,
+  views,
+  hasBucket,
   view,
   onView,
   onSearch,
   onSettings,
 }: {
   clips: Clip[] | undefined
+  views: View[]
+  hasBucket: boolean
   view: View
   onView: (view: View) => void
   onSearch: () => void
   onSettings: (tab: SettingsTab) => void
 }) {
   const counts = useViewCounts(clips)
-  const used = (clips ?? []).reduce((n, c) => n + c.size, 0)
+  const used = bucketBytes(clips ?? [])
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur-md supports-backdrop-filter:bg-background/65">
@@ -288,7 +311,7 @@ function AppHeader({
         </div>
 
         <nav className="flex items-center">
-          {VIEWS.map((tab) => (
+          {views.map((tab) => (
             <TabButton
               key={tab}
               tab={tab}
@@ -301,7 +324,9 @@ function AppHeader({
 
         <div className="ml-auto flex items-center gap-2">
           <SearchButton onClick={onSearch} />
-          <StorageMeter used={used} onClick={() => onSettings("storage")} />
+          {hasBucket && (
+            <StorageMeter used={used} onClick={() => onSettings("storage")} />
+          )}
           <ThemeButton />
           <ObsButton onClick={onSettings} />
         </div>
@@ -430,12 +455,14 @@ function ClipsBody({
   onOpen,
   toolbar,
   byDay,
+  hasBucket,
 }: {
   clips: Clip[] | undefined
   visible: Clip[]
   view: View
   pending: boolean
   error: Error | null
+  hasBucket: boolean
   onOpen: (clip: Clip) => void
   toolbar: React.ReactNode
   byDay: boolean
@@ -453,7 +480,7 @@ function ClipsBody({
 
   if (pending || !clips) return <GridSkeleton />
 
-  if (!clips.length) return <FirstRun />
+  if (!clips.length) return hasBucket ? <FirstRun /> : <YouTubeFirstRun />
 
   if (visible.length)
     return (
@@ -496,7 +523,7 @@ function TrashBar({
     onSettled: () => qc.invalidateQueries({ queryKey: ["clips"] }),
   })
 
-  const size = formatBytes(clips.reduce((n, c) => n + c.size, 0))
+  const size = formatBytes(bucketBytes(clips))
 
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border px-4 py-3">
@@ -546,6 +573,20 @@ function FirstRun() {
         Connect OBS once, then every replay you save lands here a second later.
       </p>
       <ObsConnect />
+    </div>
+  )
+}
+
+/* A YouTube-only account: OBS signs in to YouTube itself, so there's no
+ * install command with a setup code. */
+function YouTubeFirstRun() {
+  return (
+    <div className="mx-auto max-w-lg py-16">
+      <h1 className="mb-1 text-base font-semibold">No clips yet</h1>
+      <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
+        Clips you save in OBS go to your YouTube channel and show up here.
+      </p>
+      <YouTubeObsSteps />
     </div>
   )
 }

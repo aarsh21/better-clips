@@ -1,11 +1,11 @@
 import * as React from "react"
-import { CloudIcon } from "@phosphor-icons/react"
+import { CloudIcon, GoogleLogoIcon } from "@phosphor-icons/react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button-variants"
 import { Input } from "@/components/ui/input"
-import { api, type SignInKind } from "@/lib/api"
+import { api, youtubeConnectUrl, type SignInKind } from "@/lib/api"
 
 /* The clips logo and a narrow column, for screens shown before the app. */
 export function AuthShell({
@@ -46,20 +46,43 @@ function CloudflareSignIn() {
         Your replays, from OBS to the web
       </p>
       <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
-        Press a hotkey in a game and the clip is here a second later. Clips stay
-        in your own Cloudflare account, free up to 10 GB.
+        Press a hotkey in a game and the clip is here a second later. Keep clips
+        in your own Cloudflare account, free up to 10 GB, or upload them to your
+        YouTube channel.
       </p>
-      <a
-        href="/api/auth/login"
-        className={buttonVariants({ size: "lg", className: "w-full" })}
-      >
-        <CloudIcon weight="fill" />
-        Sign in with Cloudflare
-      </a>
+      <div className="flex flex-col gap-2">
+        <a
+          href="/api/auth/login"
+          className={buttonVariants({ size: "lg", className: "w-full" })}
+        >
+          <CloudIcon weight="fill" />
+          Sign in with Cloudflare
+        </a>
+        <a
+          href={youtubeConnectUrl("login")}
+          className={buttonVariants({
+            size: "lg",
+            variant: "outline",
+            className: "w-full",
+          })}
+        >
+          <GoogleLogoIcon weight="bold" />
+          Sign in with Google
+        </a>
+      </div>
       <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-        Signing in only lets clips read your name and email. No Cloudflare
-        account yet? It&apos;s free, and Cloudflare&apos;s page lets you make
-        one.
+        Cloudflare keeps clips in your own R2 bucket and only lets clips read
+        your name and email. Google lets clips upload to your YouTube channel
+        and list those videos, under{" "}
+        <a
+          href="https://www.youtube.com/t/terms"
+          target="_blank"
+          rel="noreferrer"
+          className="underline underline-offset-4 hover:text-foreground"
+        >
+          YouTube&apos;s Terms of Service
+        </a>
+        .
       </p>
     </AuthShell>
   )
