@@ -1,4 +1,4 @@
-/* Tools > Replay to R2 Settings, and the dialog that reviews a clip before
+/* Tools > Better Clips Settings, and the dialog that reviews a clip before
  * it goes to YouTube. */
 
 #include "replay-r2.hpp"
@@ -56,7 +56,7 @@ bool youtube_connected(const YouTubeSettings &settings)
 						      : !settings.upload_token.empty();
 }
 
-/* The clips app's FAQ, which opens without signing in. */
+/* The Better Clips app's FAQ, which opens without signing in. */
 void open_faq(std::string app_url)
 {
 	while (!app_url.empty() && app_url.back() == '/')
@@ -73,8 +73,8 @@ bool test_connection(const R2Config &config, std::string &where, std::string &er
 		where = config.app_url;
 		return app_check(config, error);
 	}
-	where = object_key(config, "replay-r2-test.txt");
-	const std::string text = "Replay to R2 for OBS can upload to this bucket.\n";
+	where = object_key(config, "better-clips-test.txt");
+	const std::string text = "Better Clips for OBS can upload to this bucket.\n";
 	std::vector<uint8_t> body(text.begin(), text.end());
 	return s3_put_object(config, where, body, "text/plain", error);
 }
@@ -152,7 +152,7 @@ class YouTubePage : public QWidget {
 public:
 	explicit YouTubePage(const YouTubeSettings &settings)
 	{
-		via_app = new QRadioButton("Through the Clips app");
+		via_app = new QRadioButton("Through the Better Clips app");
 		direct = new QRadioButton("Directly to YouTube");
 		auto *routes = new QHBoxLayout();
 		routes->addWidget(via_app);
@@ -227,7 +227,7 @@ public:
 		form->setContentsMargins(0, 0, 0, 0);
 		form->addRow("Upload", routes);
 		form->addRow(QString(), route_hint);
-		form->addRow("Clips app", app_url);
+		form->addRow("Better Clips app", app_url);
 		form->addRow("Channel", account);
 		form->addRow(status);
 		form->addRow("Visibility", privacy);
@@ -263,7 +263,7 @@ public:
 		return settings;
 	}
 
-	/* The address the FAQ opens at: this page's Clips app. */
+	/* The address the FAQ opens at: this page's Better Clips app. */
 	std::string faq_app() const { return app_url->text().trimmed().toStdString(); }
 
 	QFormLayout *form;
@@ -283,12 +283,12 @@ private:
 	void show_route()
 	{
 		const bool app = route() == YouTubeRoute::ClipsApp;
-		route_hint->setText(app ? "Clips show up in the Clips app, to rename, cut and delete them."
-					: "No Clips app needed, but clips won't show up in its library.");
+		route_hint->setText(app ? "Clips show up in the Better Clips app, to rename, cut and delete them."
+					: "No Better Clips app needed, but clips won't show up in its library.");
 		form->setRowVisible(app_url, app);
 		access->setText(QString("You can remove %1 access to your channel any time in "
 					"<a href=\"%2\">your Google Account</a>.")
-					.arg(app ? "the Clips app's" : "OBS's", GOOGLE_PERMISSIONS));
+					.arg(app ? "the Better Clips app's" : "OBS's", GOOGLE_PERMISSIONS));
 	}
 
 	void show_account(const YouTubeSettings &settings)
@@ -345,7 +345,7 @@ private:
 					  "on YouTube.");
 		else if (app)
 			show_status("This OBS is no longer connected. Your channel is still connected to the "
-				    "Clips app; disconnect it there or in your Google Account.");
+				    "Better Clips app; disconnect it there or in your Google Account.");
 		else
 			show_status("OBS is signed out. Google had already ended its access, so there's nothing "
 				    "left to remove. Your videos stay on YouTube.");
@@ -368,7 +368,7 @@ private:
 			while (!url.empty() && url.back() == '/')
 				url.pop_back();
 			if (!secure_url(url)) {
-				show_status("Enter your clips app's address, starting with https://", true);
+				show_status("Enter your Better Clips app's address, starting with https://", true);
 				return;
 			}
 		}
@@ -401,17 +401,17 @@ class SettingsDialog : public QDialog {
 public:
 	explicit SettingsDialog(QWidget *parent) : QDialog(parent)
 	{
-		setWindowTitle("Replay to R2 Settings");
+		setWindowTitle("Better Clips Settings");
 		setMinimumWidth(560);
 
 		R2Config config = get_config();
 		YouTubeSettings youtube = get_youtube_settings();
 
 		destination = new QComboBox();
-		destination->addItem("Clips app (R2)", int(Destination::ClipsApp));
+		destination->addItem("Better Clips app (R2)", int(Destination::ClipsApp));
 		destination->addItem("S3 bucket", int(Destination::S3));
 		destination->addItem("YouTube", int(Destination::YouTube));
-		/* Before there was a choice, an empty Clips app meant the S3 bucket. */
+		/* Before there was a choice, an empty Better Clips app meant the S3 bucket. */
 		Destination to = youtube.destination;
 		if (to == Destination::ClipsApp && config.app_url.empty() && !config.s3_url.empty())
 			to = Destination::S3;
@@ -433,7 +433,7 @@ public:
 		auto *app_page = new QWidget();
 		auto *app_form = new QFormLayout(app_page);
 		app_form->setContentsMargins(0, 0, 0, 0);
-		app_form->addRow("Clips app", app_url);
+		app_form->addRow("Better Clips app", app_url);
 		app_form->addRow("Upload token", upload_token);
 
 		auto *s3_page = new QWidget();
@@ -509,7 +509,7 @@ private:
 
 	Destination chosen() const { return Destination(destination->currentData().toInt()); }
 
-	/* The FAQ is in every clips app, so it opens in the one you use. */
+	/* The FAQ is in every Better Clips app, so it opens in the one you use. */
 	std::string faq_app() const
 	{
 		if (chosen() == Destination::YouTube)
@@ -528,10 +528,10 @@ private:
 
 		const char *hotkey = "Then bind <b>Save Replay and Upload</b> in Settings &gt; Hotkeys.";
 		if (to == Destination::ClipsApp)
-			help->setText(QString("Saved replays upload from memory to your clips app and are never "
-					      "written to disk.<br>Easiest: open your clips app, click <b>Connect "
-					      "OBS</b>, copy the setup code, then click <b>Paste setup code</b> "
-					      "here.<br>%1")
+			help->setText(QString("Saved replays upload from memory to your Better Clips app and are "
+					      "never written to disk.<br>Easiest: click <b>Connect OBS</b> in your "
+					      "Better Clips app, copy the setup code, then click <b>Paste setup "
+					      "code</b>.<br>%1")
 					      .arg(hotkey));
 		else if (to == Destination::S3)
 			help->setText(QString("Saved replays upload from memory straight to your own S3-compatible "
@@ -567,7 +567,8 @@ private:
 	{
 		R2Config config = current();
 		if (!apply_setup_code(QApplication::clipboard()->text().toStdString(), config)) {
-			status->setText("No setup code on the clipboard. Copy it from Connect OBS in your clips app.");
+			status->setText(
+				"No setup code on the clipboard. Copy it from Connect OBS in your Better Clips app.");
 			return;
 		}
 		app_url->setText(QString::fromStdString(config.app_url));
@@ -586,7 +587,7 @@ private:
 	void run_test()
 	{
 		R2Config config = current();
-		/* Test the bucket that's chosen, even when a clips app is filled in. */
+		/* Test the bucket that's chosen, even when a Better Clips app is filled in. */
 		if (chosen() == Destination::S3) {
 			config.app_url.clear();
 			config.upload_token.clear();
@@ -777,10 +778,10 @@ void check_connection_async(const R2Config &config)
 	std::thread([config]() {
 		std::string where, error;
 		if (test_connection(config, where, error))
-			notify_user("Replay to R2: connected to " + where +
+			notify_user("Better Clips: connected to " + where +
 				    ". Press your Save Replay and Upload hotkey to save a clip.");
 		else
-			notify_user("Replay to R2: could not connect (" + error + ")");
+			notify_user("Better Clips: could not connect (" + error + ")");
 		tests_running--;
 	}).detach();
 }
@@ -821,7 +822,7 @@ bool youtube_review(YouTubeUpload &upload, const std::string &channel_title)
 	review->fields = upload;
 	auto guard = std::make_shared<CancelUnlessShown>();
 	guard->review = review;
-	notify_user("Replay to R2: review the clip in OBS to upload it to YouTube");
+	notify_user("Better Clips: review the clip in OBS to upload it to YouTube");
 	QMetaObject::invokeMethod(
 		reviews.get(),
 		[guard, channel_title]() {

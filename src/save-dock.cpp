@@ -1,5 +1,5 @@
 /*
-Replay to R2 for OBS
+Better Clips for OBS
 Copyright (C) 2026
 
 This program is free software; you can redistribute it and/or modify
@@ -8,7 +8,7 @@ the Free Software Foundation; either version 2 of the License, or
 (at your option) any later version.
 */
 
-/* The "Replay to R2" dock: a Save button, the replay length and the result
+/* The "Better Clips" dock: a Save button, the replay length and the result
  * of the last save, next to OBS's own Controls. */
 
 #include "replay-r2.hpp"
@@ -80,14 +80,18 @@ public:
 		auto yt = get_youtube_settings();
 		bool youtube = yt.destination == Destination::YouTube;
 		bool direct = yt.route == YouTubeRoute::Direct;
+		bool s3 = yt.destination == Destination::S3;
+		/* The Better Clips app keeps clips in R2; an S3 bucket may be anywhere. */
 		save->setText(!running  ? "Start Replay Buffer"
 			      : youtube ? "Save Replay to YouTube"
+			      : s3      ? "Save Replay to S3"
 					: "Save Replay to R2");
 		save->setToolTip(
 			!running   ? "Starts OBS's Replay Buffer so you can save clips"
-			: !youtube ? "Uploads the last few seconds to your clips app"
+			: s3       ? "Uploads the last few seconds to your S3 bucket"
+			: !youtube ? "Uploads the last few seconds to your Better Clips app"
 			: direct   ? "Uploads the last few seconds straight to your YouTube channel"
-				   : "Uploads the last few seconds to your YouTube channel, through your Clips app");
+				   : "Uploads the last few seconds to your YouTube channel, through Better Clips");
 
 		int seconds = get_replay_seconds();
 		if (seconds > 0 && !length->hasFocus() && length->value() != seconds) {
@@ -101,7 +105,8 @@ public:
 	void show_message(const QString &text)
 	{
 		QString shown = text;
-		shown.remove("Replay to R2: ");
+		shown.remove("Better Clips: ");
+		shown.remove("Replay to R2: "); /* before the rename */
 		if (!shown.isEmpty())
 			shown[0] = shown[0].toUpper();
 		message->setText(shown);
@@ -135,7 +140,7 @@ QPointer<SaveDock> dock;
 void create_save_dock()
 {
 	dock = new SaveDock();
-	if (!obs_frontend_add_dock_by_id(DOCK_ID, "Replay to R2", dock))
+	if (!obs_frontend_add_dock_by_id(DOCK_ID, "Better Clips", dock))
 		delete dock;
 }
 
