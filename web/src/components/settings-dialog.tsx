@@ -9,6 +9,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
 
 import { OwnKeyForm, useSignOut } from "@/components/connect-storage"
+import { InfoLinks } from "@/components/sign-in"
 import { YouTubeObsSteps } from "@/components/youtube"
 import { YouTubeSettings } from "@/components/youtube-settings"
 import { Segmented } from "@/components/segmented"
@@ -106,6 +107,7 @@ export function SettingsDialog({
             </TabsContent>
           </div>
         </Tabs>
+        <InfoLinks newTab className="border-t px-5 py-3" />
       </DialogContent>
     </Dialog>
   )

@@ -36,11 +36,7 @@ import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button-variants"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  ManagePermissionDialog,
-  YOUTUBE_RED,
-  YouTubeObsSteps,
-} from "@/components/youtube"
+import { YOUTUBE_RED, YouTubeObsSteps } from "@/components/youtube"
 import {
   api,
   bucketBytes,
@@ -58,13 +54,13 @@ import {
   useHasChannel,
   useSettings,
 } from "@/lib/settings"
-import { useResumeYouTubeChange } from "@/lib/youtube"
 import {
   byNewest,
   sortsByDay,
   useCategories,
   useGlobalKeys,
   useOpenClipSync,
+  usePage,
   useSort,
   useViewCounts,
   useVisibleClips,
@@ -125,6 +121,14 @@ const SearchDialog = React.lazy(() =>
   loadSearch().then((m) => ({ default: m.SearchDialog }))
 )
 
+const loadPages = () => import("@/components/info-pages")
+
+const Faq = React.lazy(() => loadPages().then((m) => ({ default: m.Faq })))
+
+const Privacy = React.lazy(() =>
+  loadPages().then((m) => ({ default: m.Privacy }))
+)
+
 function usePreload() {
   React.useEffect(() => {
     const preload = () => {
@@ -145,6 +149,14 @@ function usePreload() {
   }, [])
 }
 
+/* Google's consent page lets you untick a permission, and clips refuses a
+ * sign-in without all of them. Says how to fix it, unless the message
+ * already does. */
+const uncheckedGoogleBox = (error: string) =>
+  /permission/i.test(error) &&
+  /youtube|google/i.test(error) &&
+  !/tick|every/i.test(error)
+
 /* The hosted app's sign-in and storage setup come back to /?auth_error=…
  * or /?connected=1. Show it once and tidy the address bar. */
 function useAuthFlash() {
@@ -153,7 +165,13 @@ function useAuthFlash() {
     const error = params.get("auth_error")
     const connected = params.has("connected")
 
-    if (error) toast.error(error, { id: "auth" })
+    if (error)
+      toast.error(error, {
+        id: "auth",
+        description: uncheckedGoogleBox(error)
+          ? "Sign in again and tick every box on Google's page. clips needs each one to upload, list, rename and delete your clips."
+          : undefined,
+      })
 
     if (params.get("connected") === "youtube")
       toast.success("YouTube connected", {
@@ -171,7 +189,20 @@ function useAuthFlash() {
   }, [])
 }
 
+/* The FAQ and the privacy policy open without signing in, and without
+ * loading any clips. */
 export default function App() {
+  const page = usePage()
+
+  if (page)
+    return (
+      <React.Suspense>{page === "faq" ? <Faq /> : <Privacy />}</React.Suspense>
+    )
+
+  return <Library />
+}
+
+function Library() {
   const { data: clips, isPending, error } = useClips()
   const hasBucket = useHasBucket()
   const views = viewsFor(hasBucket)
@@ -202,7 +233,6 @@ export default function App() {
   useThumbnailWorker(clips)
   useNewClipToasts(clips, openClip)
   useGlobalKeys(!clip && !settingsOpen, views, openSearch, setView)
-  useResumeYouTubeChange(clips)
   usePreload()
   useAuthFlash()
 
@@ -288,7 +318,6 @@ export default function App() {
           />
         )}
       </React.Suspense>
-      <ManagePermissionDialog />
     </div>
   )
 }

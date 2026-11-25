@@ -1,6 +1,7 @@
 import * as React from "react"
 import { CloudIcon, GoogleLogoIcon } from "@phosphor-icons/react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button-variants"
@@ -23,8 +24,36 @@ export function AuthShell({
           <h1 className="text-sm font-semibold tracking-tight">clips</h1>
         </div>
         {children}
+        <InfoLinks className="mt-8" />
       </div>
     </main>
+  )
+}
+
+/* The FAQ and the privacy policy, which open without signing in. */
+export function InfoLinks({
+  className,
+  newTab = false,
+}: {
+  className?: string
+  newTab?: boolean
+}) {
+  const link = newTab ? { target: "_blank", rel: "noreferrer" } : {}
+
+  return (
+    <p
+      className={cn(
+        "flex gap-3 text-[11px] text-muted-foreground [&_a]:underline-offset-4 [&_a]:hover:text-foreground [&_a]:hover:underline",
+        className
+      )}
+    >
+      <a href="/faq" {...link}>
+        FAQ
+      </a>
+      <a href="/privacy" {...link}>
+        Privacy
+      </a>
+    </p>
   )
 }
 
@@ -72,8 +101,9 @@ function CloudflareSignIn() {
       </div>
       <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
         Cloudflare keeps clips in your own R2 bucket and only lets clips read
-        your name and email. Google lets clips upload to your YouTube channel
-        and list those videos, under{" "}
+        your name and email. Google asks once for every permission clips uses:
+        to upload to your YouTube channel, list those videos, and rename them,
+        change who can watch or delete them when you ask, under{" "}
         <a
           href="https://www.youtube.com/t/terms"
           target="_blank"

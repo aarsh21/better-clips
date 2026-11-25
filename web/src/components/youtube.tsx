@@ -35,13 +35,7 @@ import {
   type YouTubeClip,
 } from "@/lib/api"
 import { useAccount } from "@/lib/settings"
-import {
-  copyYouTubeLink,
-  PRIVACY_OPTIONS,
-  privacyOption,
-  useManageRequest,
-  type YouTubeChange,
-} from "@/lib/youtube"
+import { copyYouTubeLink, PRIVACY_OPTIONS, privacyOption } from "@/lib/youtube"
 
 /* YouTube's red, for its logo. */
 export const YOUTUBE_RED = "text-[#ff0033]"
@@ -288,47 +282,6 @@ export function DeleteYouTubeDialog({
   )
 }
 
-const MANAGE_REASON = {
-  title: "rename it",
-  privacy: "change who can watch it",
-  cut: "cut it",
-  delete: "delete it",
-} satisfies Record<YouTubeChange["kind"], string>
-
-/* Asks for permission to edit your videos the first time a change needs it,
- * then sends you to Google. The change is made when you're back. */
-export function ManagePermissionDialog() {
-  const { pending, allow, cancel } = useManageRequest()
-  const [last, setLast] = React.useState(pending)
-
-  if (pending && pending !== last) setLast(pending)
-  const kind = (pending ?? last)?.change.kind ?? "title"
-
-  return (
-    <AlertDialog open={!!pending} onOpenChange={(open) => !open && cancel()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            Let clips edit your YouTube videos?
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            To {MANAGE_REASON[kind]}, clips needs one more permission. Google
-            will ask you to allow clips to “see, edit, and permanently delete
-            your YouTube videos”. clips only changes a video when you ask it to,
-            and you&apos;ll come back here to finish.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Not now</AlertDialogCancel>
-          <AlertDialogAction onClick={allow}>
-            Continue to Google
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
 /* Connecting OBS without a bucket: there's no setup code, OBS signs in to
  * YouTube itself. */
 export function YouTubeObsSteps() {
@@ -348,9 +301,11 @@ export function YouTubeObsSteps() {
       </li>
       <li>
         In <b>Tools → Replay to R2 Settings</b>, set <b>Destination</b> to{" "}
-        <b>YouTube</b> and click <b>Sign in with YouTube</b>. When it says
-        you&apos;re connected, click <b>Save</b>: clips only go to YouTube once
-        the destination is saved.
+        <b>YouTube</b>, keep <b>Upload</b> on <b>Through the Clips app</b> and
+        click <b>Sign in with YouTube</b>. When it says you&apos;re connected,
+        click <b>Save</b>: clips only go to YouTube once the destination is
+        saved. Clips uploaded <b>Directly to YouTube</b> don&apos;t show up
+        here.
       </li>
       <li>
         Bind <b>Save Replay and Upload</b> in <b>Settings → Hotkeys</b>, start

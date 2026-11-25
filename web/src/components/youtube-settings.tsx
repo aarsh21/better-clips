@@ -26,10 +26,7 @@ export function YouTubeSettings() {
   return (
     <div className="flex flex-col gap-5 text-xs">
       {youtube ? (
-        <ConnectedChannel
-          title={youtube.channelTitle}
-          canManage={youtube.canManage}
-        />
+        <ConnectedChannel title={youtube.channelTitle} />
       ) : (
         <div className="flex flex-col gap-3">
           <p className="leading-relaxed text-muted-foreground">
@@ -40,6 +37,8 @@ export function YouTubeSettings() {
             <b className="font-medium text-foreground">
               Tools → Replay to R2 Settings
             </b>
+            , upload{" "}
+            <b className="font-medium text-foreground">Through the Clips app</b>
             , sign in, then click{" "}
             <b className="font-medium text-foreground">Save</b>.
           </p>
@@ -86,13 +85,7 @@ export function YouTubeSettings() {
   )
 }
 
-function ConnectedChannel({
-  title,
-  canManage,
-}: {
-  title: string
-  canManage: boolean
-}) {
+function ConnectedChannel({ title }: { title: string }) {
   const qc = useQueryClient()
   const [confirming, setConfirming] = React.useState(false)
 
@@ -118,14 +111,11 @@ function ConnectedChannel({
         <div className="flex min-w-0 flex-col">
           <span className="truncate font-medium">{title}</span>
           <span className="text-[11px] text-muted-foreground">
-            {canManage
-              ? "clips can list, rename, change and delete your clips' videos."
-              : "clips can upload and list videos. It asks before the first change."}
+            clips can upload, list, rename, change visibility of and delete your
+            clips&apos; videos.
           </span>
         </div>
-        {canManage && (
-          <CheckIcon className="ml-auto size-4 shrink-0 text-emerald-500" />
-        )}
+        <CheckIcon className="ml-auto size-4 shrink-0 text-emerald-500" />
       </div>
       {confirming ? (
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">

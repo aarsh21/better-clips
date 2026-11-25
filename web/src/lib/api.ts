@@ -270,14 +270,9 @@ export class SignInError extends Error {
   }
 }
 
-/* Thrown by a YouTube change that needs the permission to edit videos,
- * which clips asks for the first time you rename, change visibility, cut or
- * delete. */
-export class NeedsManageError extends Error {}
-
-/* Where Google sign-in starts: signing in to clips, connecting YouTube to an
- * account, or allowing clips to edit your videos. */
-export const youtubeConnectUrl = (purpose: "login" | "connect" | "manage") =>
+/* Where Google sign-in starts: signing in to clips, or connecting YouTube to
+ * an account. Either asks for every permission clips uses, once. */
+export const youtubeConnectUrl = (purpose: "login" | "connect") =>
   `/api/youtube/connect?purpose=${purpose}`
 
 export const youtubeStudioUrl = (videoId: string) =>
@@ -297,12 +292,11 @@ export type Me =
       hosted?: true
       email: string
       storage: { id: string; bucket: string; auto: boolean } | null
-      /** The connected channel. canManage: clips may rename, change
+      /** The connected channel. clips may upload, list, rename, change
        * visibility, cut and delete its videos. */
       youtube?: {
         channelId: string
         channelTitle: string
-        canManage: boolean
       } | null
     }
 
@@ -366,8 +360,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       throw new SignInError(data.auth)
 
     if (data.storage === "none") throw new NoStorageError()
-
-    if (data.needs === "manage") throw new NeedsManageError(data.error)
 
     if (data.account === "changed") {
       location.reload()

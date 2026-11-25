@@ -1,4 +1,4 @@
-import * as React from "react"
+import type * as React from "react"
 import { GlobeIcon, LinkIcon, LockIcon } from "@phosphor-icons/react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -6,8 +6,6 @@ import { toast } from "sonner"
 import {
   api,
   formatDuration,
-  NeedsManageError,
-  youtubeConnectUrl,
   type Clip,
   type Cut,
   type Privacy,
@@ -93,40 +91,8 @@ function doneText(change: YouTubeChange) {
   }
 }
 
-/* A change that needs permission to edit your videos. It's kept in this tab
- * while Google asks, then made when you're back. */
-type Pending = { id: string; key: string; change: YouTubeChange }
-
-const PENDING_KEY = "clips:youtube-change"
-let asking: Pending | null = null
-const listeners = new Set<() => void>()
-
-function setAsking(next: Pending | null) {
-  asking = next
-  listeners.forEach((l) => l())
-}
-
-function subscribe(onChange: () => void) {
-  listeners.add(onChange)
-
-  return () => listeners.delete(onChange)
-}
-
-/* The change waiting for you to allow editing, for the dialog that asks. */
-export function useManageRequest() {
-  const pending = React.useSyncExternalStore(subscribe, () => asking)
-
-  const allow = () => {
-    sessionStorage.setItem(PENDING_KEY, JSON.stringify(asking))
-    location.assign(youtubeConnectUrl("manage"))
-  }
-
-  return { pending, allow, cancel: () => setAsking(null) }
-}
-
 /* Renames, changes visibility, cuts or deletes a YouTube clip, updating the
- * list right away. The first time, YouTube answers that clips needs more
- * permission: ask for it, unless this is already the retry. */
+ * list right away. */
 export function useYouTubeChange() {
   const qc = useQueryClient()
 
@@ -137,7 +103,6 @@ export function useYouTubeChange() {
     }: {
       clip: YouTubeClip
       change: YouTubeChange
-      retry?: boolean
     }) => send(clip, change),
     onMutate: async ({ clip, change }) => {
       await qc.cancelQueries({ queryKey: KEY })
@@ -152,62 +117,13 @@ export function useYouTubeChange() {
 
       return { previous }
     },
-    onError: (err, { clip, change, retry }, ctx) => {
+    onError: (err, _vars, ctx) => {
       if (ctx?.previous) qc.setQueryData(KEY, ctx.previous)
-
-      if (err instanceof NeedsManageError && !retry)
-        setAsking({ id: clip.id, key: clip.key, change })
-      else toast.error(err.message)
+      toast.error(err.message)
     },
     onSuccess: (_data, { change }) => toast.success(doneText(change)),
     onSettled: () => qc.invalidateQueries({ queryKey: KEY }),
   })
-}
-
-/* The change saved before Google's permission page, unless you said no
- * there (the app comes back with ?auth_error=…). */
-function takePending(): Pending | null {
-  const saved = sessionStorage.getItem(PENDING_KEY)
-
-  sessionStorage.removeItem(PENDING_KEY)
-
-  if (!saved || new URLSearchParams(location.search).has("auth_error"))
-    return null
-
-  try {
-    // SAFETY: this tab wrote it from a Pending just before the redirect.
-    return JSON.parse(saved) as Pending
-  } catch {
-    return null
-  }
-}
-
-/* Back from Google: reopens the clip the change was for, before the app
- * reads the address, */
-const resuming = takePending()
-
-if (resuming && resuming.change.kind !== "delete")
-  history.replaceState(
-    null,
-    "",
-    `${location.pathname}${location.search}#/clip/${encodeURIComponent(resuming.key)}`
-  )
-
-/* then makes the change once the clips have loaded. */
-export function useResumeYouTubeChange(clips: Clip[] | undefined) {
-  const done = React.useRef(false)
-  const { mutate } = useYouTubeChange()
-
-  React.useEffect(() => {
-    if (!resuming || !clips || done.current) return
-    done.current = true
-
-    const clip = clips.find(
-      (c): c is YouTubeClip => c.source === "youtube" && c.key === resuming.key
-    )
-
-    if (clip) mutate({ clip, change: resuming.change, retry: true })
-  }, [clips, mutate])
 }
 
 /* The link a YouTube clip shares: from its cut's start, since a link can't

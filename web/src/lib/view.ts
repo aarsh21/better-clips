@@ -33,6 +33,35 @@ function readHash() {
   }
 }
 
+/* Pages that open without signing in, at /faq and /privacy. The FAQ also
+ * opens at #/faq. */
+export type Page = "faq" | "privacy"
+
+function readPage(): Page | null {
+  const path = location.pathname.replace(/\/+$/, "")
+
+  if (path === "/faq" || location.hash === "#/faq") return "faq"
+
+  if (path === "/privacy") return "privacy"
+
+  return null
+}
+
+/* The page this address shows instead of the library, or null. */
+export function usePage() {
+  const [page, setPage] = React.useState(readPage)
+
+  React.useEffect(() => {
+    const onChange = () => setPage(readPage())
+
+    window.addEventListener("hashchange", onChange)
+
+    return () => window.removeEventListener("hashchange", onChange)
+  }, [])
+
+  return page
+}
+
 /* The open clip lives in the URL hash, so Back closes it and links work. */
 export function useOpenClip() {
   const [key, setKey] = React.useState(readHash)
