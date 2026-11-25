@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import { useSettings } from "@/lib/settings"
 
-const RELEASES = "https://github.com/aarsh21/obs-replay-r2/releases/latest"
+const RELEASES = "https://github.com/aarsh21/better-clips/releases/latest"
 
 /* Whether OBS is connected, then the steps to connect it. The status updates
  * by itself when OBS checks in, e.g. after Test Upload. */
@@ -97,7 +97,7 @@ function timeAgo(iso: string) {
   return `${days} ${days === 1 ? "day" : "days"} ago`
 }
 
-const SCRIPTS = "https://raw.githubusercontent.com/aarsh21/obs-replay-r2/main"
+const SCRIPTS = "https://raw.githubusercontent.com/aarsh21/better-clips/main"
 
 type Platform = "unix" | "windows"
 
@@ -218,7 +218,7 @@ function ManualSteps({
         />
       </Step>
       <Step n={3} title="Paste it in OBS">
-        Open <b>Tools → Replay to R2 Settings</b>, click <b>Paste setup code</b>
+        Open <b>Tools → Better Clips Settings</b>, click <b>Paste setup code</b>
         , then <b>Test Upload</b> and <b>Save</b>.
       </Step>
       <Step n={4} title="Pick a hotkey">

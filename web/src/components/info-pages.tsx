@@ -2,7 +2,7 @@ import type * as React from "react"
 import { ArrowLeftIcon } from "@phosphor-icons/react"
 import { cn } from "cn"
 
-const REPO = "https://github.com/aarsh21/obs-replay-r2"
+const REPO = "https://github.com/aarsh21/better-clips"
 const ISSUES = `${REPO}/issues`
 const GOOGLE_PERMISSIONS = "https://myaccount.google.com/permissions"
 const YOUTUBE_TERMS = "https://www.youtube.com/t/terms"
@@ -50,7 +50,9 @@ function InfoShell({
         <div className="mx-auto flex h-14 max-w-2xl items-center gap-4 px-4 sm:px-6">
           <a href="/" className="flex items-center gap-2">
             <span className="size-2.5 bg-primary" />
-            <span className="text-sm font-semibold tracking-tight">clips</span>
+            <span className="text-sm font-semibold tracking-tight">
+              better clips
+            </span>
           </a>
           <nav className="flex items-center gap-3 text-xs">
             {pages.map(({ href, label }) => (
@@ -123,7 +125,7 @@ export function Faq() {
       title="Questions"
       intro={
         <>
-          How clips and the Replay to R2 plugin for OBS handle your clips. See
+          How the Better Clips app and its plugin for OBS handle your clips. See
           also the <Link href="/privacy">privacy policy</Link>.
         </>
       }
@@ -132,14 +134,14 @@ export function Faq() {
         <Q q="Where are my clips stored?">
           <p>
             It depends on the <b>Destination</b> in OBS, under{" "}
-            <b>Tools → Replay to R2 Settings</b>:
+            <b>Tools → Better Clips Settings</b>:
           </p>
           <ul>
             <li>
-              <b>Clips app (R2)</b>: OBS uploads each clip to your Clips app,
-              which keeps it in an R2 bucket. On the hosted app that&apos;s a
-              bucket in your own Cloudflare account; on a self-hosted app,
-              it&apos;s your Worker&apos;s bucket.
+              <b>Better Clips app (R2)</b>: OBS uploads each clip to your Better
+              Clips app, which keeps it in an R2 bucket. On the hosted app
+              that&apos;s a bucket in your own Cloudflare account; on a
+              self-hosted app, it&apos;s your Worker&apos;s bucket.
             </li>
             <li>
               <b>S3 bucket</b>: OBS uploads each clip straight to your own
@@ -147,15 +149,15 @@ export function Faq() {
               entered in OBS.
             </li>
             <li>
-              <b>YouTube, through the Clips app</b>: clips go to your YouTube
-              channel. The app starts each upload, and OBS sends the video
-              straight to YouTube, so the file never passes through the app. The
-              app keeps a library entry for each clip, so you can watch, rename,
-              cut and delete it here.
+              <b>YouTube, through the Better Clips app</b>: clips go to your
+              YouTube channel. The app starts each upload, and OBS sends the
+              video straight to YouTube, so the file never passes through the
+              app. The app keeps a library entry for each clip, so you can
+              watch, rename, cut and delete it here.
             </li>
             <li>
               <b>YouTube, directly</b>: OBS signs in to Google itself and
-              uploads straight to your channel. The Clips app isn&apos;t
+              uploads straight to your channel. The Better Clips app isn&apos;t
               involved, so these clips aren&apos;t in its library. Find them in
               YouTube Studio.
             </li>
@@ -174,7 +176,7 @@ export function Faq() {
       </Section>
 
       <Section title="Google and YouTube">
-        <Q q="Which Google permissions does clips ask for, and why?">
+        <Q q="Which Google permissions does Better Clips ask for, and why?">
           <p>
             Google asks once, the first time you sign in with Google or connect
             YouTube, whether from this app or from OBS:
@@ -195,13 +197,13 @@ export function Faq() {
             <li>
               <b>See, edit and permanently delete your YouTube videos</b>, to
               rename a clip, change who can watch it and delete it when you ask.
-              clips only changes videos it uploaded.
+              Better Clips only changes videos it uploaded.
             </li>
           </ul>
           <p>
-            Google&apos;s page lets you untick boxes, but clips needs all of
-            them. If one is unticked, signing in fails: sign in again and tick
-            every box.
+            Google&apos;s page lets you untick boxes, but Better Clips needs all
+            of them. If one is unticked, signing in fails: sign in again and
+            tick every box.
           </p>
           <p>
             In direct mode, OBS asks only to upload videos and to view your
@@ -211,9 +213,9 @@ export function Faq() {
         <Q q="Does OBS hold my Google token?">
           <ul>
             <li>
-              <b>Through the Clips app: no.</b> Google&apos;s token stays in the
-              app, encrypted. OBS gets its own upload token, which only works
-              with the app.
+              <b>Through the Better Clips app: no.</b> Google&apos;s token stays
+              in the app, encrypted. OBS gets its own upload token, which only
+              works with the app.
             </li>
             <li>
               <b>Directly: yes.</b> OBS keeps a Google token in its plugin
@@ -226,14 +228,15 @@ export function Faq() {
           <ul>
             <li>
               <b>In this app</b>: <b>Settings → YouTube → Disconnect YouTube</b>
-              . clips gives up its access at Google and forgets the token.
+              . Better Clips gives up its access at Google and forgets the
+              token.
             </li>
             <li>
               <b>In OBS</b>: <b>Disconnect</b> on the YouTube page of{" "}
-              <b>Tools → Replay to R2 Settings</b>. Through the Clips app, this
-              also removes the app&apos;s access. If OBS says your channel is
-              still connected to the Clips app, disconnect it in the app. In
-              direct mode, OBS gives up its own access.
+              <b>Tools → Better Clips Settings</b>. Through the Better Clips
+              app, this also removes the app&apos;s access. If OBS says your
+              channel is still connected to the Better Clips app, disconnect it
+              in the app. In direct mode, OBS gives up its own access.
             </li>
             <li>
               <b>Any time</b>: remove the app in{" "}
@@ -246,8 +249,8 @@ export function Faq() {
         </Q>
         <Q q="What happens to my clips when I disconnect?">
           <p>
-            They leave the clips library, but the videos stay on your YouTube
-            channel.
+            They leave your Better Clips library, but the videos stay on your
+            YouTube channel.
           </p>
         </Q>
       </Section>
@@ -317,16 +320,16 @@ export function Privacy() {
       intro={
         <>
           <p>
-            This covers the hosted Clips app at clips.zabimaru.me and the Replay
-            to R2 plugin for OBS. A self-hosted Clips app runs in your own
-            Cloudflare account, and its data stays there. Questions? Read the{" "}
-            <Link href="/faq">FAQ</Link>.
+            This covers the hosted Better Clips app at clips.zabimaru.me and the
+            Better Clips plugin for OBS. A self-hosted Better Clips app runs in
+            your own Cloudflare account, and its data stays there. Questions?
+            Read the <Link href="/faq">FAQ</Link>.
           </p>
           <p className="mt-2">Last updated 25 November 2026.</p>
         </>
       }
     >
-      <Section title="What clips stores">
+      <Section title="What Better Clips stores">
         <Q q="Your account">
           <ul>
             <li>
@@ -346,29 +349,30 @@ export function Privacy() {
         </Q>
         <Q q="Your clips on YouTube">
           <p>
-            For each clip OBS uploads through clips: its YouTube video ID,
-            title, description, visibility, game or scene, when it was recorded,
-            its length, thumbnail and processing status, and its cut points.
+            For each clip OBS uploads through Better Clips: its YouTube video
+            ID, title, description, visibility, game or scene, when it was
+            recorded, its length, thumbnail and processing status, and its cut
+            points.
           </p>
         </Q>
       </Section>
 
-      <Section title="How clips uses YouTube data">
-        <Q q="What clips does">
+      <Section title="How Better Clips uses YouTube data">
+        <Q q="What Better Clips does">
           <ul>
             <li>Uploads the clips you save in OBS to your channel.</li>
             <li>
               Lists, renames, changes the visibility of and deletes only the
-              videos clips uploaded, and changes them only when you ask.
+              videos Better Clips uploaded, and changes them only when you ask.
             </li>
             <li>Nothing else on your YouTube account.</li>
           </ul>
         </Q>
         <Q q="Sharing">
           <p>
-            clips doesn&apos;t sell or share your data, and doesn&apos;t use it
-            for ads. clips&apos; use and transfer of information received from
-            Google APIs adheres to the{" "}
+            Better Clips doesn&apos;t sell or share your data, and doesn&apos;t
+            use it for ads. Better Clips&apos; use and transfer of information
+            received from Google APIs adheres to the{" "}
             <Link href={USER_DATA_POLICY}>
               Google API Services User Data Policy
             </Link>
@@ -377,8 +381,8 @@ export function Privacy() {
         </Q>
         <Q q="YouTube API Services">
           <p>
-            clips uses YouTube API Services. Using its YouTube features means
-            you agree to{" "}
+            Better Clips uses YouTube API Services. Using its YouTube features
+            means you agree to{" "}
             <Link href={YOUTUBE_TERMS}>YouTube&apos;s Terms of Service</Link>,
             and Google handles your data as described in the{" "}
             <Link href={GOOGLE_PRIVACY}>Google Privacy Policy</Link>.
@@ -388,7 +392,7 @@ export function Privacy() {
           <p>
             When OBS uploads to YouTube directly, it keeps Google&apos;s token
             only on your computer, in OBS&apos;s settings, and sends it only to
-            Google. It never reaches clips&apos; servers.
+            Google. It never reaches Better Clips&apos; servers.
           </p>
         </Q>
       </Section>
@@ -397,10 +401,10 @@ export function Privacy() {
         <Q q="Removing access">
           <p>
             Click <b>Disconnect YouTube</b> in <b>Settings → YouTube</b>, or
-            remove clips in{" "}
+            remove Better Clips in{" "}
             <Link href={GOOGLE_PERMISSIONS}>your Google Account</Link>.
-            Disconnecting deletes the stored token and clips&apos; library
-            entries for your YouTube clips. The videos stay on YouTube.
+            Disconnecting deletes the stored token and Better Clips&apos;
+            library entries for your YouTube clips. The videos stay on YouTube.
           </p>
         </Q>
         <Q q="Contact">

@@ -169,7 +169,7 @@ function useAuthFlash() {
       toast.error(error, {
         id: "auth",
         description: uncheckedGoogleBox(error)
-          ? "Sign in again and tick every box on Google's page. clips needs each one to upload, list, rename and delete your clips."
+          ? "Sign in again and tick every box on Google's page. Better Clips needs each one to upload, list, rename and delete your clips."
           : undefined,
       })
 
@@ -350,7 +350,9 @@ function AppHeader({
             <span className="absolute inline-flex size-full animate-ping bg-primary/60 [animation-duration:2.5s]" />
             <span className="relative inline-flex size-2.5 bg-primary" />
           </span>
-          <span className="text-sm font-semibold tracking-tight">clips</span>
+          <span className="text-sm font-semibold tracking-tight">
+            better clips
+          </span>
         </div>
 
         <nav className="flex items-center">

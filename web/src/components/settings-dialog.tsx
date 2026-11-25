@@ -317,9 +317,9 @@ function AccountSettings() {
       {!me.storage ? null : confirming ? (
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            clips stops using this bucket right away, and OBS stops uploading.
-            Your clips stay in the bucket. To turn the key off for good, delete
-            it in R2 → Manage API tokens.
+            Better Clips stops using this bucket right away, and OBS stops
+            uploading. Your clips stay in the bucket. To turn the key off for
+            good, delete it in R2 → Manage API tokens.
           </p>
           <div className="flex gap-2">
             <Button

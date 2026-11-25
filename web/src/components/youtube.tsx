@@ -290,7 +290,7 @@ export function YouTubeObsSteps() {
       <li>
         Install the plugin from{" "}
         <a
-          href="https://github.com/aarsh21/obs-replay-r2/releases/latest"
+          href="https://github.com/aarsh21/better-clips/releases/latest"
           target="_blank"
           rel="noreferrer"
           className="text-primary underline-offset-4 hover:underline"
@@ -300,12 +300,12 @@ export function YouTubeObsSteps() {
         and restart OBS.
       </li>
       <li>
-        In <b>Tools → Replay to R2 Settings</b>, set <b>Destination</b> to{" "}
-        <b>YouTube</b>, keep <b>Upload</b> on <b>Through the Clips app</b> and
-        click <b>Sign in with YouTube</b>. When it says you&apos;re connected,
-        click <b>Save</b>: clips only go to YouTube once the destination is
-        saved. Clips uploaded <b>Directly to YouTube</b> don&apos;t show up
-        here.
+        In <b>Tools → Better Clips Settings</b>, set <b>Destination</b> to{" "}
+        <b>YouTube</b>, keep <b>Upload</b> on{" "}
+        <b>Through the Better Clips app</b> and click{" "}
+        <b>Sign in with YouTube</b>. When it says you&apos;re connected, click{" "}
+        <b>Save</b>: clips only go to YouTube once the destination is saved.
+        Clips uploaded <b>Directly to YouTube</b> don&apos;t show up here.
       </li>
       <li>
         Bind <b>Save Replay and Upload</b> in <b>Settings → Hotkeys</b>, start

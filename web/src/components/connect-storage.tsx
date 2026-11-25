@@ -19,8 +19,9 @@ export function ConnectStorage() {
     <AuthShell wide>
       <p className="mb-1 text-sm font-medium">Connect your storage</p>
       <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
-        Your clips live in an R2 bucket in your own Cloudflare account. clips
-        only gets a key for that one bucket, never for the rest of your account.
+        Your clips live in an R2 bucket in your own Cloudflare account. Better
+        Clips only gets a key for that one bucket, never for the rest of your
+        account.
       </p>
 
       <div className="flex flex-col gap-3 border bg-muted/30 p-4">
@@ -34,8 +35,9 @@ export function ConnectStorage() {
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           Uses the <b>clips</b> bucket in your account, with the clips already
           in it, or makes it if you don&apos;t have one. Cloudflare asks once to
-          let clips do that and make a key for just that bucket. clips asks
-          Cloudflare to cancel that permission as soon as it&apos;s done.
+          let Better Clips do that and make a key for just that bucket. Better
+          Clips asks Cloudflare to cancel that permission as soon as it&apos;s
+          done.
         </p>
       </div>
 

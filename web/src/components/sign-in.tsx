@@ -8,7 +8,7 @@ import { buttonVariants } from "@/components/ui/button-variants"
 import { Input } from "@/components/ui/input"
 import { api, youtubeConnectUrl, type SignInKind } from "@/lib/api"
 
-/* The clips logo and a narrow column, for screens shown before the app. */
+/* The Better Clips wordmark and a narrow column, for screens shown before the app. */
 export function AuthShell({
   children,
   wide = false,
@@ -21,7 +21,7 @@ export function AuthShell({
       <div className={wide ? "w-full max-w-md" : "w-full max-w-xs"}>
         <div className="mb-6 flex items-center gap-2">
           <span className="size-2.5 bg-primary" />
-          <h1 className="text-sm font-semibold tracking-tight">clips</h1>
+          <h1 className="text-sm font-semibold tracking-tight">better clips</h1>
         </div>
         {children}
         <InfoLinks className="mt-8" />
@@ -100,10 +100,10 @@ function CloudflareSignIn() {
         </a>
       </div>
       <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-        Cloudflare keeps clips in your own R2 bucket and only lets clips read
-        your name and email. Google asks once for every permission clips uses:
-        to upload to your YouTube channel, list those videos, and rename them,
-        change who can watch or delete them when you ask, under{" "}
+        Cloudflare keeps clips in your own R2 bucket and only lets Better Clips
+        read your name and email. Google asks once for every permission Better
+        Clips uses: to upload to your YouTube channel, list those videos, and
+        rename them, change who can watch or delete them when you ask, under{" "}
         <a
           href="https://www.youtube.com/t/terms"
           target="_blank"

@@ -35,10 +35,12 @@ export function YouTubeSettings() {
             <b className="font-medium text-foreground">YouTube</b> as the
             destination in{" "}
             <b className="font-medium text-foreground">
-              Tools → Replay to R2 Settings
+              Tools → Better Clips Settings
             </b>
             , upload{" "}
-            <b className="font-medium text-foreground">Through the Clips app</b>
+            <b className="font-medium text-foreground">
+              Through the Better Clips app
+            </b>
             , sign in, then click{" "}
             <b className="font-medium text-foreground">Save</b>.
           </p>
@@ -70,7 +72,7 @@ export function YouTubeSettings() {
         >
           Google&apos;s Privacy Policy
         </a>
-        . You can remove clips&apos; access any time in{" "}
+        . You can remove Better Clips&apos; access any time in{" "}
         <a
           href={GOOGLE_PERMISSIONS}
           target="_blank"
@@ -111,8 +113,8 @@ function ConnectedChannel({ title }: { title: string }) {
         <div className="flex min-w-0 flex-col">
           <span className="truncate font-medium">{title}</span>
           <span className="text-[11px] text-muted-foreground">
-            clips can upload, list, rename, change visibility of and delete your
-            clips&apos; videos.
+            Better Clips can upload, list, rename, change visibility of and
+            delete your clips&apos; videos.
           </span>
         </div>
         <CheckIcon className="ml-auto size-4 shrink-0 text-emerald-500" />
@@ -120,8 +122,9 @@ function ConnectedChannel({ title }: { title: string }) {
       {confirming ? (
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            clips gives up its access to {title}, OBS stops uploading there, and
-            YouTube clips leave this library. Your videos stay on YouTube.
+            Better Clips gives up its access to {title}, OBS stops uploading
+            there, and YouTube clips leave this library. Your videos stay on
+            YouTube.
           </p>
           <div className="flex gap-2">
             <Button
