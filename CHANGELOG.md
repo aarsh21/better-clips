@@ -32,7 +32,7 @@ the web app ships from `main`.
   bucket clips: play, rename, change visibility, cut and delete them. Google
   asks once for every permission. New **FAQ** and **Privacy** pages.
 
-## [0.3.1]
+## [0.3.2] - 2026-11-25
 
 - Fixed YouTube sign-in and uploads on OBS builds that ship without a Qt TLS backend, including macOS. Failed requests now report the HTTP status or curl error in the OBS log.
 

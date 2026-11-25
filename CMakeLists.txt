@@ -43,6 +43,10 @@ endif()
 # and doesn't link FFmpeg, whose version changes between OBS releases.
 find_package(CURL REQUIRED)
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CURL::libcurl)
+# curl.h includes windows.h, whose min and max macros break std::min/std::max.
+if(WIN32)
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NOMINMAX)
+endif()
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
