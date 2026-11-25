@@ -28,6 +28,24 @@ the web app ships from `main`.
 - Share links are pinned to the recording and thumbnail they were made from.
 - Cleanup in a connected bucket waits until you confirm the lengths, and only
   deletes `.mp4` clips.
+- **YouTube.** Sign in with Google and your YouTube clips show up next to your
+  bucket clips: play, rename, change visibility, cut and delete them. Google
+  asks once for every permission. New **FAQ** and **Privacy** pages.
+
+## [0.2.0] - 2026-11-25
+
+### Plugin
+
+- **YouTube** is a new destination. Choose it in **Tools → Replay to R2
+  Settings**, sign in with Google, and saved replays upload to your channel as
+  unlisted, private or public videos. The video link is copied when the upload
+  finishes, and OBS tells you when YouTube has processed it.
+- Upload **through the Clips app**, so clips show up in its library, or
+  **directly to YouTube**, with no Clips app at all.
+- Pick the audio track that goes to YouTube, set a title template and
+  description, and optionally review each clip before it uploads.
+- Uploads resume after a dropped connection. Clips that can't be uploaded are
+  saved to disk instead, including when you quit OBS mid-upload.
 
 ## [0.1.7] - 2026-11-25
 
