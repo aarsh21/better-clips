@@ -266,25 +266,32 @@ public:
 		access->setOpenExternalLinks(true);
 		access->setWordWrap(true);
 
-		form = new QFormLayout(this);
-		form->setContentsMargins(0, 0, 0, 0);
+		form = new QFormLayout();
 		form->addRow("Upload", routes);
 		form->addRow(QString(), route_hint);
 		form->addRow("Better Clips app", app_url);
 		form->addRow("Channel", account);
 		form->addRow(QString(), remove_channel);
-		form->addRow(status);
-		form->addRow("Visibility", privacy);
-		form->addRow("Title", title_template);
-		form->addRow(QString(), title_preview);
-		form->addRow("Description", description);
-		form->addRow("Audio track", audio_track);
-		form->addRow(QString(), hint_label("Only this track goes to YouTube. Pick one without voice chat."));
-		form->addRow(review);
-		form->addRow(terms_label());
-		form->addRow(access);
 		form->setRowVisible(routes, can_direct);
 		form->setRowVisible(route_hint, can_direct);
+
+		defaults = new QFormLayout();
+		defaults->addRow("Visibility", privacy);
+		defaults->addRow("Title", title_template);
+		defaults->addRow(QString(), title_preview);
+		defaults->addRow("Description", description);
+		defaults->addRow("Audio track", audio_track);
+		defaults->addRow(QString(),
+				 hint_label("Only this track goes to YouTube. Pick one without voice chat."));
+		defaults->addRow(review);
+		defaults->addRow(terms_label());
+		defaults->addRow(access);
+
+		auto *layout = new QVBoxLayout(this);
+		layout->setContentsMargins(0, 0, 0, 0);
+		layout->addLayout(form);
+		layout->addWidget(status);
+		layout->addLayout(defaults);
 
 		show_account(settings);
 		update_preview();
@@ -325,7 +332,7 @@ public:
 	/* The address the FAQ opens at: this page's Better Clips app. */
 	std::string faq_app() const { return app_url->text().trimmed().toStdString(); }
 
-	QFormLayout *form;
+	QFormLayout *form, *defaults;
 
 private:
 	QRadioButton *via_app, *direct;
@@ -337,18 +344,6 @@ private:
 	QCheckBox *review;
 
 	YouTubeRoute route() const { return direct->isChecked() ? YouTubeRoute::Direct : YouTubeRoute::ClipsApp; }
-
-	void resizeEvent(QResizeEvent *event) override
-	{
-		QWidget::resizeEvent(event);
-		fit_status();
-	}
-
-	void fit_status()
-	{
-		// This full-width row must not be compressed when a scrollbar narrows the page.
-		status->setMinimumHeight(status->isHidden() ? 0 : status->heightForWidth(width()));
-	}
 
 	/* The trade-off of the chosen route, and the fields it needs. */
 	void show_route(const YouTubeSettings &settings)
@@ -398,7 +393,6 @@ private:
 		status->setText(text);
 		status->setStyleSheet(error ? "" : "color: palette(placeholder-text);");
 		status->setVisible(!text.isEmpty());
-		fit_status();
 	}
 
 	void show_disconnected(DisconnectResult result)
@@ -592,7 +586,7 @@ public:
 		layout->addWidget(scroll);
 		layout->addLayout(bottom);
 
-		align_labels({top, app_form, s3_form, youtube_page->form});
+		align_labels({top, app_form, s3_form, youtube_page->form, youtube_page->defaults});
 		show_destination();
 		status->setText(plugin_startup_notice());
 	}
