@@ -8,9 +8,6 @@ the web app ships from `main`.
 - YouTube is the only upload destination. Connect your channel from the Better Clips dock.
 - OBS keeps a local MP4 after every upload. **Download** in the dashboard opens the video in YouTube Studio.
 - Removed bucket storage and the clip editor. YouTube clip editing is coming soon.
-
-## [0.5.1] - 2026-11-26
-
 - YouTube clips default to **not made for kids**. You can change this in OBS
   or in the dashboard’s YouTube settings. Older plugins can upload without
   choosing an audience first.
@@ -218,7 +215,7 @@ the web app ships from `main`.
   clips to Cloudflare R2 without writing them to disk.
 - The clips web app to browse, preview, trim, keep, delete and share clips.
 
-[0.5.1]: https://github.com/aarsh21/better-clips/releases/tag/0.5.1
+[0.6.0]: https://github.com/aarsh21/better-clips/releases/tag/0.6.0
 [0.5.0]: https://github.com/aarsh21/better-clips/releases/tag/0.5.0
 [0.4.0]: https://github.com/aarsh21/better-clips/releases/tag/0.4.0
 [0.3.1]: https://github.com/aarsh21/better-clips/releases/tag/0.3.1
