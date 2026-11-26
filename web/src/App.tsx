@@ -204,7 +204,7 @@ export default function App() {
 }
 
 function Library() {
-  const { data: clips, isPending, error, warnings, returning } = useClips()
+  const { data: clips, isPending, error, notice, returning } = useClips()
   const hasBucket = useHasBucket()
   const views = viewsFor(hasBucket)
   const [chosenView, setView] = React.useState<View>("all")
@@ -267,14 +267,21 @@ function Library() {
       />
 
       <main className="mx-auto max-w-[1600px] px-4 pt-4 pb-24 sm:px-6">
-        {(warnings?.length || (error && clips)) ? <p role="status" className="mb-4 border bg-muted/40 px-3 py-2 text-xs">{error ? "Could not refresh the library." : warnings?.join(" ")} Showing the last available clips.</p> : null}
+        {notice && (
+          <p
+            role="status"
+            className="mb-4 border bg-muted/40 px-3 py-2 text-xs"
+          >
+            {notice}
+          </p>
+        )}
         <ClipsBody
           returning={Boolean(returning)}
           clips={clips}
           visible={visible}
           view={view}
           pending={isPending}
-          error={error ?? (!clips?.length && warnings?.length ? new Error(warnings.join(" ")) : null)}
+          error={error}
           hasBucket={hasBucket}
           onOpen={(c) => openClip(c.key)}
           onSettings={openSettings}
@@ -533,7 +540,10 @@ function ClipsBody({
 
   if (pending || !clips) return <GridSkeleton />
 
-  if (!clips.length && !((hasBucket || hasChannel) && (returning || settings?.obsSeen))) {
+  if (
+    !clips.length &&
+    !((hasBucket || hasChannel) && (returning || settings?.obsSeen))
+  ) {
     if (hasBucket) return <FirstRun />
 
     return hasChannel ? (

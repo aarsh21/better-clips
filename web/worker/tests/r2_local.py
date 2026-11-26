@@ -35,5 +35,6 @@ if __name__ == "__main__":
     wrong = urlencode({**upload, "key": "replays/other.mp4"})
     assert request("/api/upload/complete?" + wrong, "POST", parts)[0] == 400
     clips = request("/api/clips")[1]["clips"]
-    assert [c["size"] for c in clips if c["key"] == upload["key"]] == [9]
+    filename = name.rsplit("/", 1)[1]
+    assert [(c["key"], c["size"]) for c in clips if c["key"].endswith(filename)] == [(upload["key"], 9)]
     print("Dropped completion response: same key on retry, one 9-byte clip; wrong key refused.")

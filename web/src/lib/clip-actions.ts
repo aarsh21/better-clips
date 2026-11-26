@@ -109,7 +109,7 @@ export function useClipMoves(onMoved?: (from: string, to: string) => void) {
         pending
       )
     } catch (err) {
-      void qc.invalidateQueries({queryKey:["clips"]})
+      void qc.invalidateQueries({ queryKey: ["clips"] })
       toast.error(errorMessage(err), { id: pending })
     }
   }
@@ -157,9 +157,7 @@ export function useClipActions(
 
     try {
       await api.destroy(clip.key)
-      updateClips(qc, (list) =>
-        list?.filter((c) => c.key !== clip.key)
-      )
+      updateClips(qc, (list) => list?.filter((c) => c.key !== clip.key))
       toast("Deleted forever")
     } catch (err) {
       toast.error(errorMessage(err))

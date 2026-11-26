@@ -1,5 +1,10 @@
 import * as React from "react"
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query"
 import { toast } from "sonner"
 
 import { useClipTime } from "@/lib/clock"
@@ -14,13 +19,19 @@ import {
 } from "@/lib/api"
 
 const KEY = ["clips"]
+
 type Library = Awaited<ReturnType<typeof api.clips>>
-export function updateClips(qc:QueryClient, edit:(clips:Clip[])=>Clip[]) {
-  qc.setQueryData<Library>(KEY, data=>data && {...data,clips:edit(data.clips)})
+
+export function updateClips(qc: QueryClient, edit: (clips: Clip[]) => Clip[]) {
+  qc.setQueryData<Library>(
+    KEY,
+    (data) => data && { ...data, clips: edit(data.clips) }
+  )
 }
 
 export function useClips() {
   const qc = useQueryClient()
+
   const query = useQuery({
     queryKey: KEY,
     queryFn: () => api.clips(qc.getQueryData<Library>(KEY)?.clips),
@@ -36,7 +47,25 @@ export function useClips() {
     refetchIntervalInBackground: false,
     staleTime: 5_000,
   })
-  return {data:query.data?.clips,returning:query.data?.returning,warnings:query.data?.warnings,isPending:query.isPending,error:query.error}
+
+  const warnings = query.data?.warnings.join(" ")
+
+  const error =
+    query.error ??
+    (!query.data?.clips.length && warnings ? new Error(warnings) : null)
+
+  const notice =
+    query.data?.clips.length && (query.error || warnings)
+      ? `${query.error ? "Could not refresh the library." : warnings} Showing the last available clips.`
+      : null
+
+  return {
+    data: query.data?.clips,
+    returning: query.data?.returning,
+    notice,
+    isPending: query.isPending,
+    error,
+  }
 }
 
 /* Moves a clip (keep, delete, restore, rename) and updates the list right
@@ -56,7 +85,11 @@ export function useMoveClip(onMoved?: (from: string, to: string) => void) {
     }) => api.move(clip.key, { to, name }),
     onMutate: async ({ clip, to, name }) => {
       await qc.cancelQueries({ queryKey: KEY })
-      const previous = qc.getQueryData<Library>(KEY)?.clips.find(c=>c.key===clip.key)
+
+      const previous = qc
+        .getQueryData<Library>(KEY)
+        ?.clips.find((c) => c.key === clip.key)
+
       updateClips(
         qc,
         (clips) =>
@@ -78,7 +111,11 @@ export function useMoveClip(onMoved?: (from: string, to: string) => void) {
     },
     onError: (err, _vars, ctx) => {
       const prev = ctx?.previous
-      if (prev) updateClips(qc,list=>list.map(c=>c.key===prev.key ? prev : c))
+
+      if (prev)
+        updateClips(qc, (list) =>
+          list.map((c) => (c.key === prev.key ? prev : c))
+        )
       toast.error(err.message)
     },
     onSuccess: ({ key }, { clip }) => {

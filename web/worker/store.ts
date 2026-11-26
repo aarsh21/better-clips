@@ -4,7 +4,13 @@
 
 import { AwsClient } from "aws4fetch"
 
-export type Obj = { key: string; size: number; uploaded: Date; etag: string }
+export type Obj = {
+  key: string
+  size: number
+  uploaded: Date
+  etag: string
+  uploadReceipt?: string
+}
 
 export type PutOptions = {
   contentType?: string
@@ -49,7 +55,7 @@ export interface Store {
   ): Promise<string | null>
   /* Deletes keys and returns the ones that couldn't be deleted. */
   delete(keys: string[]): Promise<string[]>
-  createUpload(key: string): Promise<string>
+  createUpload(key: string, receipt: string): Promise<string>
   uploadPart(
     key: string,
     uploadId: string,
@@ -102,6 +108,7 @@ const toObj = (o: R2Object): Obj => ({
   size: o.size,
   uploaded: o.uploaded,
   etag: o.etag,
+  uploadReceipt: o.customMetadata?.receipt,
 })
 
 export function bindingStore(bucket: R2Bucket): Store {
@@ -208,9 +215,10 @@ export function bindingStore(bucket: R2Bucket): Store {
       return []
     },
 
-    async createUpload(key) {
+    async createUpload(key, receipt) {
       const upload = await bucket.createMultipartUpload(key, {
         httpMetadata: { contentType: "video/mp4" },
+        customMetadata: { receipt },
       })
 
       return upload.uploadId
@@ -423,6 +431,7 @@ export function s3Store(b: S3Bucket): Store {
         size: Number(res.headers.get("content-length")),
         uploaded: new Date(res.headers.get("last-modified") ?? 0),
         etag: (res.headers.get("etag") ?? "").replace(/"/g, ""),
+        uploadReceipt: res.headers.get("x-amz-meta-receipt") ?? undefined,
       }
     },
 
@@ -559,10 +568,10 @@ export function s3Store(b: S3Bucket): Store {
       return (await Promise.all(batchesOf(keys, 1000).map(deleteBatch))).flat()
     },
 
-    async createUpload(key) {
+    async createUpload(key, receipt) {
       const res = await call(`${base}/${path(key)}?uploads`, {
         method: "POST",
-        headers: { "content-type": "video/mp4" },
+        headers: { "content-type": "video/mp4", "x-amz-meta-receipt": receipt },
       })
 
       return tag(await res.text(), "UploadId")!

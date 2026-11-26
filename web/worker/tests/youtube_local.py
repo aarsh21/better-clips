@@ -128,6 +128,10 @@ class Google(BaseHTTPRequestHandler):
             f = {k: v[0] for k, v in parse_qs(body.decode()).items()}
             if p.path == "/revoke":
                 assert f["token"] == "testing-refresh"
+                if revoke_failure == "replacement":
+                    # Model a persisted replacement in this disposable D1, not a second network request.
+                    sql("UPDATE youtube_accounts SET grant_id='replacement-grant'")
+                    return self.reply(200, {})
                 if revoke_failure:
                     return self.reply(400, {"error":"invalid_request"})
                 if revoked:
@@ -324,7 +328,7 @@ def call(path, method="GET", data=None, status=200, bearer=None, origin=None):
     )
 
 
-def login(purpose, pair=False):
+def login(purpose, pair=False, *, existing=False, cancel=False):
     verifier = secrets.token_urlsafe(32)
     auth = call(
         "/api/youtube/connect?purpose="
@@ -336,7 +340,15 @@ def login(purpose, pair=False):
         ),
         status=302,
     )
-    scopes = parse_qs(urlsplit(auth).query)["scope"][0].split()
+    params = parse_qs(urlsplit(auth).query)
+    if existing:
+        assert "prompt" not in params
+    if cancel:
+        result = urlsplit(call("/api/youtube/callback?" + urlencode({"state":params["state"][0],"error":"access_denied"}),status=302))
+        fields = parse_qs(result.query)
+        check((result.hostname,result.port,result.path) == ("127.0.0.1",12345,"/callback") and fields["state"] == ["test-state"] and fields["error"] == ["access_denied"] and bool(fields["error_description"]), "cancelled consent returns to the validated OBS listener")
+        return
+    scopes = params["scope"][0].split()
     check(
         set(scopes)
         == {
@@ -466,6 +478,7 @@ def exercise():
         (digest(sid), user, int(time.time() * 1000) + 600000),
     )
     cookies["clips_sid"] = sid
+    login("pair", True, cancel=True)
     for unticked in [
         "openid",
         "email",
@@ -476,7 +489,7 @@ def exercise():
         login("pair", True)
     unticked = None
     token = login("pair", True)
-    second = login("pair", True)
+    second = login("pair", True, existing=True)
     assert len(call("/api/me")["youtube"]["devices"]) == 2
     call("/api/youtube/upload/status?clipId=none", status=404, bearer=token)
     assert call("/api/youtube/obs/unpair", "POST", {}, bearer=second) == {"unpaired": True}
@@ -500,6 +513,9 @@ def exercise():
         origin="https://other.example",
     )
     assert not revoked
+    revoke_failure = "replacement"
+    call("/api/youtube/disconnect", "POST", {}, status=409, origin=BASE)
+    check(bool(call("/api/me")["youtube"]["devices"]), "disconnect preserved the replacement grant and its devices")
     revoke_failure = True
     call("/api/youtube/disconnect", "POST", {}, status=502, origin=BASE)
     check(bool(call("/api/me")["youtube"]), "unknown revocation error retains the grant for retry")
@@ -548,7 +564,7 @@ def exercise():
     )
     me = call("/api/me")
     assert me["storage"] is None and me["youtube"]["channelId"] == CHANNEL
-    assert call("/api/clips") == {"clips": [], "youtube": []}
+    assert call("/api/clips") == {"clips": [], "youtube": [], "returning": True}
     print("Bucketless Google login, OBS state and single-use exchange: OK", flush=True)
 
     def upload(direct=False):
@@ -675,6 +691,12 @@ def exercise():
     call(endpoint + "/cut", "PUT", {"start": 2.5, "end": 7}, 400)
     call(endpoint + "/cut", "PUT", {"start": 2, "end": 7})
     assert call("/api/clips")["youtube"][0]["cut"] == {"start": 2, "end": 7}
+    # D1 changes zero rows if the clip disappears after the handler reads it.
+    sql("CREATE TRIGGER skip_cut BEFORE UPDATE OF start ON youtube_clips BEGIN SELECT RAISE(IGNORE); END")
+    try:
+        check(call(endpoint + "/cut", "PUT", None, status=None) == 404, "zero-row cut update reports the clip is gone")
+    finally:
+        sql("DROP TRIGGER skip_cut")
     call(endpoint + "/cut", "PUT", None)
     videos[vid]["snippet"]["title"] = "Renamed on YouTube"
     videos[vid]["status"]["privacyStatus"] = "unlisted"
@@ -765,9 +787,9 @@ def exercise():
     call("/api/youtube/upload/start", "POST", metadata, 401, token)
     token = login("connect", True)
     revoked = True
+    stopped = call("/api/youtube/upload/start", "POST", metadata, 401, token)
     assert (
-        "Sign in"
-        in call("/api/youtube/upload/start", "POST", metadata, 401, token)["error"]
+        "Sign in" in stopped["error"] and stopped["reason"] == "revoked"
         and call("/api/me")["youtube"] is None
     )
     print(

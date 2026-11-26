@@ -116,10 +116,13 @@ export function useYouTubeChange() {
           ? list?.map((c) => (c.key === clip.key ? next : c))
           : list?.filter((c) => c.key !== clip.key)
       )
-
     },
-    onError: (err, {clip,change}) => {
-      updateClips(qc,list=> change.kind === "delete" && !list.some(c=>c.key===clip.key) ? [...list,clip] : list.map(c=>c.key===clip.key ? clip : c))
+    onError: (err, { clip, change }) => {
+      updateClips(qc, (list) =>
+        change.kind === "delete" && !list.some((c) => c.key === clip.key)
+          ? [...list, clip]
+          : list.map((c) => (c.key === clip.key ? clip : c))
+      )
       toast.error(err.message)
     },
     onSuccess: (_data, { change }) => toast.success(doneText(change)),

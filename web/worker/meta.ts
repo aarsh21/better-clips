@@ -77,7 +77,10 @@ export interface Meta {
   /* Reserves a new upload's key. False if another upload already has it. */
   startUpload(uploadId: string, key: string): Promise<boolean>
   /* Whether this user started the upload with this key. */
-  uploadState(uploadId: string, key: string): Promise<"open" | "complete" | null>
+  uploadState(
+    uploadId: string,
+    key: string
+  ): Promise<"open" | "complete" | null>
   finishUpload(uploadId: string, key: string): Promise<void>
   endUpload(uploadId: string): Promise<void>
 }
@@ -165,14 +168,29 @@ export function bucketMeta(bucket: R2Bucket): Meta {
     putThumb: async () => {},
 
     async claimMove(move) {
-      return Boolean(await bucket.put(`config/moves/${encodeURIComponent(move.from)}`,JSON.stringify(move),{onlyIf:{etagDoesNotMatch:"*"}}))
+      return Boolean(
+        await bucket.put(
+          `config/moves/${encodeURIComponent(move.from)}`,
+          JSON.stringify(move),
+          { onlyIf: { etagDoesNotMatch: "*" } }
+        )
+      )
     },
     async pendingMoves() {
-      const rows = await listAll(bucket,"config/moves/")
-      const moves = await Promise.all(rows.filter(r=>r.uploaded.getTime()<Date.now()-60000).slice(0,20).map(async r => (await bucket.get(r.key))?.json<Moved>()))
-      return moves.filter(m=>!!m)
+      const rows = await listAll(bucket, "config/moves/")
+
+      const moves = await Promise.all(
+        rows
+          .filter((r) => r.uploaded.getTime() < Date.now() - 60000)
+          .slice(0, 20)
+          .map(async (r) => (await bucket.get(r.key))?.json<Moved>())
+      )
+
+      return moves.filter((m) => !!m)
     },
-    async endMove(from) { await bucket.delete(`config/moves/${encodeURIComponent(from)}`) },
+    async endMove(from) {
+      await bucket.delete(`config/moves/${encodeURIComponent(from)}`)
+    },
     async moved({ from, to, etag }) {
       const shares = await listAll(bucket, "shares/")
 
@@ -203,16 +221,28 @@ export function bucketMeta(bucket: R2Bucket): Meta {
       await bucket.put(`shares/${id}.json`, JSON.stringify(share))
     },
 
-    async startUpload(id,key) {
-      return Boolean(await bucket.put(`config/uploads/${encodeURIComponent(id)}`,key,{onlyIf:{etagDoesNotMatch:"*"}}))
+    async startUpload(id, key) {
+      return Boolean(
+        await bucket.put(`config/uploads/${encodeURIComponent(id)}`, key, {
+          onlyIf: { etagDoesNotMatch: "*" },
+        })
+      )
     },
-    async uploadState(id,key) {
+    async uploadState(id, key) {
       const row = await bucket.get(`config/uploads/${encodeURIComponent(id)}`)
-      if (!row || await row.text() !== key) return null
+
+      if (!row || (await row.text()) !== key) return null
+
       return row.customMetadata?.completed ? "complete" : "open"
     },
-    async finishUpload(id,key) { await bucket.put(`config/uploads/${encodeURIComponent(id)}`,key,{customMetadata:{completed:"1"}}) },
-    async endUpload(id) { await bucket.delete(`config/uploads/${encodeURIComponent(id)}`) },
+    async finishUpload(id, key) {
+      await bucket.put(`config/uploads/${encodeURIComponent(id)}`, key, {
+        customMetadata: { completed: "1" },
+      })
+    },
+    async endUpload(id) {
+      await bucket.delete(`config/uploads/${encodeURIComponent(id)}`)
+    },
   }
 }
 
@@ -303,13 +333,33 @@ export function d1Meta(db: D1Database, tenant: string): Meta {
     },
 
     async claimMove(move) {
-      return Boolean((await db.prepare("INSERT INTO bucket_moves(tenant_id,source,move,created) VALUES(?,?,?,?) ON CONFLICT DO NOTHING").bind(tenant,move.from,JSON.stringify(move),Date.now()).run()).meta.changes)
+      return Boolean(
+        (
+          await db
+            .prepare(
+              "INSERT INTO bucket_moves(tenant_id,source,move,created) VALUES(?,?,?,?) ON CONFLICT DO NOTHING"
+            )
+            .bind(tenant, move.from, JSON.stringify(move), Date.now())
+            .run()
+        ).meta.changes
+      )
     },
     async pendingMoves() {
-      const rows = await db.prepare("SELECT move FROM bucket_moves WHERE tenant_id=? AND created<? ORDER BY created LIMIT 20").bind(tenant,Date.now()-60000).all<{move:string}>()
-      return rows.results.map(({move}):Moved=>JSON.parse(move))
+      const rows = await db
+        .prepare(
+          "SELECT move FROM bucket_moves WHERE tenant_id=? AND created<? ORDER BY created LIMIT 20"
+        )
+        .bind(tenant, Date.now() - 60000)
+        .all<{ move: string }>()
+
+      return rows.results.map(({ move }): Moved => JSON.parse(move))
     },
-    async endMove(from) { await db.prepare("DELETE FROM bucket_moves WHERE tenant_id=? AND source=?").bind(tenant,from).run() },
+    async endMove(from) {
+      await db
+        .prepare("DELETE FROM bucket_moves WHERE tenant_id=? AND source=?")
+        .bind(tenant, from)
+        .run()
+    },
     async moved({ from, to, etag, thumb }) {
       /* Only links to the recording that was moved follow it. A link pinned
        * to an earlier recording at this name stays off. */
@@ -386,7 +436,9 @@ export function d1Meta(db: D1Database, tenant: string): Meta {
     async startUpload(uploadId, key) {
       /* Old reservations of uploads that never finished free their key. */
       await db
-        .prepare("DELETE FROM uploads WHERE tenant_id = ? AND completed=0 AND created < ?")
+        .prepare(
+          "DELETE FROM uploads WHERE tenant_id = ? AND completed=0 AND created < ?"
+        )
         .bind(tenant, Date.now() - 86_400_000)
         .run()
 
@@ -407,15 +459,24 @@ export function d1Meta(db: D1Database, tenant: string): Meta {
           "SELECT completed FROM uploads WHERE upload_id = ? AND tenant_id = ? AND key = ?"
         )
         .bind(uploadId, tenant, key)
-        .first<{completed:number}>()
+        .first<{ completed: number }>()
 
-      return row ? row.completed ? "complete" : "open" : null
+      return row ? (row.completed ? "complete" : "open") : null
     },
-    async finishUpload(id,key) { await db.prepare("UPDATE uploads SET completed=1 WHERE upload_id=? AND tenant_id=? AND key=?").bind(id,tenant,key).run() },
+    async finishUpload(id, key) {
+      await db
+        .prepare(
+          "UPDATE uploads SET completed=1 WHERE upload_id=? AND tenant_id=? AND key=?"
+        )
+        .bind(id, tenant, key)
+        .run()
+    },
 
     async endUpload(uploadId) {
       await db
-        .prepare("DELETE FROM uploads WHERE upload_id = ? AND tenant_id = ? AND completed=0")
+        .prepare(
+          "DELETE FROM uploads WHERE upload_id = ? AND tenant_id = ? AND completed=0"
+        )
         .bind(uploadId, tenant)
         .run()
     },

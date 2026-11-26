@@ -302,7 +302,12 @@ export type Me =
   | {
       hosted?: true
       email: string
-      storage: { id: string; bucket: string; auto: boolean; keyOrigin: "app" | "manual" | "unknown" } | null
+      storage: {
+        id: string
+        bucket: string
+        auto: boolean
+        keyOrigin: "app" | "manual" | "unknown"
+      } | null
       /** The connected channel. clips may upload, list, rename, change
        * visibility, cut and delete its videos. */
       youtube?: {
@@ -444,19 +449,32 @@ export const api = {
   /* Bucket clips and YouTube clips, in one list. An app without YouTube
    * leaves youtube out. */
   clips: (previous?: Clip[]) =>
-    request<{ clips?: ApiClip[]; youtube?: ApiYouTubeClip[]; errors?:{r2?:string;youtube?:string} }>(
-      "/api/clips"
-    ).then((d) => {
+    request<{
+      clips?: ApiClip[]
+      youtube?: ApiYouTubeClip[]
+      returning?: boolean
+      errors?: { r2?: string; youtube?: string }
+    }>("/api/clips").then((d) => {
       const history = `clips:had-clips:${account ?? "self"}`
-      if (d.clips?.length || d.youtube?.length) localStorage.setItem(history,"1")
+
+      if (d.clips?.length || d.youtube?.length)
+        localStorage.setItem(history, "1")
+
       return {
-      returning: localStorage.getItem(history) === "1",
-      warnings: Object.values(d.errors ?? {}),
-      clips: withTitles([
-        ...(d.clips?.map(parseClip) ?? (d.errors?.r2 && previous ? previous.filter(c=>c.source === "bucket") : [])),
-        ...(d.youtube?.map(parseYouTubeClip) ?? (d.errors?.youtube && previous ? previous.filter(c=>c.source === "youtube") : [])),
-      ])
-    }}),
+        returning: d.returning || localStorage.getItem(history) === "1",
+        warnings: Object.values(d.errors ?? {}),
+        clips: withTitles([
+          ...(d.clips?.map(parseClip) ??
+            (d.errors?.r2 && previous
+              ? previous.filter((c) => c.source === "bucket")
+              : [])),
+          ...(d.youtube?.map(parseYouTubeClip) ??
+            (d.errors?.youtube && previous
+              ? previous.filter((c) => c.source === "youtube")
+              : [])),
+        ]),
+      }
+    }),
   updateYouTube: (
     id: string,
     body: { title?: string; description?: string; privacy?: Privacy }
@@ -476,7 +494,11 @@ export const api = {
     request<{ ok?: boolean }>(youtubeClip(id), { method: "DELETE" }),
   disconnectYouTube: () =>
     request<{ ok?: boolean }>("/api/youtube/disconnect", { method: "POST" }),
-  removeDevice: (id: string) => request<{ unpaired: true }>(`/api/youtube/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  removeDevice: (id: string) =>
+    request<{ unpaired: true }>(
+      `/api/youtube/devices/${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    ),
   move: (key: string, body: { to?: Folder; name?: string }) =>
     request<{ key: string }>("/api/move", {
       method: "POST",

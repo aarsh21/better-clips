@@ -919,7 +919,12 @@ export async function checkBucket(store: Store, patient: boolean) {
       if (!(await store.put(probe, "ok", { createOnly: true })))
         throw new StorageError(409, "Storage error: the check file exists")
       probes.push(probe)
-      if ((await store.delete(probes)).length) throw new StorageError(403, "Storage error: could not delete the check file")
+
+      if ((await store.delete(probes)).length)
+        throw new StorageError(
+          403,
+          "Storage error: could not delete the check file"
+        )
 
       return
     } catch (err) {
@@ -984,7 +989,8 @@ async function saveTenant(
       /* A bucket you bring may hold clips the app never saw: clean-up
        * waits until you confirm the lengths in Settings. */
       b.createdByApp ? 1 : 0,
-      Date.now(), Number(b.newKey)
+      Date.now(),
+      Number(b.newKey)
     )
     .run()
   forgetUser(userId)
@@ -1111,7 +1117,12 @@ export function hostedRoutes(app: Hono<any>) {
           id: entry.row.id,
           bucket: entry.row.bucket,
           auto: entry.row.created_by_app === 1,
-          keyOrigin: entry.row.app_key === null ? "unknown" : entry.row.app_key ? "app" : "manual",
+          keyOrigin:
+            entry.row.app_key === null
+              ? "unknown"
+              : entry.row.app_key
+                ? "app"
+                : "manual",
         },
       },
       200,

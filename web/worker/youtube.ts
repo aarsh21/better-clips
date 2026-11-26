@@ -27,7 +27,10 @@ const requiredScopes = [
 
 function hasAllScopes(scopes: string | undefined) {
   const granted = new Set(scopes?.split(" "))
-  if (granted.has("https://www.googleapis.com/auth/userinfo.email")) granted.add("email")
+
+  if (granted.has("https://www.googleapis.com/auth/userinfo.email"))
+    granted.add("email")
+
   return requiredScopes.every((s) => granted.has(s))
 }
 
@@ -50,6 +53,7 @@ type Account = {
   user_id: string
   grant_id: string
   sync_failed: number
+  had_clips: number
   subject: string
   channel_id: string
   channel_title: string
@@ -115,8 +119,20 @@ export async function youtubeInfo(env: HostedEnv, user: string) {
     a && {
       channelId: a.channel_id,
       channelTitle: a.channel_title,
-      devices: (await env.DB!.prepare("SELECT id,last_seen AS lastSeen FROM youtube_devices WHERE user_id=? ORDER BY last_seen DESC,id").bind(user).all()).results,
-      clipCount: await env.DB!.prepare("SELECT count(*) FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL").bind(user).first<number>("count(*)"),
+      devices: (
+        await env
+          .DB!.prepare(
+            "SELECT id,last_seen AS lastSeen FROM youtube_devices WHERE user_id=? ORDER BY last_seen DESC,id"
+          )
+          .bind(user)
+          .all()
+      ).results,
+      clipCount: await env
+        .DB!.prepare(
+          "SELECT count(*) FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL"
+        )
+        .bind(user)
+        .first<number>("count(*)"),
     }
   )
 }
@@ -125,7 +141,15 @@ async function obs(c: Context) {
   const env: HostedEnv = c.env
   const token = /^Bearer (\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1]
 
-  const user = token && await env.DB!.prepare("UPDATE youtube_devices SET last_seen=? WHERE token_hash=? RETURNING user_id").bind(Date.now(), await sha256(token)).first<string>("user_id")
+  const user =
+    token &&
+    (await env
+      .DB!.prepare(
+        "UPDATE youtube_devices SET last_seen=? WHERE token_hash=? RETURNING user_id"
+      )
+      .bind(Date.now(), await sha256(token))
+      .first<string>("user_id"))
+
   return user ? account(env, user) : null
 }
 
@@ -167,7 +191,11 @@ async function access(env: HostedEnv, a: Account) {
         )
         .bind(a.user_id, a.refresh_enc, a.grant_id)
         .run()
-      if (!deleted.meta.changes) throw new HTTPException(409, { message: "The channel connection changed. Try again." })
+
+      if (!deleted.meta.changes)
+        throw new HTTPException(409, {
+          message: "The channel connection changed. Try again.",
+        })
       throw new HTTPException(401, { message: reconnect })
     }
 
@@ -217,7 +245,11 @@ async function googleError(res: Response) {
   const status = res.status >= 400 ? (res.status as ContentfulStatusCode) : 502
 
   return new HTTPException(
-    status === 403 && /rateLimit/i.test(reason ?? "") ? 429 : status,
+    status === 401
+      ? 502
+      : status === 403 && /rateLimit/i.test(reason ?? "")
+        ? 429
+        : status,
     {
       message:
         reason &&
@@ -351,6 +383,7 @@ async function sync(
         )
     })
   )
+
   return true
 }
 
@@ -365,9 +398,20 @@ export async function youtubeClips(
   if (!a) return { clips: [], stale: false }
 
   ctx.waitUntil(
-    sync(env,a).then(updated => updated ? 0 : null, () => 1).then(async failed => {
-      if (failed !== null && failed !== a.sync_failed) await db.prepare("UPDATE youtube_accounts SET sync_failed=? WHERE user_id=? AND grant_id=?").bind(failed,user,a.grant_id).run()
-    })
+    sync(env, a)
+      .then(
+        (updated) => (updated ? 0 : null),
+        () => 1
+      )
+      .then(async (failed) => {
+        if (failed !== null && failed !== a.sync_failed)
+          await db
+            .prepare(
+              "UPDATE youtube_accounts SET sync_failed=? WHERE user_id=? AND grant_id=?"
+            )
+            .bind(failed, user, a.grant_id)
+            .run()
+      })
   )
 
   const { results } = await db
@@ -380,11 +424,15 @@ export async function youtubeClips(
     .bind(user)
     .all()
 
-  return { stale: Boolean(a.sync_failed), clips: results.map(({ start, end, ...row }) => ({
-    ...row,
-    cut: start === null ? null : { start, end },
-    url: `https://youtu.be/${row.videoId}`,
-  })) }
+  return {
+    returning: Boolean(a.had_clips),
+    stale: Boolean(a.sync_failed),
+    clips: results.map(({ start, end, ...row }) => ({
+      ...row,
+      cut: start === null ? null : { start, end },
+      url: `https://youtu.be/${row.videoId}`,
+    })),
+  }
 }
 
 export async function youtubeMaintenance(env: HostedEnv) {
@@ -521,7 +569,7 @@ export function youtubeRoutes(app: Hono<any>) {
         "/o/oauth2/v2/auth"
     )
 
-    const existing = who && await account(env, who.userId)
+    const existing = who && (await account(env, who.userId))
     url.search = new URLSearchParams({
       client_id: env.GOOGLE_CLIENT_ID,
       redirect_uri: callback(c),
@@ -533,7 +581,9 @@ export function youtubeRoutes(app: Hono<any>) {
       code_challenge: await sha256(f.verifier),
       code_challenge_method: "S256",
     }).toString()
-    if (!hasAllScopes(existing?.scopes)) url.searchParams.set("prompt", "consent")
+
+    if (!hasAllScopes(existing?.scopes))
+      url.searchParams.set("prompt", "consent")
 
     return c.redirect(url.href)
   })
@@ -545,6 +595,7 @@ export function youtubeRoutes(app: Hono<any>) {
     deleteCookie(c, cookie, { path, secure: true })
     let validated: Flow | undefined
     let error = "server_error"
+
     try {
       const f: Flow = JSON.parse(
         await decrypt(env, sealed ?? "", currentVersion(env)).catch(
@@ -572,6 +623,7 @@ export function youtubeRoutes(app: Hono<any>) {
       })
 
       if (!t.access_token) throw new Error("Google sign-in failed. Try again.")
+
       if (!hasAllScopes(t.scope)) {
         error = "insufficient_scope"
         throw new Error(
@@ -631,7 +683,9 @@ export function youtubeRoutes(app: Hono<any>) {
           t.scope,
           await encrypt(env, refresh),
           currentVersion(env),
-          Date.now(), t.refresh_token || !old ? crypto.randomUUID() : old.grant_id, old?.grant_id ?? null
+          Date.now(),
+          t.refresh_token || !old ? crypto.randomUUID() : old.grant_id,
+          old?.grant_id ?? null
         )
         .run()
 
@@ -654,10 +708,21 @@ export function youtubeRoutes(app: Hono<any>) {
           new URLSearchParams({ state: f.obsState, code })
       )
     } catch (err) {
-      const description = err instanceof Error && !err.message.includes("D1_")
-              ? err.message
-              : "YouTube sign-in failed. Try again."
-      if (validated?.port) return c.redirect(`http://127.0.0.1:${validated.port}/callback?` + new URLSearchParams({ state:validated.obsState, error, error_description:description }))
+      const description =
+        err instanceof Error && !err.message.includes("D1_")
+          ? err.message
+          : "YouTube sign-in failed. Try again."
+
+      if (validated?.port)
+        return c.redirect(
+          `http://127.0.0.1:${validated.port}/callback?` +
+            new URLSearchParams({
+              state: validated.obsState,
+              error,
+              error_description: description,
+            })
+        )
+
       return c.redirect("/?auth_error=" + encodeURIComponent(description))
     }
   })
@@ -684,25 +749,64 @@ export function youtubeRoutes(app: Hono<any>) {
         401
       )
 
-    const inserted = await db.prepare("INSERT INTO youtube_devices(id,user_id,token_hash,last_seen) SELECT ?,user_id,?,? FROM youtube_accounts WHERE user_id=?").bind(crypto.randomUUID(), await sha256(uploadToken), Date.now(), a.user_id).run()
-    const info = inserted.meta.changes && await account(env, a.user_id)
+    const inserted = await db
+      .prepare(
+        "INSERT INTO youtube_devices(id,user_id,token_hash,last_seen) SELECT ?,user_id,?,? FROM youtube_accounts WHERE user_id=?"
+      )
+      .bind(
+        crypto.randomUUID(),
+        await sha256(uploadToken),
+        Date.now(),
+        a.user_id
+      )
+      .run()
+
+    const info = inserted.meta.changes && (await account(env, a.user_id))
+
     if (!info) return c.json({ error: reconnect, reason: "revoked" }, 401)
 
-    return c.json({ channelId: info.channel_id, channelTitle: info.channel_title, uploadToken }, 200, {
-      "cache-control": "no-store",
-    })
+    return c.json(
+      {
+        channelId: info.channel_id,
+        channelTitle: info.channel_title,
+        uploadToken,
+      },
+      200,
+      {
+        "cache-control": "no-store",
+      }
+    )
   })
   app.post(path + "/obs/unpair", async (c) => {
     const env: HostedEnv = c.env
-    const token = /^Bearer (\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1]
-    const removed = token && await env.DB!.prepare("DELETE FROM youtube_devices WHERE token_hash=?").bind(await sha256(token)).run()
-    if (!removed || !removed.meta.changes) return c.json({ error: reconnect, reason: "unpaired" }, 401)
+
+    const token = /^Bearer (\S+)$/i.exec(
+      c.req.header("authorization") ?? ""
+    )?.[1]
+
+    const removed =
+      token &&
+      (await env
+        .DB!.prepare("DELETE FROM youtube_devices WHERE token_hash=?")
+        .bind(await sha256(token))
+        .run())
+
+    if (!removed || !removed.meta.changes)
+      return c.json({ error: reconnect, reason: "unpaired" }, 401)
+
     return c.json({ unpaired: true })
   })
   app.delete(path + "/devices/:id", async (c) => {
     const env: HostedEnv = c.env
-    const removed = await env.DB!.prepare("DELETE FROM youtube_devices WHERE user_id=? AND id=?").bind(c.get("who").userId,c.req.param("id")).run()
-    return removed.meta.changes ? c.json({ unpaired: true }) : c.json({ error: "Device is no longer paired." }, 404)
+
+    const removed = await env
+      .DB!.prepare("DELETE FROM youtube_devices WHERE user_id=? AND id=?")
+      .bind(c.get("who").userId, c.req.param("id"))
+      .run()
+
+    return removed.meta.changes
+      ? c.json({ unpaired: true })
+      : c.json({ error: "Device is no longer paired." }, 404)
   })
   app.post(path + "/upload/start", async (c) => {
     const env: HostedEnv = c.env,
@@ -953,13 +1057,16 @@ export function youtubeRoutes(app: Hono<any>) {
               cut.end > Math.ceil(clip.durationSeconds)))
         )
           return c.json({ error: "Invalid whole-second cut" }, 400)
+
         const saved = await db
           .prepare(
             "UPDATE youtube_clips SET start=?,end=? WHERE id=? AND user_id=?"
           )
           .bind(cut?.start ?? null, cut?.end ?? null, id, user)
           .run()
-        if (!saved.meta.changes) return c.json({ error: "This clip is gone." }, 404)
+
+        if (!saved.meta.changes)
+          return c.json({ error: "This clip is gone." }, 404)
       } else if (c.req.method === "DELETE") {
         await google(
           env,
@@ -1101,17 +1208,32 @@ export function youtubeRoutes(app: Hono<any>) {
       }),
     })
 
-    const alreadyInvalid = res.status === 400 && (await res.json<{error?:string}>().catch(() => null))?.error === "invalid_token"
+    const alreadyInvalid =
+      res.status === 400 &&
+      (await res.json<{ error?: string }>().catch(() => null))?.error ===
+        "invalid_token"
+
     if (!res.ok && !alreadyInvalid)
       return c.json(
         { error: "Google could not confirm disconnection. Try again." },
         502
       )
+
     const deleted = await env
-      .DB!.prepare("DELETE FROM youtube_accounts WHERE user_id=? AND grant_id=?")
-      .bind(a.user_id,a.grant_id)
+      .DB!.prepare(
+        "DELETE FROM youtube_accounts WHERE user_id=? AND grant_id=? AND refresh_enc=?"
+      )
+      .bind(a.user_id, a.grant_id, a.refresh_enc)
       .run()
-    if (!deleted.meta.changes) return c.json({ error: "The channel connection changed. Review it before disconnecting again." }, 409)
+
+    if (!deleted.meta.changes)
+      return c.json(
+        {
+          error:
+            "The channel connection changed. Review it before disconnecting again.",
+        },
+        409
+      )
 
     return c.json({ ok: true })
   })

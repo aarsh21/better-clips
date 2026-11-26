@@ -178,7 +178,8 @@ export function Faq() {
       <Section title="Google and YouTube">
         <Q q="Which Google permissions does Better Clips ask for, and why?">
           <p>
-            For bucket storage only, use Cloudflare sign-in. When connecting YouTube through the app, Google asks for all permissions together:
+            For bucket storage only, use Cloudflare sign-in. When connecting
+            YouTube through the app, Google asks for all permissions together:
           </p>
           <ul>
             <li>
@@ -337,7 +338,9 @@ export function Privacy() {
             </li>
             <li>
               With YouTube: your channel&apos;s ID and name, and Google&apos;s
-              refresh token, encrypted at rest when you upload through this app. In direct mode the token stays in the plugin&apos;s settings on your computer. Better Clips does not encrypt it there.
+              refresh token, encrypted at rest when you upload through this app.
+              In direct mode the token stays in the plugin&apos;s settings on
+              your computer. Better Clips does not encrypt it there.
             </li>
             <li>
               With a bucket: its name and access key, with the secret key

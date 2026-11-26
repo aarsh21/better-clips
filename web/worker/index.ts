@@ -37,6 +37,7 @@ import {
   obsTenant,
   rewrapStale,
   setupCode,
+  sha256,
   signedIn,
   type HostedEnv,
   type SignedIn,
@@ -158,7 +159,10 @@ app.use("/api/*", async (c, next) => {
 
     if (!token || !(await sameText(bearerOf(c), token)))
       return c.json(
-        { error: "Wrong upload token. Paste a new setup code." },
+        {
+          error: "Wrong upload token. Paste a new setup code.",
+          reason: "unpaired",
+        },
         401
       )
     c.set("uploader", "obs")
@@ -197,7 +201,10 @@ async function hostedAuth(c: Context<App>, next: Next) {
 
     if (!tenant)
       return c.json(
-        { error: "Wrong upload token. Copy the command from your app again." },
+        {
+          error: "Wrong upload token. Copy the command from your app again.",
+          reason: "unpaired",
+        },
         401
       )
     c.set("uploader", "obs")
@@ -233,7 +240,11 @@ async function hostedAuth(c: Context<App>, next: Next) {
     )
   c.set("uploader", "owner")
 
-  if (ACCOUNT.has(c.req.path) || c.req.path.startsWith("/api/youtube/") || (c.req.path === "/api/clips" && c.req.method === "GET"))
+  if (
+    ACCOUNT.has(c.req.path) ||
+    c.req.path.startsWith("/api/youtube/") ||
+    (c.req.path === "/api/clips" && c.req.method === "GET")
+  )
     return next()
   const entry = who.tenantId ? await loadTenant(c.env, who.tenantId) : null
 
@@ -443,9 +454,14 @@ function slug(text: string) {
 
 /* The last component is the download name; the directory identifies this
  * particular object, even on a restore or rename back to an old label. */
-const logicalKey = (key: string) => key.replace(/\/v-[a-f0-9-]{36}\/(?=[^/]+$)/,"/")
+const logicalKey = (key: string) =>
+  key.replace(/\/v-[a-f0-9-]{36}\/(?=[^/]+$)/, "/")
+
 function freshKey(key: string) {
-  return logicalKey(key).replace(/[^/]+$/,file=>`v-${crypto.randomUUID()}/${file}`)
+  return logicalKey(key).replace(
+    /[^/]+$/,
+    (file) => `v-${crypto.randomUUID()}/${file}`
+  )
 }
 
 /* Deletes clips and their thumbnails, thumbnail first, so a failure never
@@ -473,7 +489,8 @@ async function move(t: Tenant, from: string, wanted: string) {
   if (!clip?.etag) throw new Error("Clip not found")
 
   const key = freshKey(wanted)
-  const etag = await t.store.copy(from,key,true,clip.etag)
+  const etag = await t.store.copy(from, key, true, clip.etag)
+
   if (!etag) throw new ClipChanged()
 
   /* A thumbnail that changed meanwhile isn't copied; the app makes a new
@@ -482,49 +499,80 @@ async function move(t: Tenant, from: string, wanted: string) {
     ? await t.store
         .copy(`thumbs/${from}.jpg`, `thumbs/${key}.jpg`, true, thumb.etag)
         .catch((err) => {
-          console.warn("Thumbnail not copied; it will be regenerated",err instanceof ClipChanged)
+          console.warn(
+            "Thumbnail not copied; it will be regenerated",
+            err instanceof ClipChanged
+          )
+
           return null
         })
     : null
 
   /* R2 can't delete a file only if it's unchanged, so check right before
    * deleting: if the clip was replaced since the copy, keep both files. */
-  const record: Moved = {from,to:key,etag:[clip.etag,etag],thumb:thumb && thumbEtag ? [thumb.etag,thumbEtag] : null}
-  if (!await t.meta.claimMove(record)) {
-    await deleteClips(t.store,[key])
-    throw new HTTPException(409,{message:"A move for this clip is already in progress. Refresh the library."})
+  const record: Moved = {
+    from,
+    to: key,
+    etag: [clip.etag, etag],
+    thumb: thumb && thumbEtag ? [thumb.etag, thumbEtag] : null,
   }
+
+  if (!(await t.meta.claimMove(record))) {
+    await deleteClips(t.store, [key])
+    throw new HTTPException(409, {
+      message:
+        "A move for this clip is already in progress. Refresh the library.",
+    })
+  }
+
   if ((await t.store.head(from))?.etag !== clip.etag) {
-    await deleteClips(t.store,[key])
+    await deleteClips(t.store, [key])
     await t.meta.endMove(from)
     throw new ClipChanged()
   }
+
   try {
     await finishMove(t, record)
   } catch (err) {
     if (err instanceof ClipChanged) throw err
-    throw new HTTPException(409,{message:"The clip was copied, but its move did not finish. Keep both copies; Better Clips will check again."})
+    throw new HTTPException(409, {
+      message:
+        "The clip was copied, but its move did not finish. Keep both copies; Better Clips will check again.",
+    })
   }
+
   return key
 }
 
-async function finishMove(t:Tenant, move:Moved) {
-  const [src,dest] = await Promise.all([t.store.head(move.from),t.store.head(move.to)])
+async function finishMove(t: Tenant, move: Moved) {
+  const [src, dest] = await Promise.all([
+    t.store.head(move.from),
+    t.store.head(move.to),
+  ])
+
   if (dest?.etag !== move.etag[1] || (src && src.etag !== move.etag[0])) {
     // Another writer changed a file. Keep its bytes and do not retarget shares.
     await t.meta.endMove(move.from)
     throw new ClipChanged()
   }
-  if (src && !(await deleteClips(t.store,[move.from])).length) throw new Error("Original still present")
+
+  if (src && !(await deleteClips(t.store, [move.from])).length)
+    throw new Error("Original still present")
   await t.meta.moved(move)
   await t.meta.endMove(move.from)
 }
 
-async function reconcileMoves(t:Tenant) {
-  for (const move of await t.meta.pendingMoves()) {
-    if (!clipKey(move.from) || !clipKey(move.to) || move.from === move.to) continue
-    await finishMove(t,move).catch(()=>console.warn("A copied clip still needs reconciliation"))
-  }
+async function reconcileMoves(t: Tenant) {
+  const pending = await t.meta.pendingMoves()
+  await Promise.all(
+    pending.map(async (move) => {
+      if (!clipKey(move.from) || !clipKey(move.to) || move.from === move.to)
+        return
+      await finishMove(t, move).catch(() =>
+        console.warn("A copied clip still needs reconciliation")
+      )
+    })
+  )
 }
 
 /* Sends an object. A <video>, <img> or download loads straight from the
@@ -597,19 +645,41 @@ export type Clip = {
 /* One listing of the whole bucket, plus what the app knows about thumbs. */
 app.get("/api/clips", async (c) => {
   const who = c.get("who")
-  const [r2,yt] = await Promise.allSettled([
-    (who?.tenantId ? loadTenant(c.env,who.tenantId).then(entry=>entry?.tenant) : Promise.resolve(c.get("tenant"))).then(t=>t ? bucketClips(t) : []),
-    who ? youtubeClips(c.env,who.userId,c.executionCtx) : undefined,
+
+  const [r2, yt] = await Promise.allSettled([
+    (who?.tenantId
+      ? loadTenant(c.env, who.tenantId).then((entry) => entry?.tenant)
+      : Promise.resolve(c.get("tenant"))
+    ).then((t) => (t ? bucketClips(t) : [])),
+    who ? youtubeClips(c.env, who.userId, c.executionCtx) : undefined,
   ])
+
   const errors = {
-    r2: r2.status === "rejected" ? "Could not refresh R2 clips. Check the bucket connection in Settings." : undefined,
-    youtube: yt.status === "rejected" || yt.value?.stale ? "Could not refresh YouTube clips. Try again later." : undefined,
+    r2:
+      r2.status === "rejected"
+        ? "Could not refresh R2 clips. Check the bucket connection in Settings."
+        : undefined,
+    youtube:
+      yt.status === "rejected" || yt.value?.stale
+        ? "Could not refresh YouTube clips. Try again later."
+        : undefined,
   }
-  return c.json({clips:r2.status === "fulfilled" ? r2.value : undefined, youtube: yt.status === "fulfilled" ? yt.value?.clips : undefined, errors},200,{"cache-control":"no-store"})
+
+  return c.json(
+    {
+      clips: r2.status === "fulfilled" ? r2.value : undefined,
+      youtube: yt.status === "fulfilled" ? yt.value?.clips : undefined,
+      returning: yt.status === "fulfilled" && yt.value?.returning,
+      errors: errors.r2 || errors.youtube ? errors : undefined,
+    },
+    200,
+    { "cache-control": "no-store" }
+  )
 })
 
 async function bucketClips(t: Tenant) {
   await reconcileMoves(t)
+
   const [objects, thumbs] = await Promise.all([
     t.store.list(""),
     t.meta.thumbs(),
@@ -1014,7 +1084,9 @@ async function uploadTarget(c: Context<App>) {
   const t = c.get("tenant")
 
   const state = await t.meta.uploadState(uploadId, clip.key)
-  if (!state || (state === "complete" && c.req.path !== "/api/upload/complete")) return null
+
+  if (!state || (state === "complete" && c.req.path !== "/api/upload/complete"))
+    return null
 
   return { t, key: clip.key, uploadId, state }
 }
@@ -1042,11 +1114,19 @@ async function trimKey(store: Store, from: { key: string; folder: Folder }) {
     .slice(from.folder.length + 1)
     .replace(/(?:-trim)+(?:-\d+)?\.mp4$|\.mp4$/, "")
 
-  const day = path.slice(0,path.lastIndexOf("/")+1)
-  const objects = await Promise.all(FOLDERS.map(f=>store.list(`${f}/${day}`)))
-  const seen = new Set(objects.flat().map(o=>logicalKey(o.key).replace(/^[^/]+\//,"")))
+  const day = path.slice(0, path.lastIndexOf("/") + 1)
+
+  const objects = await Promise.all(
+    FOLDERS.map((f) => store.list(`${f}/${day}`))
+  )
+
+  const seen = new Set(
+    objects.flat().map((o) => logicalKey(o.key).replace(/^[^/]+\//, ""))
+  )
+
   for (let n = 1; ; n++) {
     const file = `${path}-trim-${n}.mp4`
+
     if (!seen.has(file)) return `${folder}/${file}`
   }
 }
@@ -1079,7 +1159,11 @@ app.post("/api/upload/start", async (c) => {
 
   for (let tries = 0; tries < 5; tries++) {
     const key = freshKey(wanted)
-    const uploadId = await t.store.createUpload(key)
+
+    const uploadId = await t.store.createUpload(
+      key,
+      await sha256(`${t.id}:${key}`)
+    )
 
     if (await t.meta.startUpload(uploadId, key))
       return c.json({ key, uploadId })
@@ -1122,23 +1206,33 @@ app.post("/api/upload/complete", async (c) => {
 
   if (!target || !body?.parts?.length)
     return c.json({ error: "Unknown upload for this bucket and key." }, 400)
+
   if (target.state === "complete") return c.json({ key: target.key })
 
-  const done = await target.t.store.completeUpload(
-    target.key,
-    target.uploadId,
-    body.parts
-  )
+  const { t, key, uploadId } = target
+
+  // Each reservation has a never-reused key. The marker lands with its bytes,
+  // even if the Worker loses R2's reply before it can finish the D1 receipt.
+  const landed = async () =>
+    (await t.store.head(key))?.uploadReceipt ===
+    (await sha256(`${t.id}:${key}`))
+
+  const done = await t.store
+    .completeUpload(key, uploadId, body.parts)
+    .catch(async (err) => {
+      if (await landed()) return true
+      throw err
+    })
 
   /* Something took the name meanwhile; it's never overwritten. */
-  if (!done) {
+  if (!done && !(await landed())) {
     await target.t.store.abortUpload(target.key, target.uploadId)
     await target.t.meta.endUpload(target.uploadId)
 
     return c.json({ error: "A clip with this name appeared. Save again." }, 409)
   }
 
-  await target.t.meta.finishUpload(target.uploadId,target.key)
+  await target.t.meta.finishUpload(target.uploadId, target.key)
   obsCheckedIn(c)
 
   return c.json({ key: target.key })
@@ -1220,7 +1314,14 @@ app.all("/api/*", (c) => c.json({ error: "Not found" }, 404))
  * that stopped working (deleted, or the bucket is gone) says so. */
 app.onError((err, c) => {
   if (err instanceof HTTPException)
-    return c.json({ error: err.message, ...(err.status === 401 && c.req.header("authorization") && { reason: "revoked" }) }, err.status)
+    return c.json(
+      {
+        error: err.message,
+        ...(err.status === 401 &&
+          c.req.header("authorization") && { reason: "revoked" }),
+      },
+      err.status
+    )
 
   if (err instanceof ClipChanged) return c.json({ error: err.message }, 409)
 

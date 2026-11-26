@@ -87,10 +87,19 @@ export function YouTubeSettings() {
   )
 }
 
-function ConnectedChannel({ channel }: { channel: NonNullable<NonNullable<ReturnType<typeof useAccount>>["youtube"]> }) {
+function ConnectedChannel({
+  channel,
+}: {
+  channel: NonNullable<NonNullable<ReturnType<typeof useAccount>>["youtube"]>
+}) {
   const qc = useQueryClient()
   const [confirming, setConfirming] = React.useState(false)
-  const remove = useMutation({ mutationFn: api.removeDevice, onSuccess: () => qc.invalidateQueries({queryKey:["me"]}) })
+
+  const remove = useMutation({
+    mutationFn: api.removeDevice,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
+  })
+
   const { channelTitle: title, devices, clipCount } = channel
 
   const disconnect = useMutation({
@@ -123,17 +132,46 @@ function ConnectedChannel({ channel }: { channel: NonNullable<NonNullable<Return
       </div>
       <section className="flex flex-col gap-2">
         <h3 className="font-medium">Paired OBS devices</h3>
-        {devices.length === 0 && <p className="text-muted-foreground">No devices paired.</p>}
-        {devices.map(({id,lastSeen}) => <div key={id} className="flex items-center justify-between gap-3 border-b pb-2">
-          <div>OBS · {id.slice(0,8)}<p className="text-[11px] text-muted-foreground">{lastSeen ? `Last seen ${new Date(lastSeen).toLocaleString()}` : "Last seen unknown"}</p></div>
-          <Button variant="outline" size="sm" aria-label={`Remove OBS ${id.slice(0,8)}`} disabled={remove.isPending} onClick={() => remove.mutate(id)}>Remove</Button>
-        </div>)}
-        {remove.error && <p role="alert" className="text-destructive">{remove.error.message}</p>}
+        {devices.length === 0 && (
+          <p className="text-muted-foreground">No devices paired.</p>
+        )}
+        {devices.map(({ id, lastSeen }) => (
+          <div
+            key={id}
+            className="flex items-center justify-between gap-3 border-b pb-2"
+          >
+            <div>
+              OBS · {id.slice(0, 8)}
+              <p className="text-[11px] text-muted-foreground">
+                {lastSeen
+                  ? `Last seen ${new Date(lastSeen).toLocaleString()}`
+                  : "Last seen unknown"}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label={`Remove OBS ${id.slice(0, 8)}`}
+              disabled={remove.isPending}
+              onClick={() => remove.mutate(id)}
+            >
+              Remove
+            </Button>
+          </div>
+        ))}
+        {remove.error && (
+          <p role="alert" className="text-destructive">
+            {remove.error.message}
+          </p>
+        )}
       </section>
       {confirming ? (
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Better Clips loses access to {title} and all paired OBS devices stop uploading there. This removes all {clipCount} YouTube library {clipCount === 1 ? "entry" : "entries"} and their cut points. Your videos stay on YouTube.
+            Better Clips loses access to {title} and all paired OBS devices stop
+            uploading there. Better Clips removes your YouTube library entries
+            ({clipCount}) and all their saved cut points. Your videos stay on
+            YouTube.
           </p>
           <div className="flex gap-2">
             <Button

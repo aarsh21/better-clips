@@ -75,9 +75,9 @@ function CloudflareSignIn() {
         Your replays, from OBS to the web
       </p>
       <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
-        Press your replay hotkey in OBS to upload a clip. Keep clips
-        in your own Cloudflare account, free up to 10 GB, or upload them to your
-        YouTube channel.
+        Press your replay hotkey in OBS to upload a clip. Keep clips in your own
+        Cloudflare account, free up to 10 GB, or upload them to your YouTube
+        channel.
       </p>
       <div className="flex flex-col gap-2">
         <a
@@ -101,8 +101,9 @@ function CloudflareSignIn() {
       </div>
       <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
         For bucket storage only, sign in with Cloudflare. For YouTube, Google
-        asks for all permissions together: to upload to your channel, list those videos, and
-        rename them, change who can watch or delete them when you ask, under{" "}
+        asks for all permissions together: to upload to your channel, list those
+        videos, and rename them, change who can watch or delete them when you
+        ask, under{" "}
         <a
           href="https://www.youtube.com/t/terms"
           target="_blank"

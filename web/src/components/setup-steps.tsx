@@ -20,12 +20,23 @@ const RELEASES = "https://github.com/aarsh21/better-clips/releases/latest"
  * by itself when OBS checks in, e.g. after Test Upload. */
 export function ObsConnect() {
   const { data: settings, dataUpdatedAt, isRefetchError } = useSettings(true)
-  const connected = !isRefetchError && Boolean(settings?.obsSeen && dataUpdatedAt - Date.parse(settings.obsSeen) < 5 * 60_000)
+
+  const connected =
+    !isRefetchError &&
+    Boolean(
+      settings?.obsSeen &&
+      dataUpdatedAt - Date.parse(settings.obsSeen) < 5 * 60_000
+    )
+
   const [showSteps, setShowSteps] = React.useState(false)
 
   return (
     <div className="flex flex-col gap-5">
-      <ObsStatus seen={settings?.obsSeen} connected={connected} loading={!settings} />
+      <ObsStatus
+        seen={settings?.obsSeen}
+        connected={connected}
+        loading={!settings}
+      />
       {connected && !showSteps ? (
         <button
           type="button"
@@ -73,7 +84,11 @@ function ObsStatus({
       </span>
       <div className="flex min-w-0 flex-col">
         <span className="text-xs font-medium">
-          {connected ? "OBS checked in recently" : seen ? "No recent OBS check" : "Waiting for OBS"}
+          {connected
+            ? "OBS checked in recently"
+            : seen
+              ? "No recent OBS check"
+              : "Waiting for OBS"}
         </span>
         <span className="text-[11px] text-muted-foreground">
           {seen

@@ -88,7 +88,9 @@ export function YouTubeStatus({
       </span>
       {large && (
         <span className="max-w-sm text-xs text-white/70">
-          {clip.status === "missing" ? "Your cut points are saved while Better Clips checks again." : failed ? (
+          {clip.status === "missing" ? (
+            "Your cut points are saved while Better Clips checks again."
+          ) : failed ? (
             <>
               Open it in{" "}
               <a
