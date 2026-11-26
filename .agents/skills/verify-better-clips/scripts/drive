@@ -2,7 +2,7 @@
 # Run one chapter against the local stack. No HTTP mutation substitutes for a UI action.
 set -euo pipefail
 phase=${1:-help}; id=${2:-}; S=$(dirname "$(realpath "$0")")
-if [[ ! $id =~ ^[a-z0-9]{1,8}$ ]]; then echo 'drive {upgrade|stores|length|library|channel|edit|direct} RUN_ID'; exit 2; fi
+if [[ ! $id =~ ^[a-z0-9]{1,8}$ ]]; then echo 'drive {upgrade|stores|length|library|channel|player|edit|direct|credentials} RUN_ID'; exit 2; fi
 cd "$(git rev-parse --show-toplevel)"; export DISPLAY=:97 R=/dev/shm/better-clips-$UID-$id E=$PWD/.amp/in/artifacts/bc-$id
 [[ -f $R/owner && $(cat "$R/owner") == "$PWD" ]] || { echo 'Start this run with lab start first'; exit 1; }
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
@@ -18,6 +18,8 @@ uploads(){ [[ $(log | grep -c 'Uploaded ') -ge $1 ]]; }; clip(){ xclip -sel clip
 pair(){ jq -e --argjson route "$1" '.youtube_channel_title=="Local channel" and .youtube_route==$route' "$cfg"; }
 account(){ b open http://localhost:8787; b wait 'button[aria-label="Settings"]'; button Settings; b wait '[role=tablist]'; sleep .4; b find role tab click --name YouTube; b wait --text 'Paired OBS devices'; sleep .4; }
 connect(){ o "$1"; waitfor pair "$2"; waitfor o --has 'Connected. Click Save to upload clips to this channel.'; }
+clean_tokens(){ for f in "$cfg" "$cfg.bak"; do jq -e 'has("youtube_refresh_token")|not' "$f" >/dev/null && ! grep -qF testing-refresh "$f" || return 1; done; }
+keyring(){ DBUS_SESSION_BUS_ADDRESS="unix:path=$R/bus" secret-tool "$@"; }
 ready_copy(){
   local path
   path=$(find "$R/recordings" -name "*${1}.mp4" -type f); test -s "$path"
@@ -127,6 +129,11 @@ channel)
   row 'select count(*) from youtube_devices' 2; o 'Unpair this OBS'; waitfor o --has 'Reconnect YouTube'; row 'select id from youtube_devices' "$first"; row 'select count(*) from youtube_accounts' 1
   connect 'Reconnect YouTube' 0; account; b wait --fn 'document.querySelectorAll("[aria-label^=\"Remove OBS\"]").length===2'; bsnap devices
   button "Remove OBS ${first:0:8}"; waitfor row 'select count(*) from youtube_devices' 1; row "select count(*) from youtube_devices where id='$first'" 0
+  o Save --role button; waitfor o --has 'Save Replay to YouTube'; o 'Save Replay to YouTube'; waitfor o --has 'choose Yes or No'; osnap audience-required
+  file=$(find "$R/recordings" -name "*$(last_uuid).mp4"); ffprobe -v error -show_entries format=duration,size -of compact "$file"; row 'select count(*) from youtube_clips' 0
+  settings; o --has "By clicking 'upload,'"; osnap audience-settings
+  ffmpeg -loglevel error -f x11grab -draw_mouse 1 -video_size 1440x900 -framerate 12 -i :97 -t 6 -vf scale=1152:-2 -threads 2 -c:v libx264 -pix_fmt yuv420p -crf 23 -y "$E/audience-choice.mp4" & recorder=$!
+  sleep .7; o 'Choose an audience' --role 'combo box'; sleep .7; xdotool key Down; sleep .5; xdotool key Down Return; wait "$recorder"
   # Remove the *current* device while settings is closed, then save without reopening settings. Only upload can observe this 401.
   o Save --role button; current=$(sql 'select id from youtube_devices'); button "Remove OBS ${current:0:8}"; b wait --text 'No devices paired'; o 'Save Replay to YouTube'; waitfor o --has 'Connect YouTube'; o 'Connect YouTube'; o --has 'Reconnect YouTube'; osnap after-upload-401
   connect 'Reconnect YouTube' 0
@@ -138,6 +145,23 @@ channel)
   waitfor copied https://youtu.be/test; clip >"$E/host-link.txt"; osnap host-upload; ready_copy "$(last_uuid)"; row "select status from youtube_clips where videoId='$(basename "$(clip)")'" ready
   # The ready state is fetched by the plugin. Capture the dock, not just the database.
   waitfor o --has 'is ready to play'; [[ $(clip) == "$(cat "$E/host-link.txt")" ]]; osnap ready; b open http://localhost:8787; b wait --text '1 clip'; bsnap hosted-library ;;
+player)
+  session=yt-$id
+  for state in kids unknown adult; do
+    echo "$state" >"$R/google-audience"
+    # Expire the cache, not the classification. Only the Worker's videos.list writes that.
+    sqlite3 "$db" 'update youtube_clips set nextSync=0'; b reload; b wait --text '1 clip'
+    case $state in kids) want=1;; unknown) want=NULL;; adult) want=0;; esac
+    waitfor row "select count(*) from youtube_clips where madeForKids is $want and nextSync>unixepoch('subsec')*1000+60000" 1
+    b reload; b wait --text '1 clip'; button 'Unlisted 0:13'
+    if [[ $state == adult ]]; then b wait 'iframe[src*="youtube.com/embed/"]'
+    else
+      b wait --text 'Watch on YouTube'; [[ $(b eval "document.querySelectorAll('iframe,script[src*=iframe_api]').length") == 0 ]]
+      [[ $(b eval "[...document.links].find(a=>a.textContent.includes('Watch on YouTube')).href" | tr -d '"') == "$(cat "$E/host-link.txt")" ]]
+    fi
+    bsnap "player-$state"; button Close; b wait --fn '!document.querySelector("[role=dialog]")'
+  done
+  rm "$R/google-audience" ;;
 edit)
   session=yt-$id; bsnap edit-before; button 'Unlisted 0:13'; b press e; b find role textbox fill 'Night practice' --name 'Clip name'; b press Enter; b wait --text 'Pending: Night practice'; bsnap pending-title
   button Unlisted; b wait '[role=menuitem]'; b find role menuitem click --name 'Private Only you can watch it'; b wait --text 'Waiting for YouTube to confirm visibility'; bsnap pending-privacy
@@ -156,12 +180,40 @@ direct)
   # A machine offline for the revocation must forget the same token on startup, before opening Settings.
   "$S/lab" quit "$id"; cp "$R/stale-device.json" "$cfg"; "$S/lab" obs "$id"; "$S/lab" doctor "$id"; waitfor jq -e '.youtube_upload_token==""' "$cfg"; waitfor o --has 'Connect YouTube'; o 'Connect YouTube'
   o --has 'Reconnect YouTube'; o 'Directly to YouTube'; connect 'Sign in with YouTube' 1; osnap direct-paired
+  grant=$(jq -er '.youtube_credential_id | select(length>0)' "$cfg"); [[ $(keyring lookup grant "$grant") == testing-refresh ]]; clean_tokens
+  dest No y
   o 'Review each clip before uploading' --indicator; osnap review-checked; o Save --role button; waitfor o --has 'Save Replay to YouTube'; hotkey; w=$(timeout 20 xdotool search --sync --onlyvisible --name '^Upload this clip to YouTube\?' | tail -1); xdotool windowactivate --sync "$w"; osnap review; o Upload --role button
   waitfor copied https://youtu.be/test "$(cat "$E/host-link.txt")"; clip >"$E/direct-link.txt"; row 'select count(*) from youtube_clips' 0; ready_copy "$(last_uuid)"; osnap direct-uploaded
-  settings; o Disconnect; waitfor jq -e '.youtube_refresh_token=="" and .youtube_channel_title==""' "$cfg"; osnap direct-disconnected; o Cancel --role button
+  settings; o Disconnect; waitfor jq -e '.youtube_credential_id=="" and .youtube_channel_title==""' "$cfg"; clean_tokens; [[ -z $(keyring lookup grant "$grant") ]]; osnap direct-disconnected; o Cancel --role button
   log | grep -E '(plugin loaded|In-memory replay buffer|Saved replay|Built |Uploaded |YouTube upload failed)' >"$E/plugin.log"
   sed -nE 's/.*\[better-clips\] Saved replay (.*) from memory .*/\1/p' "$C"/logs/*.txt >"$E/save-names.log"
   awk -F_ '{id=$NF; sub(/\.mp4$/,"",id); if ($0 !~ /_[a-f0-9]+\.mp4$/ || length(id)!=32 || seen[id]++) bad=1} END{exit bad || NR<8}' "$E/save-names.log" ;;
+credentials)
+  o 'Connect YouTube'; connect 'Reconnect YouTube' 1; o Save --role button
+  # Emulate upgrading that connected channel from the plaintext release.
+  last_id=$(jq -er '.youtube_credential_id | select(length>0)' "$cfg")
+  "$S/lab" quit "$id"
+  keyring clear grant "$last_id"
+  jq '.youtube_route=1 | .destination=2 | .youtube_refresh_token="testing-refresh" | .youtube_channel_id="UC-local-testing" | .youtube_channel_title="Local channel" | .youtube_review=false | .youtube_made_for_kids=false | del(.youtube_credential_id)' "$cfg" >"$R/legacy-direct.json"
+  for storage in keyring session; do
+    cp "$R/legacy-direct.json" "$cfg"; jq '.youtube_refresh_token="obsolete-testing-refresh"' "$cfg" >"$cfg.bak"
+    if [[ $storage == session ]]; then touch "$R/no-keyring"; fi
+    "$S/lab" obs "$id"; clean_tokens
+    if [[ $storage == keyring ]]; then
+      grant=$(jq -er '.youtube_credential_id | select(length>0)' "$cfg"); [[ $(keyring lookup grant "$grant") == testing-refresh ]]
+      "$S/lab" quit "$id"; "$S/lab" obs "$id"; waitfor o --has 'Save Replay to YouTube'
+      sleep 2; o 'Save Replay to YouTube'; waitfor copied https://youtu.be/test "$(cat "$E/direct-link.txt")"; ready_copy "$(last_uuid)"; osnap migrated
+      curl -fsS -o /dev/null --data 'token=testing-refresh' http://127.0.0.1:9393/revoke
+      o 'Save Replay to YouTube'; waitfor o --has 'Connect YouTube'; [[ -z $(keyring lookup grant "$grant") ]]; clean_tokens
+    else
+      waitfor o --has 'after restarting OBS'; osnap session-only; o OK --role button; waitfor o --has 'Save Replay to YouTube'
+      sleep 2; o 'Save Replay to YouTube'; waitfor o --has 'Connect YouTube'; o 'Connect YouTube'; connect 'Reconnect YouTube' 1
+      if o --has 'after restarting OBS'; then echo 'Repeated secure-storage notice' >&2; exit 1; fi
+      old_link=$(clip || :); o Save --role button; sleep 2; o 'Save Replay to YouTube'; waitfor copied https://youtu.be/test "$old_link"; ready_copy "$(last_uuid)"; clean_tokens
+    fi
+    "$S/lab" quit "$id"
+  done
+  "$S/lab" obs "$id"; waitfor o --has 'Connect YouTube'; clean_tokens; rm "$R/no-keyring" ;;
 *) echo "Unknown chapter: $phase" >&2; exit 2 ;;
 esac
 echo "PASS $phase; inspect $E"

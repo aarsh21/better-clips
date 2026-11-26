@@ -16,7 +16,7 @@ Use a disposable checkout with no OBS process, existing `web/.dev.vars` or `web/
 sudo -n apt-get update -qq
 sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   obs-studio qt6-svg-plugins xvfb xdotool openbox xclip x11-utils x11-xserver-utils libgl1-mesa-dri sqlite3 \
-  python3-pyatspi at-spi2-core dbus-x11 ffmpeg imagemagick iptables jq
+  python3-pyatspi at-spi2-core dbus-x11 gnome-keyring libsecret-tools ffmpeg imagemagick iptables jq
 uv tool install 'moto[server]'
 agent-browser skills get core --full >/dev/null
 S=$PWD/.agents/skills/verify-better-clips/scripts
@@ -39,7 +39,7 @@ export NO_PROXY=localhost,127.0.0.1,::1
 set -e
 "$S/lab" doctor "$id"
 "$S/lab" protocol "$id"
-for chapter in upgrade stores length library channel edit direct; do
+for chapter in upgrade stores length library channel player edit direct credentials; do
   "$S/drive" "$chapter" "$id"
 done
 "$S/lab" gates "$id"

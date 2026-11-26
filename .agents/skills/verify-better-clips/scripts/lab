@@ -21,7 +21,7 @@ noobs() { ! pgrep -x obs >/dev/null || die 'Quit OBS first. Never edit its live 
 if [[ $action != start ]]; then [[ -f $R/owner && $(cat "$R/owner") == "$PWD" ]] || die 'No matching run in this checkout'; fi
 case "$action" in
 start)
-  for cmd in amp pnpm node moto_server agent-browser obs Xvfb xdotool openbox xclip xdpyinfo xrandr import ffmpeg ffprobe sqlite3 jq ss openssl curl-config gh cmake cpack clang-format gersemi dpkg-deb qmake6; do
+  for cmd in amp pnpm node moto_server agent-browser obs Xvfb xdotool openbox xclip xdpyinfo xrandr import ffmpeg ffprobe sqlite3 jq ss openssl curl-config gh cmake cpack clang-format gersemi dpkg-deb qmake6 gnome-keyring-daemon secret-tool dbus-daemon; do
     command -v "$cmd" >/dev/null || die "Missing prerequisite: $cmd. Run the SKILL.md install block before lab start."
   done
   /usr/bin/python3 -c 'import pyatspi' || die 'Install python3-pyatspi (see SKILL.md).'
@@ -44,6 +44,13 @@ start)
   svc x 'exec Xvfb :97 -screen 0 1440x900x24 -s 0 -nolisten tcp'
   for i in {1..30}; do xdpyinfo >/dev/null 2>&1 && break; sleep .2; done
   svc wm 'exec env DISPLAY=:97 openbox'
+  svc bus "exec dbus-daemon --session --nofork --address=unix:path=$R/bus"
+  mkdir -p "$R/keyring-data" "$R/keyring-control"
+  svc keyring "export DBUS_SESSION_BUS_ADDRESS=unix:path=$R/bus XDG_DATA_HOME='$R/keyring-data'; printf lab-only | gnome-keyring-daemon --foreground --unlock --components=secrets --control-directory='$R/keyring-control'"
+  # Prove this isolated keyring can persist, without using the desktop user's keychain.
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=$R/bus"
+  printf probe | secret-tool store --label=preflight run "$id"
+  [[ $(secret-tool lookup run "$id") == probe ]]; secret-tool clear run "$id"
   waiturl http://127.0.0.1:9394/
   curl -fsS -X PUT http://127.0.0.1:9394/clips >/dev/null
   curl -fsS -X PUT 'http://127.0.0.1:9394/clips?policy' -H 'Content-Type: application/json' -d '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::clips/*"]}]}'
@@ -69,7 +76,7 @@ protocol)
   "$0" doctor "$id" >"$E/before-protocol.log"; curl -sS http://localhost:8787/api/me >>"$E/before-protocol.log"
   python3 web/worker/tests/youtube_local.py >"$E/protocol.log" 2>&1
   "$S/no-qt-tls.sh" >"$E/no-qt-tls.log" 2>&1
-  svc google "exec python3 -B '$S/interactive-google.py'"; waiturl http://127.0.0.1:9393/ ;;
+  svc google "exec env R='$R' python3 -B '$S/interactive-google.py'"; waiturl http://127.0.0.1:9393/ ;;
 legacy)
   noobs; mkdir "$R/old"; gh release download 0.2.0 --repo aarsh21/better-clips -p '*-x86_64-linux-gnu.deb' -D "$R/old"
   dpkg-deb -x "$R/old/"*.deb "$R/old/tree"; o=$C/plugins/obs-replay-r2; mkdir -p "$o/bin/64bit" "$C/basic/profiles/Untitled"
@@ -79,7 +86,10 @@ legacy)
   "$0" obs "$id" ;;
 obs)
   noobs
-  svc obs "export DISPLAY=:97 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 XDG_CONFIG_HOME='$R/config' LIBGL_ALWAYS_SOFTWARE=1 BC_BROWSER='$BC_BROWSER' BROWSER='$S/xdg-open' PATH='$S':\$PATH YOUTUBE_AUTH_BASE=http://127.0.0.1:9393 YOUTUBE_TOKEN_BASE=http://127.0.0.1:9393 YOUTUBE_API=http://127.0.0.1:9393; exec obs --disable-shutdown-check"
+  # Keep Qt accessibility on the display's bus even for the no-keyring run.
+  a11y=$(gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress | cut -d "'" -f 2)
+  bus=$R/bus; [[ ! -e $R/no-keyring ]] || bus=$R/unavailable
+  svc obs "export DBUS_SESSION_BUS_ADDRESS='unix:path=$bus' AT_SPI_BUS_ADDRESS='$a11y' DISPLAY=:97 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 XDG_CONFIG_HOME='$R/config' LIBGL_ALWAYS_SOFTWARE=1 BC_BROWSER='$BC_BROWSER' BROWSER='$S/xdg-open' PATH='$S':\$PATH YOUTUBE_AUTH_BASE=http://127.0.0.1:9393 YOUTUBE_TOKEN_BASE=http://127.0.0.1:9393 YOUTUBE_API=http://127.0.0.1:9393; exec obs --disable-shutdown-check"
   timeout 20 xdotool search --sync --onlyvisible --name '^OBS .*Profile:' >/dev/null
   # The X window exists before Qt registers its controls on the accessibility bus.
   for i in {1..30}; do "$S/obs-ui" --has Exit && break; sleep .2; done
