@@ -217,24 +217,26 @@ void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 	}
 }
 
-void youtube_disconnect(std::function<void(DisconnectResult)> done)
+void youtube_disconnect(std::function<void(DisconnectResult)> done, bool remove_channel)
 {
 	auto yt = get_youtube_settings();
 	if (!pairing)
 		pairing = std::make_unique<QObject>();
 	const bool direct = yt.route == YouTubeRoute::Direct;
+	const QUrl endpoint(remove_channel ? "/api/youtube/disconnect" : "/api/youtube/obs/unpair");
 	auto req = direct ? google::form("/revoke", QUrlQuery({{"token", QString::fromStdString(yt.refresh_token)}}))
-			  : Request{QUrl(QString::fromStdString(yt.app_url)).resolved(QUrl("/api/youtube/disconnect")),
+			  : Request{QUrl(QString::fromStdString(yt.app_url)).resolved(endpoint),
 				    "POST",
 				    {"Content-Type: application/json",
 				     "Authorization: Bearer " + QByteArray::fromStdString(yt.upload_token)},
 				    "{}"};
-	send(pairing.get(), req, [direct, yt, done = std::move(done)](const Reply &r) {
+	send(pairing.get(), req, [direct, remove_channel, yt, done = std::move(done)](const Reply &r) {
 		const auto status = r.status;
 		const bool invalid = direct ? status == 400 && r.json.value("error") == "invalid_token" : status == 401;
-		auto result = invalid  ? DisconnectResult::Unpaired
-			      : r.ok() ? DisconnectResult::Revoked
-				       : DisconnectResult::Failed;
+		auto result = invalid                    ? DisconnectResult::Unpaired
+			      : !r.ok()                  ? DisconnectResult::Failed
+			      : direct || remove_channel ? DisconnectResult::Revoked
+							 : DisconnectResult::Unpaired;
 		if (result != DisconnectResult::Failed) {
 			auto current = get_youtube_settings();
 			if (current.route == yt.route && current.upload_token == yt.upload_token &&

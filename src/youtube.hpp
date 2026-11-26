@@ -34,10 +34,9 @@ bool youtube_direct_available(); /* false when the build has no Google client ID
 void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 			   std::function<void(bool ok, const std::string &error)> done);
 
-/* Revokes access through the current route. done runs on the UI thread after the settings update,
- * unless OBS shuts down first. */
+/* Hosted defaults to unpairing only this device. Direct always revokes its own token. */
 enum class DisconnectResult { Revoked, Unpaired, Failed };
-void youtube_disconnect(std::function<void(DisconnectResult result)> done);
+void youtube_disconnect(std::function<void(DisconnectResult result)> done, bool remove_channel = false);
 void stop_youtube_disconnect();
 
 /* {game}, {date} (YYYY-MM-DD) and {time} (HH:MM), at most 100 characters,

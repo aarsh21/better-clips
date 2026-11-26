@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
@@ -129,16 +130,18 @@ class DisconnectState : public QObject {
 	Q_OBJECT
 public:
 	bool pending = false;
-	void start()
+	void start(bool remove_channel = false)
 	{
 		if (pending)
 			return;
 		pending = true;
 		emit started();
-		youtube_disconnect([this](DisconnectResult result) {
-			pending = false;
-			emit finished(result);
-		});
+		youtube_disconnect(
+			[this](DisconnectResult result) {
+				pending = false;
+				emit finished(result);
+			},
+			remove_channel);
 	}
 
 signals:
@@ -174,12 +177,28 @@ public:
 		channel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		sign_in = new QPushButton("Sign in with YouTube");
 		disconnect_button = new QPushButton("Disconnect");
+		remove_channel = new QPushButton("Remove channel from app…");
 		connect(sign_in, &QPushButton::clicked, this, [this]() { start_sign_in(); });
 		static DisconnectState disconnect;
-		connect(disconnect_button, &QPushButton::clicked, &disconnect, &DisconnectState::start);
+		connect(disconnect_button, &QPushButton::clicked, this, [] { disconnect.start(); });
+		connect(remove_channel, &QPushButton::clicked, this, [this] {
+			const auto before = get_youtube_settings();
+			QMessageBox confirm(
+				QMessageBox::Warning, "Remove channel everywhere?",
+				"This removes the channel from Better Clips on every device. All of its app library entries and cut points disappear. The videos stay on YouTube.",
+				QMessageBox::Cancel, this);
+			auto *remove = confirm.addButton("Remove channel everywhere", QMessageBox::DestructiveRole);
+			confirm.setDefaultButton(QMessageBox::Cancel);
+			confirm.exec();
+			if (confirm.clickedButton() == remove && !before.upload_token.empty() &&
+			    get_youtube_settings().upload_token == before.upload_token)
+				disconnect.start(true);
+		});
 		disconnect_button->setDisabled(disconnect.pending);
+		remove_channel->setDisabled(disconnect.pending);
 		connect(&disconnect, &DisconnectState::started, this, [this] {
 			disconnect_button->setEnabled(false);
+			remove_channel->setEnabled(false);
 			show_status("Disconnecting...");
 		});
 		connect(&disconnect, &DisconnectState::finished, this,
@@ -207,7 +226,7 @@ public:
 		description = new QPlainTextEdit(QString::fromStdString(settings.description));
 		description->setPlaceholderText("Optional");
 		description->setTabChangesFocus(true);
-		description->setFixedHeight(64);
+		description->setMaximumHeight(64);
 
 		audio_track = new QComboBox();
 		for (int track = 1; track <= AUDIO_TRACKS; track++)
@@ -229,6 +248,7 @@ public:
 		form->addRow(QString(), route_hint);
 		form->addRow("Better Clips app", app_url);
 		form->addRow("Channel", account);
+		form->addRow(QString(), remove_channel);
 		form->addRow(status);
 		form->addRow("Visibility", privacy);
 		form->addRow("Title", title_template);
@@ -272,7 +292,7 @@ private:
 	QRadioButton *via_app, *direct;
 	QLineEdit *app_url, *title_template;
 	QLabel *route_hint, *channel, *status, *title_preview, *access;
-	QPushButton *sign_in, *disconnect_button;
+	QPushButton *sign_in, *disconnect_button, *remove_channel;
 	QComboBox *privacy, *audio_track;
 	QPlainTextEdit *description;
 	QCheckBox *review;
@@ -314,6 +334,8 @@ private:
 		sign_in->setEnabled(true);
 		sign_in->setText("Sign in with YouTube");
 		disconnect_button->setVisible(connected);
+		disconnect_button->setText(settings.route == YouTubeRoute::ClipsApp ? "Unpair this OBS" : "Disconnect");
+		form->setRowVisible(remove_channel, connected && settings.route == YouTubeRoute::ClipsApp);
 		show_route();
 	}
 
@@ -331,6 +353,7 @@ private:
 		 * until show_account unlocks them. */
 		const bool app = route() == YouTubeRoute::ClipsApp;
 		disconnect_button->setEnabled(true);
+		remove_channel->setEnabled(true);
 		auto current = get_youtube_settings();
 		show_account(current);
 		if (result == DisconnectResult::Failed)
@@ -344,8 +367,7 @@ private:
 					: "Disconnected. OBS no longer has access to your channel. Your videos stay "
 					  "on YouTube.");
 		else if (app)
-			show_status("This OBS is no longer connected. Your channel is still connected to the "
-				    "Better Clips app; disconnect it there or in your Google Account.");
+			show_status("This OBS is no longer paired with the Better Clips app.");
 		else
 			show_status("OBS is signed out. Google had already ended its access, so there's nothing "
 				    "left to remove. Your videos stay on YouTube.");
