@@ -38,7 +38,6 @@ import { buttonVariants } from "@/components/ui/button-variants"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { YOUTUBE_RED, YouTubeObsSteps } from "@/components/youtube"
-import { YouTubeAudience } from "@/components/youtube-audience"
 import { YouTubeConsent } from "@/components/youtube-consent"
 import {
   api,
@@ -282,7 +281,6 @@ function Library() {
       />
 
       <main className="mx-auto max-w-[1600px] px-4 pt-6 pb-24 sm:px-8">
-        <YouTubeAudience prompt />
         {notice && (
           <p role="status" className="mb-6 border bg-card px-4 py-3 text-sm">
             {notice}

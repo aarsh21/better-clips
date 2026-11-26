@@ -2,7 +2,6 @@
 
 #include <ctime>
 #include <functional>
-#include <optional>
 #include <string>
 
 /* Where saved replays go. ClipsApp and S3 use R2Config as before. */
@@ -19,8 +18,8 @@ struct YouTubeSettings {
 	std::string channel_id;
 	std::string channel_title;
 	/* Upload defaults the user controls, as YouTube's policies require. */
-	std::string privacy = "unlisted";  /* "private", "unlisted" or "public" */
-	std::optional<bool> made_for_kids; /* No default audience for new or upgraded users. */
+	std::string privacy = "unlisted"; /* "private", "unlisted" or "public" */
+	bool made_for_kids = false;
 	std::string title_template = "{game} - {date} {time}";
 	std::string description;
 	bool review_before_upload = false;

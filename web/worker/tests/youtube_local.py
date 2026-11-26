@@ -812,7 +812,7 @@ def exercise():
     legacy = {k: v for k, v in metadata.items() if k != "madeForKids"}
     start = "/api/youtube/upload/start"
     audience_url = "/api/youtube/audience"
-    assert call("/api/me")["youtube"]["defaultMadeForKids"] is None
+    assert call("/api/me")["youtube"]["defaultMadeForKids"] is False
     opened = call(start, "POST", legacy, bearer=token)
     assert sessions[urlsplit(opened["sessionUrl"]).path]["meta"]["status"]["selfDeclaredMadeForKids"] is False
     for value in [True, False]:

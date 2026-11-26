@@ -193,10 +193,7 @@ void load_config()
 	obs_data_set_default_string(data, "youtube_title", "{game} - {date} {time}");
 	obs_data_set_default_int(data, "youtube_audio_track", 1);
 	youtube.privacy = obs_data_get_string(data, "youtube_privacy");
-	auto *audience = obs_data_item_byname(data, "youtube_made_for_kids");
-	if (audience && obs_data_item_gettype(audience) == OBS_DATA_BOOLEAN)
-		youtube.made_for_kids = obs_data_item_get_bool(audience);
-	obs_data_item_release(&audience);
+	youtube.made_for_kids = obs_data_get_bool(data, "youtube_made_for_kids");
 	youtube.title_template = obs_data_get_string(data, "youtube_title");
 	youtube.description = obs_data_get_string(data, "youtube_description");
 	youtube.review_before_upload = obs_data_get_bool(data, "youtube_review");
@@ -233,8 +230,7 @@ bool write_config(const R2Config &next, const YouTubeSettings &account)
 		obs_data_set_bool(data, "youtube_previously_paired", youtube.previously_paired);
 		obs_data_set_bool(data, "youtube_previously_direct", youtube.previously_direct);
 		obs_data_set_string(data, "youtube_privacy", youtube.privacy.c_str());
-		if (youtube.made_for_kids.has_value())
-			obs_data_set_bool(data, "youtube_made_for_kids", *youtube.made_for_kids);
+		obs_data_set_bool(data, "youtube_made_for_kids", youtube.made_for_kids);
 		obs_data_set_string(data, "youtube_title", youtube.title_template.c_str());
 		obs_data_set_string(data, "youtube_description", youtube.description.c_str());
 		obs_data_set_bool(data, "youtube_review", youtube.review_before_upload);

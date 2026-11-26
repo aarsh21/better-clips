@@ -138,10 +138,6 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		return reply;
 	};
 	error.clear();
-	if (!clip.youtube.made_for_kids.has_value()) {
-		session.permanent_failure = true;
-		return fail("Choose an audience in YouTube settings before uploading.");
-	}
 	bool query = !session.url.empty();
 	if (!query && direct) {
 		const auto api = google::api("/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status");
@@ -149,7 +145,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 							 {"description", text(details.description)},
 							 {"categoryId", "20"}}},
 				 {"status", QJsonObject{{"privacyStatus", text(details.privacy)},
-							{"selfDeclaredMadeForKids", *clip.youtube.made_for_kids}}}};
+							{"selfDeclaredMadeForKids", clip.youtube.made_for_kids}}}};
 		auto r = google_request(api, {}, QJsonDocument(meta).toJson(), static_cast<qint64>(mp4.size()));
 		if (failed(r))
 			return false;
@@ -164,7 +160,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 			     {{"title", text(details.title)},
 			      {"description", text(details.description)},
 			      {"privacy", text(details.privacy)},
-			      {"madeForKids", *clip.youtube.made_for_kids},
+			      {"madeForKids", clip.youtube.made_for_kids},
 			      {"size", static_cast<qint64>(mp4.size())},
 			      {"category", text(clip.game)},
 			      {"recordedAt",

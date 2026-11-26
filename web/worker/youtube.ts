@@ -509,8 +509,7 @@ const isText = (value: unknown): value is string => typeof value === "string"
 const isAudience = (value: unknown): value is boolean =>
   value === true || value === false
 
-const accountAudience = (a: Account) =>
-  a.default_made_for_kids === null ? null : a.default_made_for_kids === 1
+const accountAudience = (a: Account) => a.default_made_for_kids === 1
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- untrusted request field
 const titleOk = (v: unknown) =>
@@ -856,7 +855,7 @@ export function youtubeRoutes(app: Hono<any>) {
       description,
       privacy,
       // Clips are gameplay highlights; without a choice, they're not for kids.
-      madeForKids = accountAudience(a) ?? false,
+      madeForKids = accountAudience(a),
       size,
       category,
       recordedAt,

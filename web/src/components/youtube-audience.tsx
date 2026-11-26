@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { useAccount } from "@/lib/settings"
 
-export function YouTubeAudience({ prompt = false }: { prompt?: boolean }) {
+export function YouTubeAudience() {
   const channel = useAccount()?.youtube
   const qc = useQueryClient()
 
@@ -12,15 +12,10 @@ export function YouTubeAudience({ prompt = false }: { prompt?: boolean }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
   })
 
-  if (!channel || (prompt && channel.defaultMadeForKids !== null)) return null
+  if (!channel) return null
 
   return (
-    <fieldset
-      disabled={save.isPending}
-      className={
-        prompt ? "mb-8 max-w-xl border bg-card px-5 py-4 text-sm" : "text-sm"
-      }
-    >
+    <fieldset disabled={save.isPending} className="text-sm">
       <legend className="float-left w-full font-semibold">
         Made for kids?
       </legend>
@@ -46,7 +41,7 @@ export function YouTubeAudience({ prompt = false }: { prompt?: boolean }) {
           >
             <input
               type="radio"
-              name={prompt ? "library-audience" : "settings-audience"}
+              name="settings-audience"
               checked={channel.defaultMadeForKids === value}
               onChange={() => save.mutate(value)}
               className="size-4 accent-primary"

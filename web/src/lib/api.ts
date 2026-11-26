@@ -315,7 +315,7 @@ export type Me =
       youtube?: {
         channelId: string
         channelTitle: string
-        defaultMadeForKids: boolean | null
+        defaultMadeForKids: boolean
         devices: { id: string; lastSeen: number | null }[]
         clipCount: number
         cutPointCount: number

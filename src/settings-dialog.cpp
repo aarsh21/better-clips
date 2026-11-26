@@ -239,11 +239,9 @@ public:
 
 		privacy = privacy_box(settings.privacy);
 		audience = new QComboBox();
-		audience->addItem("Choose an audience");
 		audience->addItem("Yes", true);
 		audience->addItem("No", false);
-		if (settings.made_for_kids.has_value())
-			audience->setCurrentIndex(audience->findData(*settings.made_for_kids));
+		audience->setCurrentIndex(audience->findData(settings.made_for_kids));
 
 		title_template = new QLineEdit(QString::fromStdString(settings.title_template));
 		title_template->setPlaceholderText("{game} - {date} {time}");
@@ -333,9 +331,7 @@ public:
 		YouTubeSettings settings = get_youtube_settings();
 		settings.route = route();
 		settings.privacy = privacy->currentData().toString().toStdString();
-		settings.made_for_kids = audience->currentData().isValid()
-						 ? std::optional<bool>(audience->currentData().toBool())
-						 : std::nullopt;
+		settings.made_for_kids = audience->currentData().toBool();
 		settings.title_template = title_template->text().trimmed().toStdString();
 		if (settings.title_template.empty())
 			settings.title_template = YouTubeSettings().title_template;

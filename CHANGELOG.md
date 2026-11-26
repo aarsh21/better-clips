@@ -62,6 +62,12 @@ the web app ships from `main`.
 - Videos that are made for kids, or whose audience isn't confirmed yet, open on
   YouTube instead of playing in the app.
 
+## [0.5.1] - 2026-11-26
+
+- YouTube clips default to **not made for kids**. You can change this in OBS
+  or in the dashboard’s YouTube settings. Older plugins can upload without
+  choosing an audience first.
+
 ## [0.5.0] - 2026-11-26
 
 ### Plugin
@@ -208,6 +214,7 @@ the web app ships from `main`.
   clips to Cloudflare R2 without writing them to disk.
 - The clips web app to browse, preview, trim, keep, delete and share clips.
 
+[0.5.1]: https://github.com/aarsh21/better-clips/releases/tag/0.5.1
 [0.5.0]: https://github.com/aarsh21/better-clips/releases/tag/0.5.0
 [0.4.0]: https://github.com/aarsh21/better-clips/releases/tag/0.4.0
 [0.3.1]: https://github.com/aarsh21/better-clips/releases/tag/0.3.1
