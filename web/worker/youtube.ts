@@ -25,6 +25,12 @@ const requiredScopes = [
   scope("force-ssl"),
 ]
 
+function hasAllScopes(scopes: string | undefined) {
+  const granted = new Set(scopes?.split(" "))
+  if (granted.has("https://www.googleapis.com/auth/userinfo.email")) granted.add("email")
+  return requiredScopes.every((s) => granted.has(s))
+}
+
 const api = (env: HostedEnv) =>
   local(env.YOUTUBE_API) ?? "https://www.googleapis.com"
 
@@ -513,6 +519,7 @@ export function youtubeRoutes(app: Hono<any>) {
         "/o/oauth2/v2/auth"
     )
 
+    const existing = who && await account(env, who.userId)
     url.search = new URLSearchParams({
       client_id: env.GOOGLE_CLIENT_ID,
       redirect_uri: callback(c),
@@ -521,10 +528,10 @@ export function youtubeRoutes(app: Hono<any>) {
       scope: requiredScopes.join(" "),
       access_type: "offline",
       include_granted_scopes: "true",
-      prompt: "consent",
       code_challenge: await sha256(f.verifier),
       code_challenge_method: "S256",
     }).toString()
+    if (!hasAllScopes(existing?.scopes)) url.searchParams.set("prompt", "consent")
 
     return c.redirect(url.href)
   })
@@ -534,7 +541,8 @@ export function youtubeRoutes(app: Hono<any>) {
       sealed = getCookie(c, cookie)
 
     deleteCookie(c, cookie, { path, secure: true })
-
+    let validated: Flow | undefined
+    let error = "server_error"
     try {
       const f: Flow = JSON.parse(
         await decrypt(env, sealed ?? "", currentVersion(env)).catch(
@@ -544,12 +552,15 @@ export function youtubeRoutes(app: Hono<any>) {
 
       if (!f || f.state !== c.req.query("state") || Date.now() > f.expires)
         throw new Error("Sign-in expired. Try again.")
+      validated = f
 
       if (f.user && (await signedIn(c))?.userId !== f.user)
         throw new Error("Your sign-in changed. Start again.")
 
-      if (!c.req.query("code"))
+      if (!c.req.query("code")) {
+        error = "access_denied"
         throw new Error("YouTube sign-in was cancelled.")
+      }
 
       const t = await tokenRequest(env, {
         code: c.req.query("code")!,
@@ -558,15 +569,13 @@ export function youtubeRoutes(app: Hono<any>) {
         redirect_uri: callback(c),
       })
 
-      const granted = new Set(t.scope?.split(" "))
-
-      if (granted.has("https://www.googleapis.com/auth/userinfo.email"))
-        granted.add("email")
-
-      if (!t.access_token || !requiredScopes.every((s) => granted.has(s)))
+      if (!t.access_token) throw new Error("Google sign-in failed. Try again.")
+      if (!hasAllScopes(t.scope)) {
+        error = "insufficient_scope"
         throw new Error(
-          "Better Clips needs every permission to connect your YouTube channel. Try again and select them all."
+          "YouTube needs all permissions together. Select every permission, or use Cloudflare sign-in for bucket storage only."
         )
+      }
 
       const me = await (
         await google(env, t.access_token, "/oauth2/v3/userinfo")
@@ -643,14 +652,11 @@ export function youtubeRoutes(app: Hono<any>) {
           new URLSearchParams({ state: f.obsState, code })
       )
     } catch (err) {
-      return c.redirect(
-        "/?auth_error=" +
-          encodeURIComponent(
-            err instanceof Error && !err.message.includes("D1_")
+      const description = err instanceof Error && !err.message.includes("D1_")
               ? err.message
               : "YouTube sign-in failed. Try again."
-          )
-      )
+      if (validated?.port) return c.redirect(`http://127.0.0.1:${validated.port}/callback?` + new URLSearchParams({ state:validated.obsState, error, error_description:description }))
+      return c.redirect("/?auth_error=" + encodeURIComponent(description))
     }
   })
   app.post(path + "/obs/exchange", async (c) => {

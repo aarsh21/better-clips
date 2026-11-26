@@ -100,9 +100,8 @@ function CloudflareSignIn() {
         </a>
       </div>
       <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-        Cloudflare keeps clips in your own R2 bucket and only lets Better Clips
-        read your name and email. Google asks once for every permission Better
-        Clips uses: to upload to your YouTube channel, list those videos, and
+        For bucket storage only, sign in with Cloudflare. For YouTube, Google
+        asks for all permissions together: to upload to your channel, list those videos, and
         rename them, change who can watch or delete them when you ask, under{" "}
         <a
           href="https://www.youtube.com/t/terms"

@@ -178,8 +178,7 @@ export function Faq() {
       <Section title="Google and YouTube">
         <Q q="Which Google permissions does Better Clips ask for, and why?">
           <p>
-            Google asks once, the first time you sign in with Google or connect
-            YouTube, whether from this app or from OBS:
+            For bucket storage only, use Cloudflare sign-in. When connecting YouTube through the app, Google asks for all permissions together:
           </p>
           <ul>
             <li>

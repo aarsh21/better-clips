@@ -350,9 +350,10 @@ def login(purpose, pair=False):
     )
     result = call(call(auth, status=302), status=302)
     if unticked:
+        u = urlsplit(result)
+        query = parse_qs(u.query)
         check(
-            "every permission"
-            in parse_qs(urlsplit(result).query).get("auth_error", [""])[0],
+            (u.hostname,u.port,u.path) == ("127.0.0.1",12345,"/callback") and query["state"] == ["test-state"] and query["error"] == ["insufficient_scope"] and "every permission" in query["error_description"][0],
             "unticked scope refuses sign-in: " + unticked,
         )
         return
