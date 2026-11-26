@@ -475,6 +475,13 @@ def exercise():
         login("pair", True)
     unticked = None
     token = login("pair", True)
+    second = login("pair", True)
+    assert len(call("/api/me")["youtube"]["devices"]) == 2
+    call("/api/youtube/upload/status?clipId=none", status=404, bearer=token)
+    assert call("/api/youtube/obs/unpair", "POST", {}, bearer=second) == {"unpaired": True}
+    assert call("/api/youtube/obs/unpair", "POST", {}, 401, second)["reason"] == "unpaired"
+    call("/api/youtube/upload/status?clipId=none", status=404, bearer=token)
+    check(len(call("/api/me")["youtube"]["devices"]) == 1 and not revoked, "unpair removed only the second OBS")
     check(
         cookies["clips_sid"] == sid
         and sql("SELECT user_id FROM youtube_accounts WHERE user_id=?", (user,)),

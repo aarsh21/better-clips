@@ -107,6 +107,8 @@ export async function youtubeInfo(env: HostedEnv, user: string) {
     a && {
       channelId: a.channel_id,
       channelTitle: a.channel_title,
+      devices: (await env.DB!.prepare("SELECT id,last_seen AS lastSeen FROM youtube_devices WHERE user_id=? ORDER BY last_seen DESC,id").bind(user).all()).results,
+      clipCount: await env.DB!.prepare("SELECT count(*) FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL").bind(user).first<number>("count(*)"),
     }
   )
 }
@@ -115,12 +117,8 @@ async function obs(c: Context) {
   const env: HostedEnv = c.env
   const token = /^Bearer (\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1]
 
-  return token
-    ? env
-        .DB!.prepare("SELECT * FROM youtube_accounts WHERE obs_hash=?")
-        .bind(await sha256(token))
-        .first<Account>()
-    : null
+  const user = token && await env.DB!.prepare("UPDATE youtube_devices SET last_seen=? WHERE token_hash=? RETURNING user_id").bind(Date.now(), await sha256(token)).first<string>("user_id")
+  return user ? account(env, user) : null
 }
 
 const reconnect = "YouTube access stopped working. Sign in with YouTube again."
@@ -676,24 +674,31 @@ export function youtubeRoutes(app: Hono<any>) {
         401
       )
 
-    const info = await db
-      .prepare(
-        "UPDATE youtube_accounts SET obs_hash=? WHERE user_id=? RETURNING channel_id AS channelId,channel_title AS channelTitle"
-      )
-      .bind(await sha256(uploadToken), a.user_id)
-      .first()
+    const inserted = await db.prepare("INSERT INTO youtube_devices(id,user_id,token_hash,last_seen) SELECT ?,user_id,?,? FROM youtube_accounts WHERE user_id=?").bind(crypto.randomUUID(), await sha256(uploadToken), Date.now(), a.user_id).run()
+    const info = inserted.meta.changes && await account(env, a.user_id)
+    if (!info) return c.json({ error: reconnect, reason: "revoked" }, 401)
 
-    if (!info) return c.json({ error: reconnect }, 401)
-
-    return c.json({ ...info, uploadToken }, 200, {
+    return c.json({ channelId: info.channel_id, channelTitle: info.channel_title, uploadToken }, 200, {
       "cache-control": "no-store",
     })
+  })
+  app.post(path + "/obs/unpair", async (c) => {
+    const env: HostedEnv = c.env
+    const token = /^Bearer (\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1]
+    const removed = token && await env.DB!.prepare("DELETE FROM youtube_devices WHERE token_hash=?").bind(await sha256(token)).run()
+    if (!removed || !removed.meta.changes) return c.json({ error: reconnect, reason: "unpaired" }, 401)
+    return c.json({ unpaired: true })
+  })
+  app.delete(path + "/devices/:id", async (c) => {
+    const env: HostedEnv = c.env
+    const removed = await env.DB!.prepare("DELETE FROM youtube_devices WHERE user_id=? AND id=?").bind(c.get("who").userId,c.req.param("id")).run()
+    return removed.meta.changes ? c.json({ unpaired: true }) : c.json({ error: "Device is no longer paired." }, 404)
   })
   app.post(path + "/upload/start", async (c) => {
     const env: HostedEnv = c.env,
       a = await obs(c)
 
-    if (!a) return c.json({ error: reconnect }, 401)
+    if (!a) return c.json({ error: reconnect, reason: "unpaired" }, 401)
 
     const { title, description, privacy, size, category, recordedAt } =
       await c.req.json()
@@ -757,7 +762,7 @@ export function youtubeRoutes(app: Hono<any>) {
     const env: HostedEnv = c.env,
       a = await obs(c)
 
-    if (!a) return c.json({ error: reconnect }, 401)
+    if (!a) return c.json({ error: reconnect, reason: "unpaired" }, 401)
     const { clipId, videoId } = await c.req.json()
 
     if (!isText(videoId) || !/^[-\w]{11}$/.test(videoId))
@@ -828,7 +833,7 @@ export function youtubeRoutes(app: Hono<any>) {
     const env: HostedEnv = c.env,
       a = await obs(c)
 
-    if (!a) return c.json({ error: reconnect }, 401)
+    if (!a) return c.json({ error: reconnect, reason: "unpaired" }, 401)
     const id = c.req.query("clipId") ?? ""
 
     const clip = await env
@@ -1076,7 +1081,7 @@ export function youtubeRoutes(app: Hono<any>) {
         ? await obs(c)
         : await account(env, c.get("who").userId)
 
-    if (!a) return c.json({ error: reconnect }, 401)
+    if (!a) return c.json({ error: reconnect, reason: "unpaired" }, 401)
 
     const res = await fetch(oauth(env) + "/revoke", {
       method: "POST",

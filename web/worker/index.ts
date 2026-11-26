@@ -107,6 +107,7 @@ const OPEN = new Set([
   "/api/youtube/connect",
   "/api/youtube/callback",
   "/api/youtube/obs/exchange",
+  "/api/youtube/obs/unpair",
   "/api/youtube/upload/start",
   "/api/youtube/upload/complete",
   "/api/youtube/upload/status",
@@ -1220,7 +1221,7 @@ app.all("/api/*", (c) => c.json({ error: "Not found" }, 404))
  * that stopped working (deleted, or the bucket is gone) says so. */
 app.onError((err, c) => {
   if (err instanceof HTTPException)
-    return c.json({ error: err.message }, err.status)
+    return c.json({ error: err.message, ...(err.status === 401 && c.req.header("authorization") && { reason: "revoked" }) }, err.status)
 
   if (err instanceof ClipChanged) return c.json({ error: err.message }, 409)
 

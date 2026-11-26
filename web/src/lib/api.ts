@@ -308,6 +308,8 @@ export type Me =
       youtube?: {
         channelId: string
         channelTitle: string
+        devices: { id: string; lastSeen: number | null }[]
+        clipCount: number
       } | null
     }
 
@@ -469,6 +471,7 @@ export const api = {
     request<{ ok?: boolean }>(youtubeClip(id), { method: "DELETE" }),
   disconnectYouTube: () =>
     request<{ ok?: boolean }>("/api/youtube/disconnect", { method: "POST" }),
+  removeDevice: (id: string) => request<{ unpaired: true }>(`/api/youtube/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
   move: (key: string, body: { to?: Folder; name?: string }) =>
     request<{ key: string }>("/api/move", {
       method: "POST",
