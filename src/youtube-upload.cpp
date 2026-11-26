@@ -15,17 +15,23 @@ QString text(const std::string &s)
 }
 
 using namespace youtube_http;
-void unpaired(const std::string &token)
+void unpaired(YouTubeRoute route, const std::string &token)
 {
 	auto current = get_youtube_settings();
-	if (current.route != YouTubeRoute::ClipsApp || token.empty() || current.upload_token != token)
+	auto &credential = route == YouTubeRoute::Direct ? current.refresh_token : current.upload_token;
+	if (current.route != route || token.empty() || credential != token)
 		return;
-	current.upload_token.clear();
+	credential.clear();
 	current.channel_title.clear();
 	current.channel_id.clear();
 	set_youtube_settings(current);
 	notify_user(
 		"Better Clips: this OBS isn't connected to YouTube any more. Open Tools → Better Clips Settings → YouTube to reconnect.");
+}
+
+bool rejected_refresh(const Reply &reply)
+{
+	return reply.code == CURLE_OK && reply.status / 100 == 4 && reply.json.value("error") == "invalid_grant";
 }
 
 Request request(const QUrl &url, const QByteArray &bearer, const QByteArray &range, const QByteArray &body,
@@ -86,12 +92,20 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		error = message;
 		return false;
 	};
+	auto queue_unpaired = [&](const std::string &token) {
+		if (owner)
+			QMetaObject::invokeMethod(
+				owner, [route = clip.youtube.route, token] { unpaired(route, token); },
+				Qt::QueuedConnection);
+	};
 	const bool direct = clip.youtube.route == YouTubeRoute::Direct;
 	QByteArray bearer;
 	auto google_request = [&](QUrl url, const QByteArray &range, const QByteArray &body, qint64 size = -1) {
 		for (int attempt = 0;; ++attempt) {
 			if (bearer.isEmpty()) {
 				auto token = transfer(google::refresh(clip.youtube.refresh_token));
+				if (rejected_refresh(token))
+					queue_unpaired(clip.youtube.refresh_token);
 				if (token.status / 100 != 2)
 					return token;
 				bearer = token.json.value("access_token").toString().toUtf8();
@@ -132,9 +146,8 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		auto reply = transfer(request(QUrl(text(clip.youtube.app_url)).resolved(QUrl(path)),
 					      QByteArray::fromStdString(clip.youtube.upload_token), {},
 					      QJsonDocument(data).toJson(QJsonDocument::Compact)));
-		if (owner && reply.status == 401 && reply.code == CURLE_OK)
-			QMetaObject::invokeMethod(
-				owner, [token = clip.youtube.upload_token] { unpaired(token); }, Qt::QueuedConnection);
+		if (reply.status == 401 && reply.code == CURLE_OK)
+			queue_unpaired(clip.youtube.upload_token);
 		return reply;
 	};
 	error.clear();
@@ -271,7 +284,7 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 					}
 					const auto http = reply.code == CURLE_OK ? reply.status : 0;
 					if (!direct && http == 401)
-						unpaired(token);
+						unpaired(YouTubeRoute::ClipsApp, token);
 					if (http == 200 && status == "ready") {
 						bool removed = !finish || finish(true);
 						notify_user("YouTube: " + title + " is ready to play" +
@@ -301,8 +314,9 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 					*access = obj.value("access_token").toString().toUtf8();
 					if (reply.ok() && !access->isEmpty())
 						poll();
-					else if (obj.value("error") == "invalid_grant") {
+					else if (rejected_refresh(reply)) {
 						notify_user("Clips can no longer check " + title + kept);
+						unpaired(YouTubeRoute::Direct, refresh);
 						timer->deleteLater();
 					} else
 						timer->start(std::min(timer->interval() * 2, 60000));
