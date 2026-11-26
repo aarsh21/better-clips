@@ -36,7 +36,7 @@ export function useClips() {
     refetchIntervalInBackground: false,
     staleTime: 5_000,
   })
-  return {data:query.data?.clips,warnings:query.data?.warnings,isPending:query.isPending,error:query.error}
+  return {data:query.data?.clips,returning:query.data?.returning,warnings:query.data?.warnings,isPending:query.isPending,error:query.error}
 }
 
 /* Moves a clip (keep, delete, restore, rename) and updates the list right

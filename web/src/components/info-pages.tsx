@@ -337,7 +337,7 @@ export function Privacy() {
             </li>
             <li>
               With YouTube: your channel&apos;s ID and name, and Google&apos;s
-              refresh token, encrypted at rest.
+              refresh token, encrypted at rest when you upload through this app. In direct mode the token stays in the plugin&apos;s settings on your computer. Better Clips does not encrypt it there.
             </li>
             <li>
               With a bucket: its name and access key, with the secret key

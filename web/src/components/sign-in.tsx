@@ -75,7 +75,7 @@ function CloudflareSignIn() {
         Your replays, from OBS to the web
       </p>
       <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
-        Press a hotkey in a game and the clip is here a second later. Keep clips
+        Press your replay hotkey in OBS to upload a clip. Keep clips
         in your own Cloudflare account, free up to 10 GB, or upload them to your
         YouTube channel.
       </p>

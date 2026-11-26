@@ -446,13 +446,17 @@ export const api = {
   clips: (previous?: Clip[]) =>
     request<{ clips?: ApiClip[]; youtube?: ApiYouTubeClip[]; errors?:{r2?:string;youtube?:string} }>(
       "/api/clips"
-    ).then((d) => ({
+    ).then((d) => {
+      const history = `clips:had-clips:${account ?? "self"}`
+      if (d.clips?.length || d.youtube?.length) localStorage.setItem(history,"1")
+      return {
+      returning: localStorage.getItem(history) === "1",
       warnings: Object.values(d.errors ?? {}),
       clips: withTitles([
         ...(d.clips?.map(parseClip) ?? (d.errors?.r2 && previous ? previous.filter(c=>c.source === "bucket") : [])),
         ...(d.youtube?.map(parseYouTubeClip) ?? (d.errors?.youtube && previous ? previous.filter(c=>c.source === "youtube") : [])),
       ])
-    })),
+    }}),
   updateYouTube: (
     id: string,
     body: { title?: string; description?: string; privacy?: Privacy }

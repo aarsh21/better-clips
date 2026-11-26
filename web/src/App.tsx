@@ -204,7 +204,7 @@ export default function App() {
 }
 
 function Library() {
-  const { data: clips, isPending, error, warnings } = useClips()
+  const { data: clips, isPending, error, warnings, returning } = useClips()
   const hasBucket = useHasBucket()
   const views = viewsFor(hasBucket)
   const [chosenView, setView] = React.useState<View>("all")
@@ -269,6 +269,7 @@ function Library() {
       <main className="mx-auto max-w-[1600px] px-4 pt-4 pb-24 sm:px-6">
         {(warnings?.length || (error && clips)) ? <p role="status" className="mb-4 border bg-muted/40 px-3 py-2 text-xs">{error ? "Could not refresh the library." : warnings?.join(" ")} Showing the last available clips.</p> : null}
         <ClipsBody
+          returning={Boolean(returning)}
           clips={clips}
           visible={visible}
           view={view}
@@ -494,6 +495,7 @@ function TabButton({
 }
 
 function ClipsBody({
+  returning,
   clips,
   visible,
   view,
@@ -506,6 +508,7 @@ function ClipsBody({
   onSettings,
 }: {
   clips: Clip[] | undefined
+  returning: boolean
   visible: Clip[]
   view: View
   pending: boolean
@@ -530,7 +533,7 @@ function ClipsBody({
 
   if (pending || !clips) return <GridSkeleton />
 
-  if (!clips.length) {
+  if (!clips.length && !((hasBucket || hasChannel) && (returning || settings?.obsSeen))) {
     if (hasBucket) return <FirstRun />
 
     return hasChannel ? (
@@ -645,7 +648,7 @@ function FirstRun() {
     <div className="mx-auto max-w-lg py-16">
       <h1 className="mb-1 text-base font-semibold">No clips yet</h1>
       <p className="mb-6 text-xs text-muted-foreground">
-        Connect OBS once, then every replay you save lands here a second later.
+        Connect OBS to your bucket. Replays appear here after they upload.
       </p>
       <ObsConnect />
     </div>

@@ -160,7 +160,7 @@ export function SetupSteps() {
         <p className="leading-relaxed text-muted-foreground">
           {platform === "windows"
             ? "Paste it into PowerShell. Windows asks once for permission to add the plugin."
-            : "Paste it into Terminal. Nothing needs sudo."}{" "}
+            : "Paste it into Terminal. A Linux upgrade may need sudo to remove an old system plugin."}{" "}
           It waits for OBS to close, installs the plugin, then opens OBS with
           the Replay Buffer running. Press{" "}
           <kbd className="border bg-muted px-1 font-mono text-[10px] text-foreground">
