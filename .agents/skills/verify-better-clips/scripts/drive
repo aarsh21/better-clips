@@ -69,11 +69,17 @@ upgrade)
   jq -e '.save_hotkey==[{key:"OBS_KEY_F8",shift:true}]' "$cfg" >/dev/null
   log | grep 'plugin loaded successfully' >>"$E/upgrade.log"; test ! -e "$C/plugins/obs-replay-r2"; osnap upgraded ;;
 rollout)
-  # Independent run immediately after upgrade, starting with a never-paired hosted account.
-  session=yt-$id; b open about:blank; b network route 'https://**' --abort; b open http://localhost:8787/apps/; b set viewport 1100 740 2
-  b wait --text 'Sign in with Google'; google_signin; b wait --text 'NO CLIPS YET'
-  settings; dest 'Better Clips app (R2)' y; field 'Better Clips app' http://localhost:8787; connect 'Sign in with YouTube' 0; o Save --role button
+  # Start with the release Worker and plugin; keep the same D1 and encryption key on upgrade.
+  session=yt-$id; b open about:blank; b network route 'https://**' --abort; b set viewport 1100 740 2
   "$S/lab" quit "$id"; mkdir "$R/rel040" "$R/obs31"
+  git archive c44718a web/worker web/wrangler.app.jsonc | tar -x -C "$R/rel040"
+  ln -s "$PWD/web/node_modules" "$PWD/web/dist" "$R/rel040/web/"; ln -s "$R/vars" "$R/rel040/web/.dev.vars"
+  switch_host(){
+    amp orb service stop "bc-$id-host"
+    amp orb service start "bc-$id-host" --cwd "$1" --command "unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; exec '$PWD/web/node_modules/.bin/wrangler' dev --local -c wrangler.app.jsonc --ip 127.0.0.1 --port 8787 --inspector-port 9229 --persist-to '$R/state'"
+    waitfor curl -sS -o /dev/null http://localhost:8787/api/me
+  }
+  touch "$R/worker040"; switch_host "$R/rel040/web"
   gh release download 0.4.0 -R aarsh21/better-clips -p '*-x86_64-linux-gnu.deb' -D "$R/rel040"
   published=$(ls "$R/rel040/"*.deb); echo "276a6bfd296dc233f011a0f66fabbcc46a44ed24c0a280e37884e2b0ce06cde6  $published" | sha256sum -c -
   install_deb(){ env -u DISPLAY -u WAYLAND_DISPLAY -u CLIPS_SETUP_CODE XDG_CONFIG_HOME="$R/config" OBS_R2_PACKAGE="$1" sh install.sh; }
@@ -85,29 +91,40 @@ rollout)
   for p in "$R/obs31/root/usr/lib/x86_64-linux-gnu/obs-plugins/"*.so; do
     case ${p##*/} in obs-outputs.so|obs-ffmpeg.so|obs-x264.so|obs-transitions.so|image-source.so|linux-pulseaudio.so|frontend-tools.so|rtmp-services.so) ;; *) mv "$p" "$R/obs31/unused/";; esac
   done
-  "$S/lab" obs "$id"; waitfor o --has 'Save Replay to YouTube'; sleep 3; o 'Save Replay to YouTube'
-  waitfor o --has 'Settings → YouTube, or update Better Clips'; osnap legacy-no-choice
-  kept=$(find "$R/recordings" -name "*$(last_uuid).mp4"); ffprobe -v error -show_entries format=duration,size -of compact "$kept"
-  sleep 4; [[ $(log | grep -c 'YouTube upload failed (HTTP 422)') == 1 ]]; row 'select count(*) from youtube_clips' 0
-  b open http://localhost:8787/apps/; b wait --text 'Made for kids?'; bsnap library-audience
+  "$S/lab" obs "$id"; log | grep 'plugin loaded successfully (version 0.4.0)'
+  settings; dest 'Better Clips app (R2)' y; field 'Better Clips app' http://localhost:8787; connect 'Sign in with YouTube' 0; o Save --role button
+  identity="select user_id||':'||grant_id from youtube_accounts where subject='rollout-subject' and scopes like '%youtube.upload%' and scopes like '%youtube.readonly%'"
+  original=$(sql "$identity"); test -n "$original"
+  b cookies clear; rm "$R/worker040"; touch "$R/returning-grant"; switch_host "$PWD/web"
+  b open http://localhost:8787/apps/; b wait --text 'Sign in with Google'; google_signin; b wait 'button[aria-label="Settings"]'; row "$identity" "$original"
+  [[ $(b eval 'document.body.innerText.includes("Made for kids?")') == false ]]; bsnap library-no-prompt
+  settings; o 'Unpair this OBS'; waitfor o --has 'Reconnect YouTube'; connect 'Reconnect YouTube' 0; o Save --role button; row "$identity" "$original"
+  save_audience(){
+    local previous; previous=$(clip || :); o 'Save Replay to YouTube'; waitfor copied https://youtu.be/test "$previous"; ready_copy "$(last_uuid)"
+    row "select madeForKids from youtube_clips where videoId='$(basename "$(clip)")' and status='ready'" "$1"
+    echo "$(clip) ready, madeForKids=$1"
+  }
+  row 'select default_made_for_kids is null from youtube_accounts' 1; save_audience 0; osnap legacy-default-ready
+  for theme in dark light; do
+    b open http://localhost:8787/apps/; b wait 'button[aria-label="Settings"]'
+    if [[ $(b eval "document.documentElement.classList.contains('$theme')") != true ]]; then button 'Switch between light and dark'; fi
+    account; b wait --fn 'document.querySelectorAll("input[name=settings-audience]")[1]?.checked'; bsnap "default-$theme"
+  done
   b record start "$E/save-choice.mp4" --fps 12 --cursor; sleep 1.3
   b hover 'label:has(input[type=radio]):last-child'; sleep .7; b hover 'label:has(input[type=radio]):first-child'; sleep .7
-  b find role radio click --name Yes; b wait --fn '!document.querySelector("input[name=library-audience]")'; sleep 1; b record stop
-  b reload; b wait --text 'NO CLIPS YET'; [[ $(b eval 'document.querySelectorAll("input[name=library-audience]").length') == 0 ]]
+  b find role radio click --name Yes; b wait --fn 'document.querySelector("input[name=settings-audience]").checked'; sleep 1; b record stop
   account; b wait --fn 'document.querySelector("input[name=settings-audience]").checked'; bsnap settings-choice
-  o 'Save Replay to YouTube'; waitfor copied https://youtu.be/test; ready_copy "$(last_uuid)"; osnap legacy-ready
-  row "select madeForKids from youtube_clips where videoId='$(basename "$(clip)")' and status='ready'" 1
+  save_audience 1; osnap legacy-ready
   "$S/lab" quit "$id"; mv "$R/obs31/root" "$R/obs31/used"; install_deb "$(realpath "$(ls -t release/*-x86_64-linux-gnu.deb | head -1)")"
   "$S/lab" obs "$id"; settings
   for size in 1440x900 1366x768; do
     if [[ $size == 1366x768 ]]; then xrandr --newmode "$size" 85.5 1366 1436 1579 1792 768 771 774 798; xrandr --addmode screen "$size"; xrandr --output screen --mode "$size"; sleep .6; fi
-    o 'Choose an audience' --role 'combo box'; sleep .3; o --has Yes; o --has No; osnap "dropdown-$size"; xdotool key Escape
+    o No --role 'combo box'; sleep .3; o --has Yes; o --has No; osnap "dropdown-$size"; xdotool key Escape
     o --scroll-end; osnap "bottom-$size"; o Cancel --role button; settings
   done
-  xrandr --output screen --mode 1440x900; sleep .5; dest 'Choose an audience' n; o Save --role button
-  jq -e '.youtube_made_for_kids==false' "$cfg"; o 'Save Replay to YouTube'
-  waitfor row "select count(*) from youtube_clips where madeForKids=0 and status='ready'" 1
-  row 'select default_made_for_kids from youtube_accounts' 1; test -s "$kept"; osnap override-ready ;;
+  xrandr --output screen --mode 1440x900; sleep .5; o Save --role button
+  jq -e '.youtube_made_for_kids==false' "$cfg"; save_audience 0
+  row 'select default_made_for_kids from youtube_accounts' 1; row "select count(*) from youtube_clips where status='ready'" 3; osnap override-ready ;;
 stores)
   waitfor o --has 'OBS buffer: running · Better Clips: running'; osnap r2-before; sleep 10
   ffmpeg -loglevel error -f x11grab -draw_mouse 1 -video_size 1440x900 -framerate 12 -i :97 -t 9 -vf scale=1008:-2 -threads 2 -c:v libx264 -pix_fmt yuv420p -crf 27 -y "$E/obs.mp4" & recorder=$!
@@ -170,11 +187,9 @@ channel)
   row 'select count(*) from youtube_devices' 2; o 'Unpair this OBS'; waitfor o --has 'Reconnect YouTube'; row 'select id from youtube_devices' "$first"; row 'select count(*) from youtube_accounts' 1
   connect 'Reconnect YouTube' 0; account; b wait --fn 'document.querySelectorAll("[aria-label^=\"Remove OBS\"]").length===2'; bsnap devices
   button "Remove OBS ${first:0:8}"; waitfor row 'select count(*) from youtube_devices' 1; row "select count(*) from youtube_devices where id='$first'" 0
-  o Save --role button; waitfor o --has 'Save Replay to YouTube'; o 'Save Replay to YouTube'; waitfor o --has 'choose Yes or No'; osnap audience-required
-  file=$(find "$R/recordings" -name "*$(last_uuid).mp4"); ffprobe -v error -show_entries format=duration,size -of compact "$file"; row 'select count(*) from youtube_clips' 0
-  settings; o --has "By clicking 'upload,'"; osnap audience-settings
+  o --has "By clicking 'upload,'"; osnap audience-settings
   ffmpeg -loglevel error -f x11grab -draw_mouse 1 -video_size 1440x900 -framerate 12 -i :97 -t 6 -vf scale=1152:-2 -threads 2 -c:v libx264 -pix_fmt yuv420p -crf 23 -y "$E/audience-choice.mp4" & recorder=$!
-  sleep .7; o 'Choose an audience' --role 'combo box'; sleep .7; xdotool key Down; sleep .5; xdotool key Down Return; wait "$recorder"
+  sleep .7; o No --role 'combo box'; sleep .7; o --has Yes; o --has No; xdotool key Escape; wait "$recorder"
   # Remove the *current* device while settings is closed, then save without reopening settings. Only upload can observe this 401.
   o Save --role button; current=$(sql 'select id from youtube_devices'); button "Remove OBS ${current:0:8}"; b wait --text 'No devices paired'; o 'Save Replay to YouTube'; waitfor o --has 'Connect YouTube'; o 'Connect YouTube'; o --has 'Reconnect YouTube'; osnap after-upload-401
   connect 'Reconnect YouTube' 0
@@ -183,7 +198,7 @@ channel)
     o Save --role button --bounds; o Cancel --role button --bounds; osnap "settings-$size"; o --scroll-form
   done >"$E/settings-layout.log"
   xrandr --output screen --mode 1440x900; sleep .6; osnap paired; o Save --role button; waitfor o --has 'Save Replay to YouTube'; o 'Save Replay to YouTube'
-  waitfor copied https://youtu.be/test; clip >"$E/host-link.txt"; osnap host-upload; ready_copy "$(last_uuid)"; row "select status from youtube_clips where videoId='$(basename "$(clip)")'" ready
+  waitfor copied https://youtu.be/test; clip >"$E/host-link.txt"; osnap host-upload; ready_copy "$(last_uuid)"; row "select madeForKids from youtube_clips where videoId='$(basename "$(clip)")' and status='ready'" 0
   # The ready state is fetched by the plugin. Capture the dock, not just the database.
   waitfor o --has 'is ready to play'; [[ $(clip) == "$(cat "$E/host-link.txt")" ]]; osnap ready; b open http://localhost:8787/apps/; b wait --text '1 clip'; bsnap hosted-library ;;
 player)
