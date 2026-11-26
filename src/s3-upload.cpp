@@ -5,6 +5,8 @@
 #include "sha256.hpp"
 
 #include <curl/curl.h>
+#include <QUrl>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cctype>
@@ -13,14 +15,12 @@
 
 namespace {
 
-/* R2 accepts "auto"; it is also what Cloudflare's docs use for the S3 API. */
-constexpr const char *REGION = "auto";
-
 struct ParsedUrl {
 	std::string scheme_host; /* https://host[:port] */
 	std::string host;        /* host[:port], sent as the Host header */
 	std::string bucket;
 	std::string prefix; /* any path after the bucket */
+	std::string region;
 };
 
 std::string trim_slashes(std::string s)
@@ -49,7 +49,18 @@ bool parse_s3_url(const std::string &url, ParsedUrl &out, std::string &error)
 	out.bucket = path.substr(0, slash);
 	out.prefix = slash == std::string::npos ? "" : path.substr(slash + 1);
 
-	if (out.host.empty() || out.bucket.empty()) {
+	const auto host = QUrl(QString::fromStdString(url)).host().toLower();
+	static const QRegularExpression endpoint("(?:^|\\.)s3[.-](?:dualstack\\.)?([a-z0-9-]+)\\.");
+	const auto match = endpoint.match(host);
+	const bool virtual_bucket = match.hasMatch() && match.capturedStart() > 0;
+	out.region = host.endsWith(".r2.cloudflarestorage.com")             ? "auto"
+		     : match.hasMatch() && match.captured(1) != "amazonaws" ? match.captured(1).toStdString()
+									    : "us-east-1";
+	if (virtual_bucket) {
+		out.prefix = path;
+		out.bucket.clear();
+	}
+	if (out.host.empty() || (!virtual_bucket && out.bucket.empty())) {
 		error = "The S3 API URL must include the bucket, like "
 			"https://<account-id>.r2.cloudflarestorage.com/<bucket>";
 		return false;
@@ -137,8 +148,8 @@ bool secure_url(const std::string &url)
 	return false;
 }
 
-bool s3_put_object(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body,
-		   const char *content_type, std::string &error)
+static bool s3_request(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body,
+		       const char *content_type, bool remove, std::string &error)
 {
 	ParsedUrl url;
 	if (!parse_s3_url(config.s3_url, url, error))
@@ -163,79 +174,107 @@ bool s3_put_object(const R2Config &config, const std::string &key, const std::ve
 	strftime(amz_date, sizeof(amz_date), "%Y%m%dT%H%M%SZ", &utc);
 	strftime(date, sizeof(date), "%Y%m%d", &utc);
 
-	const std::string path = "/" + uri_encode(url.bucket, false) + "/" + uri_encode(key, true);
+	const std::string path =
+		(url.bucket.empty() ? "" : "/" + uri_encode(url.bucket, false)) + "/" + uri_encode(key, true);
 	const std::string payload_hash = to_hex(sha256(body.data(), body.size()));
 	const std::string signed_headers = "content-type;host;x-amz-content-sha256;x-amz-date";
 
-	const std::string canonical_request = std::string("PUT\n") + path + "\n" + "\n" +
+	const std::string canonical_request = std::string(remove ? "DELETE\n" : "PUT\n") + path + "\n" + "\n" +
 					      "content-type:" + content_type + "\n" + "host:" + url.host + "\n" +
 					      "x-amz-content-sha256:" + payload_hash + "\n" + "x-amz-date:" + amz_date +
 					      "\n" + "\n" + signed_headers + "\n" + payload_hash;
 
-	const std::string scope = std::string(date) + "/" + REGION + "/s3/aws4_request";
 	const std::string canonical_hash = to_hex(sha256(canonical_request.data(), canonical_request.size()));
-	const std::string string_to_sign =
-		std::string("AWS4-HMAC-SHA256\n") + amz_date + "\n" + scope + "\n" + canonical_hash;
+	for (int attempt = 0;; ++attempt) {
+		const std::string scope = std::string(date) + "/" + url.region + "/s3/aws4_request";
+		const std::string string_to_sign =
+			std::string("AWS4-HMAC-SHA256\n") + amz_date + "\n" + scope + "\n" + canonical_hash;
 
-	const std::string secret = "AWS4" + config.secret_key;
-	Sha256Digest k = hmac_sha256(secret.data(), secret.size(), date);
-	k = hmac_sha256(k.data(), k.size(), REGION);
-	k = hmac_sha256(k.data(), k.size(), "s3");
-	k = hmac_sha256(k.data(), k.size(), "aws4_request");
-	const std::string signature = to_hex(hmac_sha256(k.data(), k.size(), string_to_sign));
+		const std::string secret = "AWS4" + config.secret_key;
+		Sha256Digest k = hmac_sha256(secret.data(), secret.size(), date);
+		k = hmac_sha256(k.data(), k.size(), url.region);
+		k = hmac_sha256(k.data(), k.size(), "s3");
+		k = hmac_sha256(k.data(), k.size(), "aws4_request");
+		const std::string signature = to_hex(hmac_sha256(k.data(), k.size(), string_to_sign));
 
-	const std::string authorization = "Authorization: AWS4-HMAC-SHA256 Credential=" + config.access_key + "/" +
-					  scope + ", SignedHeaders=" + signed_headers + ", Signature=" + signature;
+		const std::string authorization = "Authorization: AWS4-HMAC-SHA256 Credential=" + config.access_key +
+						  "/" + scope + ", SignedHeaders=" + signed_headers +
+						  ", Signature=" + signature;
 
-	CURL *curl = curl_easy_init();
-	if (!curl) {
-		error = "curl_easy_init failed";
-		return false;
+		CURL *curl = curl_easy_init();
+		if (!curl) {
+			error = "curl_easy_init failed";
+			return false;
+		}
+
+		struct curl_slist *headers = nullptr;
+		headers = curl_slist_append(headers, ("Host: " + url.host).c_str());
+		headers = curl_slist_append(headers, (std::string("Content-Type: ") + content_type).c_str());
+		headers = curl_slist_append(headers, ("x-amz-content-sha256: " + payload_hash).c_str());
+		headers = curl_slist_append(headers, (std::string("x-amz-date: ") + amz_date).c_str());
+		headers = curl_slist_append(headers, authorization.c_str());
+		if (!remove)
+			headers = curl_slist_append(headers, "If-None-Match: *");
+		headers = curl_slist_append(headers, "Expect:");
+
+		const std::string request_url = url.scheme_host + path;
+		ReadState read_state{&body, 0};
+		std::string response;
+		char curl_error[CURL_ERROR_SIZE] = {0};
+
+		curl_easy_setopt(curl, CURLOPT_URL, request_url.c_str());
+		if (remove)
+			curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+		else
+			curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+		curl_easy_setopt(curl, CURLOPT_READFUNCTION, read_body);
+		curl_easy_setopt(curl, CURLOPT_READDATA, &read_state);
+		curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)body.size());
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, collect_response);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+		curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+		curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+		curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+		/* Give up when the connection stalls below 1 KB/s for 60 seconds. */
+		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
+
+		CURLcode res = curl_easy_perform(curl);
+		long status = 0;
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+		curl_slist_free_all(headers);
+		curl_easy_cleanup(curl);
+
+		if (res != CURLE_OK) {
+			error = curl_error[0] ? curl_error : curl_easy_strerror(res);
+			return false;
+		}
+		if (status < 200 || status >= 300) {
+			if (attempt == 0 && status == 400 &&
+			    response.find("<Code>AuthorizationHeaderMalformed</Code>") != std::string::npos) {
+				static const QRegularExpression region_tag("<Region>([a-z0-9-]{1,63})</Region>");
+				const auto expected = region_tag.match(QString::fromStdString(response));
+				if (expected.hasMatch() && expected.captured(1).toStdString() != url.region) {
+					url.region = expected.captured(1).toStdString();
+					continue;
+				}
+			}
+			std::string summary = s3_error_summary(response);
+			error = "HTTP " + std::to_string(status) + (summary.empty() ? "" : " (" + summary + ")");
+			return false;
+		}
+		return true;
 	}
+}
 
-	struct curl_slist *headers = nullptr;
-	headers = curl_slist_append(headers, ("Host: " + url.host).c_str());
-	headers = curl_slist_append(headers, (std::string("Content-Type: ") + content_type).c_str());
-	headers = curl_slist_append(headers, ("x-amz-content-sha256: " + payload_hash).c_str());
-	headers = curl_slist_append(headers, (std::string("x-amz-date: ") + amz_date).c_str());
-	headers = curl_slist_append(headers, authorization.c_str());
-	headers = curl_slist_append(headers, "If-None-Match: *");
-	headers = curl_slist_append(headers, "Expect:");
+bool s3_put_object(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body,
+		   const char *content_type, std::string &error)
+{
+	return s3_request(config, key, body, content_type, false, error);
+}
 
-	const std::string request_url = url.scheme_host + path;
-	ReadState read_state{&body, 0};
-	std::string response;
-	char curl_error[CURL_ERROR_SIZE] = {0};
-
-	curl_easy_setopt(curl, CURLOPT_URL, request_url.c_str());
-	curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-	curl_easy_setopt(curl, CURLOPT_READFUNCTION, read_body);
-	curl_easy_setopt(curl, CURLOPT_READDATA, &read_state);
-	curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)body.size());
-	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, collect_response);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
-	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
-	/* Give up when the connection stalls below 1 KB/s for 60 seconds. */
-	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
-	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
-
-	CURLcode res = curl_easy_perform(curl);
-	long status = 0;
-	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-	curl_slist_free_all(headers);
-	curl_easy_cleanup(curl);
-
-	if (res != CURLE_OK) {
-		error = curl_error[0] ? curl_error : curl_easy_strerror(res);
-		return false;
-	}
-	if (status < 200 || status >= 300) {
-		std::string summary = s3_error_summary(response);
-		error = "HTTP " + std::to_string(status) + (summary.empty() ? "" : " (" + summary + ")");
-		return false;
-	}
-	return true;
+bool s3_delete_object(const R2Config &config, const std::string &key, std::string &error)
+{
+	return s3_request(config, key, {}, "application/octet-stream", true, error);
 }

@@ -155,3 +155,5 @@ void replay_r2_request_save(obs_output_t *output);
 /* The focused app's name, or "" when OBS is focused or it's unknown
  * (focused-app.cpp). */
 std::string focused_app_name();
+
+bool s3_delete_object(const R2Config &config, const std::string &key, std::string &error);
