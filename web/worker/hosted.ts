@@ -904,21 +904,21 @@ async function unlockSetup(env: HostedEnv, userId: string) {
 /* Checks the key can list, write and delete in the bucket before saving it,
  * with a new file of its own that it removes again. A brand-new key can take
  * a few seconds to start working. */
-async function checkBucket(store: Store, patient: boolean) {
+export async function checkBucket(store: Store, patient: boolean) {
   /* A new key can write before it can delete, so each attempt writes its
    * own file, and the files of earlier attempts go once deleting works. */
   const probes: string[] = []
 
   for (let attempt = 0; ; attempt++) {
     try {
-      await store.list("config/")
+      await store.list("config/", 1)
 
       const probe = `config/.clips-check-${randomToken(9)}`
 
       if (!(await store.put(probe, "ok", { createOnly: true })))
         throw new StorageError(409, "Storage error: the check file exists")
       probes.push(probe)
-      await store.delete(probes)
+      if ((await store.delete(probes)).length) throw new StorageError(403, "Storage error: could not delete the check file")
 
       return
     } catch (err) {

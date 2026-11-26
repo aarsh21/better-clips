@@ -27,6 +27,7 @@ import { clipTitle, labelParts } from "./clip-title"
 import { HTTPException } from "hono/http-exception"
 import { youtubeRoutes, youtubeClips, youtubeMaintenance } from "./youtube"
 import {
+  checkBucket,
   cleanupDone,
   currentObsToken,
   dueTenants,
@@ -1063,7 +1064,8 @@ function obsCheckedIn(c: Context<App>) {
     )
 }
 
-app.get("/api/upload/check", (c) => {
+app.get("/api/upload/check", async (c) => {
+  await checkBucket(c.get("tenant").store, false)
   obsCheckedIn(c)
 
   return c.json({ ok: true })

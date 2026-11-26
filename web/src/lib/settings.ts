@@ -36,8 +36,7 @@ export function useSettings(waitForObs = false) {
     queryKey: KEY,
     queryFn: api.settings,
     staleTime: 60_000,
-    refetchInterval: (query) =>
-      waitForObs && !query.state.data?.obsSeen ? 3000 : false,
+    refetchInterval: waitForObs ? 3000 : false,
   })
 }
 

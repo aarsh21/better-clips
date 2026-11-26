@@ -19,13 +19,13 @@ const RELEASES = "https://github.com/aarsh21/better-clips/releases/latest"
 /* Whether OBS is connected, then the steps to connect it. The status updates
  * by itself when OBS checks in, e.g. after Test Upload. */
 export function ObsConnect() {
-  const { data: settings } = useSettings(true)
-  const connected = Boolean(settings?.obsSeen)
+  const { data: settings, dataUpdatedAt, isRefetchError } = useSettings(true)
+  const connected = !isRefetchError && Boolean(settings?.obsSeen && dataUpdatedAt - Date.parse(settings.obsSeen) < 5 * 60_000)
   const [showSteps, setShowSteps] = React.useState(false)
 
   return (
     <div className="flex flex-col gap-5">
-      <ObsStatus seen={settings?.obsSeen} loading={!settings} />
+      <ObsStatus seen={settings?.obsSeen} connected={connected} loading={!settings} />
       {connected && !showSteps ? (
         <button
           type="button"
@@ -43,9 +43,11 @@ export function ObsConnect() {
 
 function ObsStatus({
   seen,
+  connected,
   loading,
 }: {
   seen: string | null | undefined
+  connected: boolean
   loading: boolean
 }) {
   if (loading) return <Skeleton className="h-12 w-full" />
@@ -55,7 +57,7 @@ function ObsStatus({
       role="status"
       className={cn(
         "flex items-center gap-3 border px-3 py-2.5",
-        seen ? "border-emerald-500/30 bg-emerald-500/5" : "bg-muted/40"
+        connected ? "border-emerald-500/30 bg-emerald-500/5" : "bg-muted/40"
       )}
     >
       <span className="relative flex size-2">
@@ -65,18 +67,18 @@ function ObsStatus({
         <span
           className={cn(
             "relative inline-flex size-2",
-            seen ? "bg-emerald-500" : "bg-primary"
+            connected ? "bg-emerald-500" : "bg-primary"
           )}
         />
       </span>
       <div className="flex min-w-0 flex-col">
         <span className="text-xs font-medium">
-          {seen ? "OBS is connected" : "Waiting for OBS"}
+          {connected ? "OBS checked in recently" : seen ? "No recent OBS check" : "Waiting for OBS"}
         </span>
         <span className="text-[11px] text-muted-foreground">
           {seen
-            ? `Last checked in ${timeAgo(seen)}.`
-            : "Run the command below. This turns green as soon as OBS opens."}
+            ? `Last seen ${timeAgo(seen)}. Use Test Upload in OBS to check again.`
+            : "Run Test Upload or upload a clip from OBS to verify this bucket."}
         </span>
       </div>
     </div>
