@@ -1014,9 +1014,10 @@ async function uploadTarget(c: Context<App>) {
   if (!clip || !allowed || !uploadId) return null
   const t = c.get("tenant")
 
-  if (!(await t.meta.ownsUpload(uploadId, clip.key))) return null
+  const state = await t.meta.uploadState(uploadId, clip.key)
+  if (!state || (state === "complete" && c.req.path !== "/api/upload/complete")) return null
 
-  return { t, key: clip.key, uploadId }
+  return { t, key: clip.key, uploadId, state }
 }
 
 /* Where an upload goes: OBS names a new replay; the trim editor saves next
@@ -1125,7 +1126,8 @@ app.post("/api/upload/complete", async (c) => {
   ])
 
   if (!target || !body?.parts?.length)
-    return c.json({ error: "Bad upload" }, 400)
+    return c.json({ error: "Unknown upload for this bucket and key." }, 400)
+  if (target.state === "complete") return c.json({ key: target.key })
 
   const done = await target.t.store.completeUpload(
     target.key,
@@ -1141,7 +1143,7 @@ app.post("/api/upload/complete", async (c) => {
     return c.json({ error: "A clip with this name appeared. Save again." }, 409)
   }
 
-  await target.t.meta.endUpload(target.uploadId)
+  await target.t.meta.finishUpload(target.uploadId,target.key)
   obsCheckedIn(c)
 
   return c.json({ key: target.key })

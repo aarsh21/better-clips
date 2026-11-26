@@ -74,7 +74,8 @@ export interface Meta {
   /* Reserves a new upload's key. False if another upload already has it. */
   startUpload(uploadId: string, key: string): Promise<boolean>
   /* Whether this user started the upload with this key. */
-  ownsUpload(uploadId: string, key: string): Promise<boolean>
+  uploadState(uploadId: string, key: string): Promise<"open" | "complete" | null>
+  finishUpload(uploadId: string, key: string): Promise<void>
   endUpload(uploadId: string): Promise<void>
 }
 
@@ -190,9 +191,16 @@ export function bucketMeta(bucket: R2Bucket): Meta {
       await bucket.put(`shares/${id}.json`, JSON.stringify(share))
     },
 
-    startUpload: async () => true,
-    ownsUpload: async () => true,
-    endUpload: async () => {},
+    async startUpload(id,key) {
+      return Boolean(await bucket.put(`config/uploads/${encodeURIComponent(id)}`,key,{onlyIf:{etagDoesNotMatch:"*"}}))
+    },
+    async uploadState(id,key) {
+      const row = await bucket.get(`config/uploads/${encodeURIComponent(id)}`)
+      if (!row || await row.text() !== key) return null
+      return row.customMetadata?.completed ? "complete" : "open"
+    },
+    async finishUpload(id,key) { await bucket.put(`config/uploads/${encodeURIComponent(id)}`,key,{customMetadata:{completed:"1"}}) },
+    async endUpload(id) { await bucket.delete(`config/uploads/${encodeURIComponent(id)}`) },
   }
 }
 
@@ -358,7 +366,7 @@ export function d1Meta(db: D1Database, tenant: string): Meta {
     async startUpload(uploadId, key) {
       /* Old reservations of uploads that never finished free their key. */
       await db
-        .prepare("DELETE FROM uploads WHERE tenant_id = ? AND created < ?")
+        .prepare("DELETE FROM uploads WHERE tenant_id = ? AND completed=0 AND created < ?")
         .bind(tenant, Date.now() - 86_400_000)
         .run()
 
@@ -373,20 +381,21 @@ export function d1Meta(db: D1Database, tenant: string): Meta {
       return meta.changes === 1
     },
 
-    async ownsUpload(uploadId, key) {
+    async uploadState(uploadId, key) {
       const row = await db
         .prepare(
-          "SELECT 1 FROM uploads WHERE upload_id = ? AND tenant_id = ? AND key = ?"
+          "SELECT completed FROM uploads WHERE upload_id = ? AND tenant_id = ? AND key = ?"
         )
         .bind(uploadId, tenant, key)
-        .first()
+        .first<{completed:number}>()
 
-      return row !== null
+      return row ? row.completed ? "complete" : "open" : null
     },
+    async finishUpload(id,key) { await db.prepare("UPDATE uploads SET completed=1 WHERE upload_id=? AND tenant_id=? AND key=?").bind(id,tenant,key).run() },
 
     async endUpload(uploadId) {
       await db
-        .prepare("DELETE FROM uploads WHERE upload_id = ? AND tenant_id = ?")
+        .prepare("DELETE FROM uploads WHERE upload_id = ? AND tenant_id = ? AND completed=0")
         .bind(uploadId, tenant)
         .run()
     },
