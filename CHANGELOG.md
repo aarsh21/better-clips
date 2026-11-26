@@ -31,6 +31,62 @@ the web app ships from `main`.
 - **YouTube.** Sign in with Google and your YouTube clips show up next to your
   bucket clips: play, rename, change visibility, cut and delete them. Google
   asks once for every permission. New **FAQ** and **Privacy** pages.
+- Each OBS install is paired on its own. Remove one in Settings without
+  signing out of Google; disconnecting the whole channel asks first, counts
+  what it removes and says your videos stay on YouTube.
+- A failed or interrupted disconnect keeps your Google connection so you can
+  retry, and a newer sign-in made meanwhile is never removed.
+- Cancelling Google sign-in or leaving out a permission shows OBS the real
+  reason. Signing in again doesn't ask for consent twice.
+- The storage check writes a real test file, and OBS readiness only turns
+  green after a recent successful upload.
+- A retried upload whose reply was lost returns the same clip instead of
+  failing or making a second copy.
+- If your bucket or YouTube is unavailable, the other source and cached clips
+  still show. A video missing from YouTube keeps its cuts for a week of
+  rechecks before it's removed.
+- Interrupted moves to and from Trash are finished later without duplicates.
+- Titles hide the unique ID in new clip names. Setup explains the Cloudflare
+  permissions it needs, and an empty library no longer looks like first-run
+  setup.
+
+## [0.4.0] - 2026-11-26
+
+### Plugin
+
+- **Clips are never shorter than your setting** once the buffer has recorded
+  that long. A clip starts at the last keyframe before the moment you asked
+  for and ends when you press Save. If
+  your encoder's keyframes are more than 2 s apart, Better Clips tells you once
+  and suggests a 1–2 s keyframe interval.
+- YouTube clips keep a local copy until YouTube has processed them, so a
+  rejected upload is never lost, even across an OBS restart.
+- Every save gets a unique name, and uploads never overwrite an existing clip.
+- Two quick presses give two clips, each with the settings it was pressed
+  with. A busy queue saves to disk, and a full one declines the press clearly.
+- The YouTube review dialog no longer blocks other uploads.
+- FLAC and PCM audio, which can't go into an MP4, are refused when you start
+  the buffer, with a hint to use AAC or Opus. A clip that can't be written to
+  your recording folder is saved to a recovery folder instead.
+- S3 uploads sign for the right region: AWS, virtual-host buckets, dualstack,
+  Wasabi and Backblaze. A region correction from the server is followed.
+- Errors that won't fix themselves save the clip to disk immediately. Quitting
+  OBS mid-upload no longer stalls.
+- **Disconnect** in OBS unpairs only this OBS. Removing the channel
+  everywhere asks first.
+- When a pairing or Google sign-in stops working, OBS clears it, shows
+  **Reconnect** and keeps the clip. A newer sign-in is never cleared. OBS also
+  checks its app pairing at startup and when Settings opens, so disconnecting
+  on the web shows **Reconnect** right away.
+- Google sign-in from OBS can be cancelled or retried and shows why it failed.
+- The settings window saves both pages together and keeps fields you didn't
+  touch. Only one can be open, and **Test** checks only the selected
+  destination.
+- The dock shows the OBS buffer and Better Clips separately, offers **Retry**
+  and setup buttons, and shows the last successful upload or test.
+- The installers check the new plugin before replacing a working one and keep
+  a rollback copy. Setup codes are validated first and only used up once
+  saved. Settings are recovered from a backup when the main file is damaged.
 
 ## [0.3.2] - 2026-11-25
 
@@ -127,6 +183,7 @@ the web app ships from `main`.
   clips to Cloudflare R2 without writing them to disk.
 - The clips web app to browse, preview, trim, keep, delete and share clips.
 
+[0.4.0]: https://github.com/aarsh21/better-clips/releases/tag/0.4.0
 [0.3.1]: https://github.com/aarsh21/better-clips/releases/tag/0.3.1
 [0.3.0]: https://github.com/aarsh21/better-clips/releases/tag/0.3.0
 [0.1.7]: https://github.com/aarsh21/better-clips/releases/tag/0.1.7
