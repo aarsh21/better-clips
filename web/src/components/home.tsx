@@ -2,11 +2,10 @@ import * as React from "react"
 import {
   ArrowRightIcon,
   CheckIcon,
-  CloudArrowUpIcon,
-  CloudIcon,
   CopyIcon,
-  DatabaseIcon,
+  DownloadSimpleIcon,
   KeyboardIcon,
+  LinkIcon,
   MoonIcon,
   ScissorsIcon,
   SunIcon,
@@ -20,7 +19,6 @@ import { buttonVariants } from "@/components/ui/button-variants"
 import { APP_PATH } from "@/lib/view"
 
 const REPO = "https://github.com/aarsh21/better-clips"
-const DEPLOY = `https://deploy.workers.cloudflare.com/?url=${REPO}/tree/main/web`
 
 const INSTALL = {
   windows: {
@@ -236,8 +234,6 @@ function DashboardMock() {
               </span>
               <span className="absolute inset-x-0 -bottom-px h-0.5 bg-primary" />
             </span>
-            <span className="text-xs text-muted-foreground">Kept</span>
-            <span className="text-xs text-muted-foreground">Trash</span>
             <span className="ml-auto hidden h-7 w-40 items-center justify-between border px-2 text-[11px] text-muted-foreground sm:flex">
               Search clips <kbd className="font-mono text-[10px]">/</kbd>
             </span>
@@ -246,7 +242,7 @@ function DashboardMock() {
             <p className="mb-3 flex items-baseline gap-2 text-xs">
               <span className="font-semibold">Today</span>
               <span className="font-mono text-[10px] text-muted-foreground">
-                6 clips · 142.7 MB
+                6 clips · on your channel
               </span>
             </p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -341,7 +337,7 @@ function ObsDock() {
       </div>
       <p className="mt-2 flex items-center gap-1.5 text-[11px]">
         <CheckIcon weight="bold" className="size-3 text-primary" />
-        Uploaded. Link copied.
+        On YouTube. Link copied.
       </p>
     </div>
   )
@@ -357,8 +353,8 @@ function Hero() {
             <span className="block text-primary">Keep the moment.</span>
           </h1>
           <p className="mt-8 max-w-[30rem] text-xl leading-snug text-muted-foreground">
-            Save OBS replays to YouTube or your own R2 or S3 bucket, and manage
-            them in one dashboard.
+            Save OBS replays to your YouTube channel, and manage them in one
+            dashboard.
           </p>
           <div className="mt-10 flex flex-wrap items-center gap-3">
             <OpenApp />
@@ -382,11 +378,11 @@ function Hero() {
 const STEPS = [
   { icon: KeyboardIcon, title: "Press the hotkey", note: "Mid-game, in OBS" },
   {
-    icon: CloudArrowUpIcon,
-    title: "It lands in your storage",
+    icon: MonitorPlayIcon,
+    title: "It lands on your channel",
     note: "Link copied",
   },
-  { icon: ScissorsIcon, title: "Trim and share", note: "In the dashboard" },
+  { icon: LinkIcon, title: "Rename and share", note: "In the dashboard" },
 ]
 
 function Steps() {
@@ -414,41 +410,47 @@ function Steps() {
   )
 }
 
-const DESTINATIONS = [
+const FEATURES = [
   {
     icon: MonitorPlayIcon,
     name: "YouTube",
     line: "Your channel. Nothing to store.",
   },
   {
-    icon: CloudIcon,
-    name: "Cloudflare R2",
-    line: "Your bucket. Free up to 10 GB.",
+    icon: DownloadSimpleIcon,
+    name: "Download",
+    line: "Get the file from YouTube Studio.",
   },
   {
-    icon: DatabaseIcon,
-    name: "Any S3 bucket",
-    line: "Straight from OBS. No app needed.",
+    icon: ScissorsIcon,
+    name: "Editing",
+    line: "Trim in the dashboard.",
+    soon: true,
   },
 ]
 
-function Destinations() {
+function Features() {
   return (
     <section className="border-t bg-stage">
       <div className="mx-auto max-w-[1320px] px-5 py-24 sm:px-8 lg:py-36">
         <h2 className="font-display text-[clamp(2.6rem,6.5vw,4.5rem)]">
-          Your storage. Your clips.
+          Your channel. Your clips.
         </h2>
         <div className="mt-14 grid gap-px border bg-border md:grid-cols-3">
-          {DESTINATIONS.map(({ icon: Icon, name, line }) => (
+          {FEATURES.map(({ icon: Icon, name, line, soon }) => (
             <article
               key={name}
               className="flex flex-col gap-10 bg-background p-7 lg:p-9"
             >
               <Icon weight="duotone" className="size-8 text-primary" />
               <div>
-                <h3 className="text-2xl font-bold tracking-[-0.01em] [font-stretch:85%]">
+                <h3 className="flex items-center gap-3 text-2xl font-bold tracking-[-0.01em] [font-stretch:85%]">
                   {name}
+                  {soon && (
+                    <span className="border px-1.5 py-0.5 font-mono text-[10px] font-normal tracking-wider text-muted-foreground uppercase [font-stretch:100%]">
+                      Coming soon
+                    </span>
+                  )}
                 </h3>
                 <p className="mt-2 text-muted-foreground">{line}</p>
               </div>
@@ -481,7 +483,7 @@ function Install() {
         <h2 className="font-display text-[clamp(2.6rem,6.5vw,4.5rem)]">
           Install in one line
         </h2>
-        <div>
+        <div className="min-w-0">
           <div
             role="tablist"
             aria-label="Your system"
@@ -540,9 +542,8 @@ function Install() {
 
 const FACTS = [
   "No extra encoding",
-  "Your keys stay private",
+  "Sign in with Google",
   "Free and open source",
-  "Self-host in one click",
 ]
 
 function Closing() {
@@ -582,7 +583,6 @@ function Footer() {
           <a href="/faq">FAQ</a>
           <a href="/privacy">Privacy policy</a>
           <a href="/terms">Terms</a>
-          <a href={DEPLOY}>Self-host</a>
           <a href={REPO}>GitHub</a>
         </nav>
       </div>
@@ -594,7 +594,7 @@ function Footer() {
  * to the dashboard (worker/index.ts). */
 export function Home() {
   React.useEffect(() => {
-    document.title = "Better Clips: OBS replays to YouTube or your own bucket"
+    document.title = "Better Clips: OBS replays to your YouTube channel"
   }, [])
 
   return (
@@ -603,7 +603,7 @@ export function Home() {
       <main>
         <Hero />
         <Steps />
-        <Destinations />
+        <Features />
         <Install />
         <Closing />
       </main>
