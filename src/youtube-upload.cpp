@@ -1,4 +1,4 @@
-#include "replay-r2.hpp"
+#include "replay.hpp"
 #include "youtube-google.hpp"
 
 #include <QDateTime>
@@ -235,7 +235,7 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 }
 
 void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::string &clip_id,
-		   const std::string &title, const std::string &path, std::function<bool(bool ready)> finish)
+		   const std::string &title, const std::string &path, std::function<void()> finish)
 {
 	const std::string kept = path.empty() ? ". Check the video in YouTube Studio." : ". Local copy: " + path;
 	QUrl url = QUrl(text(settings.app_url)).resolved(QUrl("/api/youtube/upload/status"));
@@ -275,12 +275,12 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 					if (!direct && http == 401)
 						unpaired(YouTubeRoute::ClipsApp, token);
 					if (http == 200 && status == "ready") {
-						bool removed = !finish || finish(true);
-						notify_user("YouTube: " + title + " is ready to play" +
-							    (removed ? "." : kept));
+						if (finish)
+							finish();
+						notify_user("YouTube: " + title + " is ready to play" + kept);
 					} else if (http == 200 && status == "failed") {
 						if (finish)
-							finish(false);
+							finish();
 						notify_user("YouTube could not process " + title + kept);
 					} else if ((!direct && http == 401) || http == 404)
 						notify_user("Clips can no longer check " + title + kept);

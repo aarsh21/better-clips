@@ -1,13 +1,8 @@
 import {
-  BookmarkSimpleIcon,
   DesktopIcon,
-  FilmSlateIcon,
-  HardDrivesIcon,
   MoonIcon,
   PlugsConnectedIcon,
-  ScissorsIcon,
   SunIcon,
-  TrashIcon,
   YoutubeLogoIcon,
 } from "@phosphor-icons/react"
 
@@ -22,30 +17,15 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-  CommandShortcut,
 } from "@/components/ui/command"
 import {
   dayLabel,
   displayTitle,
   durationOf,
   formatDuration,
-  thumbnailOf,
   type Clip,
 } from "@/lib/api"
 import { useClipTime } from "@/lib/clock"
-import { useAccount } from "@/lib/settings"
-import type { View } from "@/lib/view"
-
-const VIEW_ITEMS = [
-  { view: "all", label: "All clips", icon: FilmSlateIcon, key: "1" },
-  { view: "saved", label: "Kept clips", icon: BookmarkSimpleIcon, key: "2" },
-  { view: "trash", label: "Trash", icon: TrashIcon, key: "3" },
-] satisfies {
-  view: View
-  label: string
-  icon: React.ElementType
-  key: string
-}[]
 
 const THEMES = [
   { theme: "light", label: "Light theme", icon: SunIcon },
@@ -59,22 +39,15 @@ export function SearchDialog({
   onOpenChange,
   clips,
   onOpenClip,
-  onView,
   onSettings,
-  views,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   clips: Clip[]
   onOpenClip: (key: string) => void
-  onView: (view: View) => void
   onSettings: (tab: SettingsTab) => void
-  /** The tabs this account has. */
-  views: View[]
 }) {
   const { theme, setTheme } = useTheme()
-  /* YouTube is only on the hosted app, like its Settings tab. */
-  const hosted = useAccount() !== null
 
   const run = (action: () => void) => () => {
     onOpenChange(false)
@@ -104,7 +77,6 @@ export function SearchDialog({
                     clip.category,
                     clip.day,
                     dayLabel(clip.day),
-                    clip.source,
                   ]}
                   onSelect={run(() => onOpenClip(clip.key))}
                 >
@@ -113,40 +85,18 @@ export function SearchDialog({
               ))}
             </CommandGroup>
           )}
-          <CommandGroup heading="Go to">
-            {VIEW_ITEMS.flatMap(({ view, label, icon: Icon, key }) =>
-              views.includes(view) ? (
-                <CommandItem key={view} onSelect={run(() => onView(view))}>
-                  <Icon />
-                  {label}
-                  <CommandShortcut>{key}</CommandShortcut>
-                </CommandItem>
-              ) : (
-                []
-              )
-            )}
-          </CommandGroup>
           <CommandGroup heading="Settings">
             <CommandItem onSelect={run(() => onSettings("obs"))}>
               <PlugsConnectedIcon />
               Connect OBS
             </CommandItem>
             <CommandItem
-              keywords={["retention", "keep", "delete", "days"]}
-              onSelect={run(() => onSettings("storage"))}
+              keywords={["google", "channel"]}
+              onSelect={run(() => onSettings("youtube"))}
             >
-              <HardDrivesIcon />
-              Storage and cleanup
+              <YoutubeLogoIcon />
+              YouTube
             </CommandItem>
-            {hosted && (
-              <CommandItem
-                keywords={["google", "channel"]}
-                onSelect={run(() => onSettings("youtube"))}
-              >
-                <YoutubeLogoIcon />
-                YouTube
-              </CommandItem>
-            )}
             {THEMES.map(({ theme: value, label, icon: Icon }) => (
               <CommandItem
                 key={value}
@@ -181,7 +131,7 @@ function matchWords(value: string, search: string, keywords?: string[]) {
 
 function ClipRow({ clip }: { clip: Clip }) {
   const clipTime = useClipTime()
-  const thumbnail = thumbnailOf(clip)
+  const thumbnail = clip.thumbnail
   const duration = durationOf(clip)
 
   return (
@@ -200,28 +150,11 @@ function ClipRow({ clip }: { clip: Clip }) {
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex items-center gap-1.5 truncate font-medium">
           {displayTitle(clip)}
-          {clip.source === "youtube" ? (
-            <YoutubeLogoIcon
-              weight="fill"
-              aria-label="On YouTube"
-              className={`size-3.5 ${YOUTUBE_RED}`}
-            />
-          ) : (
-            <>
-              {clip.trimmed && (
-                <ScissorsIcon className="size-3 text-muted-foreground" />
-              )}
-              {clip.folder === "saved" && (
-                <BookmarkSimpleIcon
-                  weight="fill"
-                  className="size-3 text-primary"
-                />
-              )}
-              {clip.folder === "trash" && (
-                <TrashIcon className="size-3 text-muted-foreground" />
-              )}
-            </>
-          )}
+          <YoutubeLogoIcon
+            weight="fill"
+            aria-label="On YouTube"
+            className={`size-3.5 ${YOUTUBE_RED}`}
+          />
         </span>
         <span className="text-[11px] text-muted-foreground tabular-nums">
           {clip.category && `${clip.category} · `}

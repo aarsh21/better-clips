@@ -149,27 +149,17 @@ export function Faq() {
       <Section title="Where clips go">
         <Q q="Where are my clips stored?">
           <p>
-            It depends on the <b>Destination</b> in OBS, under{" "}
-            <b>Tools → Better Clips Settings</b>:
+            OBS keeps an MP4 in your recording folder and uploads it to your
+            channel. In <b>Tools → Better Clips Settings</b>, choose how to
+            connect:
           </p>
           <ul>
-            <li>
-              <b>Better Clips app (R2)</b>: OBS uploads each clip to your Better
-              Clips app, which keeps it in an R2 bucket. On the hosted app
-              that&apos;s a bucket in your own Cloudflare account; on a
-              self-hosted app, it&apos;s your Worker&apos;s bucket.
-            </li>
-            <li>
-              <b>S3 bucket</b>: OBS uploads each clip straight to your own
-              S3-compatible bucket, such as Cloudflare R2, with the keys you
-              entered in OBS.
-            </li>
             <li>
               <b>YouTube, through the Better Clips app</b>: clips go to your
               YouTube channel. The app starts each upload, and OBS sends the
               video straight to YouTube, so the file never passes through the
               app. The app keeps a library entry for each clip, so you can
-              watch, rename, cut and delete it here.
+              watch, rename, share and delete it here.
             </li>
             <li>
               <b>YouTube, directly</b>: OBS signs in to Google itself and
@@ -194,8 +184,8 @@ export function Faq() {
       <Section title="Google and YouTube">
         <Q q="Which Google permissions does Better Clips ask for, and why?">
           <p>
-            For bucket storage only, use Cloudflare sign-in. When connecting
-            YouTube through the app, Google asks for all permissions together:
+            When connecting YouTube through the app, Google asks for all
+            permissions together:
           </p>
           <ul>
             <li>
@@ -261,10 +251,10 @@ export function Faq() {
         </Q>
         <Q q="What happens to my clips when I disconnect?">
           <p>
-            Removing a hosted channel removes its library entries and cut
-            points. Unpairing one device does not. Revoking the Google grant can
-            disconnect both routes for the same account. Your videos stay on
-            YouTube. For full account deletion, see the{" "}
+            Removing a hosted channel removes its library entries. Unpairing one
+            device does not. Revoking the Google grant can disconnect both
+            routes for the same account. Your videos stay on YouTube. For full
+            account deletion, see the{" "}
             <Link href="/privacy">privacy policy</Link>.
           </p>
         </Q>
@@ -286,11 +276,11 @@ export function Faq() {
             </li>
           </ul>
         </Q>
-        <Q q="Does a cut change the video on YouTube?">
+        <Q q="Can I download or edit a clip?">
           <p>
-            No. A cut only changes how the clip plays here, in whole seconds.
-            The video on YouTube keeps the whole clip, and its link plays all of
-            it. To cut the video itself, trim it in YouTube Studio.
+            Download opens your video in YouTube Studio, where you can download
+            your own upload. OBS also keeps the original MP4. Clip editing in
+            Better Clips is coming soon.
           </p>
         </Q>
         <Q q="Does deleting a clip here delete it from YouTube?">
@@ -348,8 +338,8 @@ export function Privacy() {
         <Q q="Your account">
           <ul>
             <li>
-              Your email address and the ID of the Cloudflare or Google account
-              you sign in with.
+              Your email address and the ID of the Google account you sign in
+              with.
             </li>
             <li>
               With YouTube: your channel&apos;s ID and name, and Google&apos;s
@@ -357,19 +347,13 @@ export function Privacy() {
               In direct mode, OBS uses your operating system&apos;s secure
               storage, or keeps the token only in memory for this session.
             </li>
-            <li>
-              With a bucket: its name and access key, with the secret key
-              encrypted at rest. The clips themselves are in that bucket, in
-              your own Cloudflare account.
-            </li>
           </ul>
         </Q>
         <Q q="Your clips on YouTube">
           <p>
             For each clip OBS uploads through Better Clips: its YouTube video
             ID, title, description, visibility, game or scene, when it was
-            recorded, its length, thumbnail and processing status, and its cut
-            points.
+            recorded, its length, audience, thumbnail and processing status.
           </p>
         </Q>
       </Section>
@@ -445,9 +429,9 @@ export function Privacy() {
             remove Better Clips in{" "}
             <Link href={GOOGLE_PERMISSIONS}>your Google Account</Link>. A
             successful hosted disconnect removes its YouTube token, paired
-            devices, library entries and cut points. If you revoke at Google,
-            the app removes these records when it detects the revoked grant.
-            Google revocation affects both routes for the same Google account.
+            devices and library entries. If you revoke at Google, the app
+            removes these records when it detects the revoked grant. Google
+            revocation affects both routes for the same Google account.
             Disconnect direct OBS to clear its local connection. The videos stay
             on YouTube; delete them in YouTube Studio if you want them removed
             there too.
@@ -463,8 +447,8 @@ export function Privacy() {
             from your sign-in address with the subject “Delete my Better Clips
             account”. We verify your request before removing the remaining
             sign-in ID, email and hosted account records. This does not delete
-            videos on YouTube or files in your own bucket. Use the same address
-            for privacy questions. Do not send passwords or tokens.
+            videos on YouTube or local recordings. Use the same address for
+            privacy questions. Do not send passwords or tokens.
           </p>
         </Q>
       </Section>
@@ -492,10 +476,9 @@ export function Terms() {
         <Q q="What Better Clips is">
           <p>
             Better Clips is a plugin for OBS and a web app. When you press its
-            hotkey, OBS uploads a replay to the destination you choose: your
-            YouTube channel, a bucket in your own Cloudflare account through
-            this app, or your own S3-compatible bucket. The app lets you watch,
-            trim, rename, keep, share and delete those clips.
+            hotkey, OBS keeps a local copy and uploads the replay to your
+            YouTube channel. The app lets you watch, rename, share and delete
+            clips uploaded through it.
           </p>
         </Q>
         <Q q="Provided as is">
@@ -540,10 +523,9 @@ export function Terms() {
       <Section title="Your content">
         <Q q="Your clips are yours">
           <p>
-            You keep all rights to your clips. They are stored in your own
-            bucket or on your own channel. You let Better Clips handle them only
-            as needed to upload, list, play, trim, rename, share and delete them
-            for you.
+            You keep all rights to your clips. They are stored on your own
+            channel. You let Better Clips handle them only as needed to upload,
+            list, play, rename, share and delete them for you.
           </p>
         </Q>
         <Q q="What you're responsible for">
@@ -553,12 +535,8 @@ export function Terms() {
               the rules of the games and platforms you use.
             </li>
             <li>
-              Share links: anyone with a link can watch that clip until the link
-              expires or you delete the clip.
-            </li>
-            <li>
-              Your storage: any Cloudflare or S3 costs beyond a provider&apos;s
-              free tier, and keeping your keys and setup codes private.
+              Video visibility: anyone with the link can watch an unlisted
+              video. Choose Private to restrict access.
             </li>
           </ul>
         </Q>
@@ -567,14 +545,14 @@ export function Terms() {
       <Section title="Ending">
         <Q q="Disconnect or delete your account">
           <p>
-            You can stop using Better Clips at any time. Disconnect YouTube or
-            your bucket in <b>Settings</b>. To delete your hosted account, email{" "}
+            You can stop using Better Clips at any time. Disconnect YouTube in{" "}
+            <b>Settings → YouTube</b>. To delete your hosted account, email{" "}
             <Link href="mailto:aarshpersonal@proton.me">
               aarshpersonal@proton.me
             </Link>{" "}
             from your sign-in address with the subject “Delete my Better Clips
-            account”. This does not delete videos on YouTube or files in your
-            own bucket.
+            account”. This does not delete videos on YouTube or local
+            recordings.
           </p>
         </Q>
         <Q q="Open source and self-hosting">

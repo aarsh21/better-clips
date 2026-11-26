@@ -95,13 +95,11 @@ function ConnectedChannel({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
   })
 
-  const { channelTitle: title, devices, clipCount, cutPointCount } = channel
+  const { channelTitle: title, devices, clipCount } = channel
 
   const removed = [
     clipCount &&
       `${clipCount} library ${clipCount === 1 ? "entry" : "entries"}`,
-    cutPointCount &&
-      `${cutPointCount} saved cut ${cutPointCount === 1 ? "point" : "points"}`,
   ]
     .filter(Boolean)
     .join(" and ")

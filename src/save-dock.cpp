@@ -11,7 +11,7 @@ the Free Software Foundation; either version 2 of the License, or
 /* The "Better Clips" dock: a Save button, the replay length and the result
  * of the last save, next to OBS's own Controls. */
 
-#include "replay-r2.hpp"
+#include "replay.hpp"
 #include "youtube.hpp"
 
 #include <obs-frontend-api.h>
@@ -32,12 +32,7 @@ the Free Software Foundation; either version 2 of the License, or
 
 namespace {
 
-QString last_success = "No upload or test yet this session";
-
-const char *destination_name(Destination to)
-{
-	return to == Destination::S3 ? "S3" : to == Destination::YouTube ? "YouTube" : "Better Clips app";
-}
+QString last_success = "No upload yet this session";
 
 const char *dock_id()
 {
@@ -118,25 +113,15 @@ public:
 	void refresh()
 	{
 		bool host = obs_frontend_replay_buffer_active();
-		bool running = replay_r2_running();
-		auto yt = get_youtube_settings();
-		bool youtube = yt.destination == Destination::YouTube;
-		bool s3 = yt.destination == Destination::S3;
-		/* The Better Clips app keeps clips in R2; an S3 bucket may be anywhere. */
+		bool running = replay_running();
 		const auto setup = destination_setup_action();
-		save->setText(!host              ? "Start Replay Buffer"
-			      : !running         ? "Retry Better Clips Buffer"
-			      : !setup.isEmpty() ? setup
-			      : youtube          ? "Save Replay to YouTube"
-			      : s3               ? "Save Replay to S3"
-						 : "Save Replay to R2");
+		save->setText(!setup.isEmpty() ? setup
+			      : !host          ? "Start Replay Buffer"
+			      : !running       ? "Retry Better Clips Buffer"
+					       : "Save Replay to YouTube");
 		readiness->setText(QString("OBS buffer: %1 · Better Clips: %2\n%3: %4\n%5")
-					   .arg(host ? "running" : "off", running ? "running" : "off",
-						destination_name(yt.destination),
-						!setup.isEmpty() ? "not configured"
-						: youtube        ? "paired"
-								 : "configured",
-						last_success));
+					   .arg(host ? "running" : "off", running ? "running" : "off", "YouTube",
+						setup.isEmpty() ? "paired" : "not connected", last_success));
 		message->setVisible(!message->text().isEmpty());
 		message->setMinimumHeight(message->heightForWidth(message->width()));
 		readiness->setMinimumHeight(readiness->heightForWidth(readiness->width()));
@@ -154,7 +139,6 @@ public:
 	{
 		QString shown = text;
 		shown.remove("Better Clips: ");
-		shown.remove("Replay to R2: "); /* before the rename */
 		if (!shown.isEmpty())
 			shown[0] = shown[0].toUpper();
 		message->setText(shown);
@@ -167,13 +151,15 @@ private:
 
 	void on_click()
 	{
+		if (!destination_setup_action().isEmpty()) {
+			show_settings_dialog();
+			return;
+		}
 		if (obs_frontend_replay_buffer_active()) {
-			if (!replay_r2_running())
+			if (!replay_running())
 				retry_plugin_buffer();
-			else if (!destination_setup_action().isEmpty())
-				show_settings_dialog();
 			else
-				save_replay_to_r2();
+				save_replay();
 			return;
 		}
 		obs_output_t *output = obs_frontend_get_replay_buffer_output();
@@ -203,14 +189,13 @@ void update_save_dock()
 		dock->refresh();
 }
 
-void record_destination_success(Destination to, bool upload)
+void record_upload_success()
 {
 	QMetaObject::invokeMethod(
 		qApp,
-		[to, upload] {
-			last_success = QString("Last success: %1 %2 at %3")
-					       .arg(destination_name(to), upload ? "upload" : "test",
-						    QTime::currentTime().toString("HH:mm"));
+		[] {
+			last_success = QString("Last success: YouTube upload at %1")
+					       .arg(QTime::currentTime().toString("HH:mm"));
 			update_save_dock();
 		},
 		Qt::QueuedConnection);

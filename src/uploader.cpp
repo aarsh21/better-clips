@@ -1,7 +1,6 @@
-/* Mux and deliver replays off the encoder thread. YouTube keeps a recovery
- * file until processing succeeds; other routes write only for fallback. */
+/* Mux and save a local MP4 before uploading it to YouTube. */
 
-#include "replay-r2.hpp"
+#include "replay.hpp"
 #include "plugin-support.h"
 
 #include <obs-frontend-api.h>
@@ -42,7 +41,6 @@ std::atomic<bool> stopping{false};
 std::thread worker;
 std::thread disk_worker;
 QObject *processing = nullptr; /* UI-thread owner of processing timers and requests */
-void (*upload_succeeded)(Destination) = nullptr;
 
 /* Seconds to wait before each retry; the clip only lives in memory, so try
  * for a couple of minutes before giving up. */
@@ -161,16 +159,9 @@ void watch_copy(const YouTubeSettings &settings, const QJsonObject &r, const QSt
 {
 	const QString path = r.value("path").toString();
 	youtube_watch(processing, settings, r.value("clip").toString().toStdString(),
-		      r.value("title").toString().toStdString(), path.toStdString(), [=](bool ready) {
-			      QFileInfo file(path);
-			      const bool removed =
-				      !ready || !file.exists() ||
-				      (file.size() == r.value("bytes").toInteger() &&
-				       file.lastModified().toMSecsSinceEpoch() == r.value("modified").toInteger() &&
-				       QFile::remove(path));
+		      r.value("title").toString().toStdString(), path.toStdString(), [receipt]() {
 			      if (!receipt.isEmpty())
 				      QFile::remove(receipt);
-			      return removed;
 		      });
 }
 
@@ -182,8 +173,6 @@ void track_copy(const Delivery &job, const std::string &id)
 	QJsonObject r{{"clip", QString::fromStdString(id)},
 		      {"title", QString::fromStdString(job.details.title)},
 		      {"path", file.absoluteFilePath()},
-		      {"bytes", job.bytes},
-		      {"modified", job.modified},
 		      {"channel", QString::fromStdString(clip.youtube.channel_id)},
 		      {"app", QString::fromStdString(clip.youtube.app_url)},
 		      {"direct", clip.youtube.route == YouTubeRoute::Direct}};
@@ -250,12 +239,10 @@ void upload_clip(Delivery job)
 		return;
 	}
 
-	const bool yt = clip.youtube.destination == Destination::YouTube;
 	auto &details = job.details;
 	YouTubeSession session;
-	MultipartReceipt receipt;
 	auto &recovery = job.path;
-	if (yt && recovery.empty()) {
+	if (recovery.empty()) {
 		if (clip.youtube_audio_index < 0) {
 			keep_on_disk(clip, mp4, "the selected YouTube audio track is not in the Replay Buffer");
 			return;
@@ -289,8 +276,6 @@ void upload_clip(Delivery job)
 			return;
 		}
 	}
-	const bool via_app = clip.youtube.destination == Destination::ClipsApp;
-	std::string key = clip.youtube.destination == Destination::S3 ? object_key(clip.config, clip.name) : clip.name;
 	notify_user("Better Clips: uploading " + clip.name + " (" + format_mb(mp4.size()) + ")...");
 
 	for (size_t attempt = 0;; attempt++) {
@@ -300,38 +285,18 @@ void upload_clip(Delivery job)
 			error = "OBS is closing";
 			break;
 		}
-		bool uploaded = yt ? youtube_upload(clip, details, mp4, session, link, error, stopping, processing)
-				: via_app
-					? app_upload(clip.config, clip.name, mp4, key, error, receipt,
-						     session.permanent_failure, stopping)
-					: s3_upload(clip.config, key, mp4, error, session.permanent_failure, stopping);
-		if (uploaded) {
-			if (upload_succeeded)
-				upload_succeeded(clip.youtube.destination);
+		if (youtube_upload(clip, details, mp4, session, link, error, stopping, processing)) {
+			record_upload_success();
 			auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 					  std::chrono::steady_clock::now() - upload_start)
 					  .count();
-			obs_log(LOG_INFO, "Uploaded %s (%zu bytes) in %lld ms", key.c_str(), mp4.size(), (long long)ms);
+			obs_log(LOG_INFO, "Uploaded %s (%zu bytes) in %lld ms", clip.name.c_str(), mp4.size(),
+				(long long)ms);
 
-			if (clip.youtube.destination == Destination::S3 && !clip.config.public_url.empty()) {
-				link = clip.config.public_url;
-				while (!link.empty() && link.back() == '/')
-					link.pop_back();
-				link += "/" + key;
-			}
-			auto message = link.empty() ? "Better Clips: uploaded " + key
-						    : "Better Clips: uploaded, link copied: " + link;
-			if (yt)
-				message += ". A copy is kept until YouTube finishes processing: " + recovery;
-			notify_user(message, link);
-			if (yt)
-				track_copy(job, session.clip_id);
+			notify_user("Better Clips: uploaded, link copied: " + link + ". Local copy: " + recovery, link);
+			track_copy(job, session.clip_id);
 			return;
 		}
-
-		if (!yt) // YouTube already logged the status without the server's message.
-			obs_log(LOG_WARNING, "Upload of %s failed (attempt %zu): %s", key.c_str(), attempt + 1,
-				error.c_str());
 
 		std::unique_lock<std::mutex> lock(mutex);
 		if (attempt >= std::size(RETRY_DELAYS) || stopping || session.permanent_failure)
@@ -341,12 +306,7 @@ void upload_clip(Delivery job)
 		wake.wait_for(lock, std::chrono::seconds(RETRY_DELAYS[attempt]), [] { return stopping.load(); });
 	}
 
-	if (!yt)
-		obs_log(LOG_ERROR, "Giving up on uploading %s: %s", key.c_str(), error.c_str());
-	if (yt)
-		notify_user("Better Clips: YouTube upload failed (" + error + "). Local copy: " + recovery);
-	else
-		keep_on_disk(clip, mp4, "upload failed (" + error + ")");
+	notify_user("Better Clips: YouTube upload failed (" + error + "). Local copy: " + recovery);
 }
 
 void write_clip(Delivery job)
@@ -377,11 +337,6 @@ void run(std::deque<Delivery> &clips, void (*handle)(Delivery))
 }
 
 } // namespace
-
-void set_upload_success_handler(void (*handler)(Destination))
-{
-	upload_succeeded = handler;
-}
 
 void uploader_start()
 {

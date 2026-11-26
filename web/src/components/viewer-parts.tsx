@@ -13,9 +13,6 @@ import {
 import { displayTitle, type Clip } from "@/lib/api"
 import type { ClipNav } from "@/lib/clip-actions"
 
-/* The pieces both viewers share: bucket clips (clip-viewer.tsx) and YouTube
- * clips (youtube-viewer.tsx). */
-
 /* The title, which you click (or press E) to rename, a line about the clip,
  * and the previous, next and close buttons. */
 export function ViewerHeader({
@@ -140,7 +137,7 @@ export function Action({
   active?: boolean
   destructive?: boolean
   disabled?: boolean
-  onClick: () => void
+  onClick?: () => void
 }) {
   return (
     <Tooltip>

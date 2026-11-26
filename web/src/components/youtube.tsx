@@ -19,7 +19,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import { buttonVariants } from "@/components/ui/button-variants"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,14 +27,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  formatDuration,
-  youtubeStudioUrl,
-  type Privacy,
-  type YouTubeClip,
-} from "@/lib/api"
+import { youtubeStudioUrl, type Privacy, type YouTubeClip } from "@/lib/api"
 import { useAccount } from "@/lib/settings"
-import { copyYouTubeLink, PRIVACY_OPTIONS, privacyOption } from "@/lib/youtube"
+import { PRIVACY_OPTIONS, privacyOption } from "@/lib/youtube"
 
 /* YouTube's red, for its logo. */
 export const YOUTUBE_RED = "text-[#ff0033]"
@@ -89,7 +83,7 @@ export function YouTubeStatus({
       {large && (
         <span className="max-w-sm text-xs text-white/70">
           {clip.status === "missing" ? (
-            "Your cut points are saved while Better Clips checks again."
+            "Better Clips will check YouTube again."
           ) : failed ? (
             <>
               Open it in{" "}
@@ -173,77 +167,6 @@ export function PrivacyButton({
   )
 }
 
-/* Copies a YouTube clip's link. A cut clip asks first, since the video on
- * YouTube still has all of it. */
-export function useYouTubeShare() {
-  const [warning, setWarning] = React.useState<YouTubeClip | null>(null)
-
-  const share = (clip: YouTubeClip) => {
-    if (clip.cut) setWarning(clip)
-    else void copyYouTubeLink(clip)
-  }
-
-  const dialog = {
-    clip: warning,
-    onOpenChange: (open: boolean) => !open && setWarning(null),
-  }
-
-  return { share, dialog }
-}
-
-export function CutLinkDialog({
-  clip,
-  onOpenChange,
-}: {
-  clip: YouTubeClip | null
-  onOpenChange: (open: boolean) => void
-}) {
-  const [last, setLast] = React.useState(clip)
-
-  if (clip && clip !== last) setLast(clip)
-  const shown = clip ?? last
-  const start = formatDuration(shown?.cut?.start ?? 0) || "0:00"
-
-  return (
-    <AlertDialog open={!!clip} onOpenChange={onOpenChange}>
-      {/* Wider than other confirmations, for its three buttons. */}
-      <AlertDialogContent className="sm:max-w-md!">
-        <AlertDialogHeader>
-          <AlertDialogTitle>This link has the whole clip</AlertDialogTitle>
-          <AlertDialogDescription>
-            Your cut only applies when the clip plays here. The video on YouTube
-            still has all of it: the link starts at {start}, but plays on to the
-            end, and anyone can go back. To cut the video itself, trim it in
-            YouTube Studio.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          {shown && (
-            <a
-              href={youtubeStudioUrl(shown.videoId)}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => onOpenChange(false)}
-              className={buttonVariants({ variant: "outline" })}
-            >
-              Edit in YouTube Studio
-            </a>
-          )}
-          <AlertDialogAction
-            onClick={() => {
-              if (shown) void copyYouTubeLink(shown)
-              onOpenChange(false)
-            }}
-          >
-            Copy link anyway
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
 /* Deleting from YouTube can't be undone, so it always asks. */
 export function DeleteYouTubeDialog({
   clip,
@@ -285,8 +208,6 @@ export function DeleteYouTubeDialog({
   )
 }
 
-/* Connecting OBS without a bucket: there's no setup code, OBS signs in to
- * YouTube itself. */
 export function YouTubeObsSteps() {
   return (
     <ol className="flex list-decimal flex-col gap-2 pl-4 text-xs leading-relaxed text-muted-foreground [&_b]:font-medium [&_b]:text-foreground">
@@ -303,12 +224,11 @@ export function YouTubeObsSteps() {
         and restart OBS.
       </li>
       <li>
-        In <b>Tools → Better Clips Settings</b>, set <b>Destination</b> to{" "}
-        <b>YouTube</b>, keep <b>Upload</b> on{" "}
+        In <b>Tools → Better Clips Settings</b>, leave <b>Upload</b> on{" "}
         <b>Through the Better Clips app</b> and click{" "}
         <b>Sign in with YouTube</b>. When it says you&apos;re connected, click{" "}
-        <b>Save</b>: clips only go to YouTube once the destination is saved.
-        Clips uploaded <b>Directly to YouTube</b> don&apos;t show up here.
+        <b>Save</b>. Clips uploaded <b>Directly to YouTube</b> don&apos;t show
+        up here.
       </li>
       <li>
         Bind <b>Save Replay and Upload</b> in <b>Settings → Hotkeys</b>, start

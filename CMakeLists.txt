@@ -58,14 +58,11 @@ endif()
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
-    src/app-upload.cpp
     src/memory-mux.cpp
     src/plugin-main.cpp
     src/replay-output.cpp
-    src/s3-upload.cpp
     src/save-dock.cpp
     src/settings-dialog.cpp
-    src/sha256.cpp
     src/uploader.cpp
     src/youtube-http.cpp
     src/youtube-credential.cpp

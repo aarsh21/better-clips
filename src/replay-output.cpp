@@ -6,7 +6,7 @@
  * encoding work, and packet data is reference counted, so both buffers share
  * the same memory. */
 
-#include "replay-r2.hpp"
+#include "replay.hpp"
 #include "plugin-support.h"
 
 #include <util/platform.h>
@@ -418,7 +418,7 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 
 } // namespace
 
-void replay_r2_request_save(obs_output_t *output)
+void replay_request_save(obs_output_t *output)
 {
 	ReplayR2 *r = (ReplayR2 *)obs_obj_get_data(output);
 	if (!r || !r->active) {
@@ -428,7 +428,6 @@ void replay_r2_request_save(obs_output_t *output)
 	const auto timestamp = static_cast<int64_t>(os_gettime_ns() / 1000);
 	auto clip = std::make_unique<Clip>();
 	clip->recorded_at = time(nullptr);
-	clip->config = get_config();
 	clip->youtube = get_youtube_settings();
 	if (char *dir = obs_frontend_get_current_record_output_path()) {
 		clip->save_dir = dir;
@@ -464,10 +463,10 @@ void replay_r2_request_save(obs_output_t *output)
 	r->pending.push_back({timestamp, std::move(clip)});
 }
 
-void register_replay_r2_output()
+void register_better_clips_output()
 {
 	struct obs_output_info info = {};
-	info.id = "replay_r2_output";
+	info.id = "better_clips_output";
 	info.flags = OBS_OUTPUT_AV | OBS_OUTPUT_ENCODED | OBS_OUTPUT_MULTI_TRACK;
 	info.get_name = get_name;
 	info.create = create;

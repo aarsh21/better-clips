@@ -34,23 +34,12 @@ class InteractiveGoogle(google.Google):
             q = parse_qs(request.query)
             direct = q['redirect_uri'][0] != google.BASE + '/api/youtube/callback'
             scopes = sorted(s.removeprefix(google.PREFIX) for s in q['scope'][0].split())
-            if (run / 'worker040').exists():
-                assert not direct and scopes == ['email', 'force-ssl', 'openid', 'readonly', 'upload']
-                assert q['include_granted_scopes'] == ['true']
-            else:
-                assert scopes == (['readonly', 'upload'] if direct else ['email', 'force-ssl', 'openid'])
-                assert 'include_granted_scopes' not in q
-            if (run / 'returning-grant').exists():
-                google.extra_grants.update({google.PREFIX + 'readonly', google.PREFIX + 'upload'})
+            assert scopes == (['readonly', 'upload'] if direct else ['email', 'force-ssl', 'openid'])
+            assert 'include_granted_scopes' not in q
             print('Direct' if direct else 'Hosted', scopes, flush=True)
         super().do_GET()
 
     def reply(self, code=200, data=None, **headers):
-        if (run / 'worker040').exists() or (run / 'returning-grant').exists():
-            if urlsplit(self.path).path == '/oauth2/v3/userinfo':
-                data['sub'] = 'rollout-subject'
-            if urlsplit(self.path).path == '/token' and (run / 'returning-grant').exists():
-                data.pop('refresh_token', None)  # Google can return only the existing broad access grant.
         override = run / 'google-audience'
         if urlsplit(self.path).path == '/youtube/v3/videos' and self.command == 'GET' and override.exists():
             audience = override.read_text().strip()

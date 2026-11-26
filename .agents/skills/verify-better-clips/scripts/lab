@@ -2,7 +2,7 @@
 # One disposable checkout/orb per run: the protocol exercise fixes its port and D1 path.
 set -euo pipefail
 action=${1:-help}; id=${2:-}
-usage() { echo 'lab {start|doctor|protocol|legacy|obs|quit|upgrade|gates|stop} RUN_ID (1–8 lowercase letters/digits)'; }
+usage() { echo 'lab {start|doctor|protocol|obs|quit|install|gates|stop} RUN_ID (1–8 lowercase letters/digits)'; }
 [[ $action != help && $action != --help ]] || { usage; exit; }
 [[ $id =~ ^[a-z0-9]{1,8}$ ]] || { usage >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
@@ -12,7 +12,7 @@ C=$R/config/obs-studio; n=bc-$id
 clearproxy='unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy;'
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 export NO_PROXY=localhost,127.0.0.1,::1
-ports=8787,8788,9393,9394,9229,9230
+ports=8787,9393,9229
 rule=(! -d 127.0.0.0/8 -p tcp -m multiport --dports "$ports" -m comment --comment "$n" -j REJECT)
 die() { echo "$*" >&2; exit 1; }
 svc() { echo "$1" >>"$R/services"; amp orb service start "$n-$1" --cwd "$PWD" --command "${clearproxy} $2"; }
@@ -21,7 +21,7 @@ noobs() { ! pgrep -x obs >/dev/null || die 'Quit OBS first. Never edit its live 
 if [[ $action != start ]]; then [[ -f $R/owner && $(cat "$R/owner") == "$PWD" ]] || die 'No matching run in this checkout'; fi
 case "$action" in
 start)
-  for cmd in amp pnpm node moto_server agent-browser obs Xvfb xdotool openbox xclip xdpyinfo xrandr import ffmpeg ffprobe sqlite3 jq ss openssl curl-config gh cmake cpack clang-format gersemi dpkg-deb qmake6 gnome-keyring-daemon secret-tool dbus-daemon; do
+  for cmd in amp pnpm node agent-browser obs Xvfb xdotool openbox xclip xdpyinfo xrandr import ffmpeg ffprobe sqlite3 jq ss openssl curl-config gh cmake cpack clang-format gersemi dpkg-deb qmake6 gnome-keyring-daemon secret-tool dbus-daemon; do
     command -v "$cmd" >/dev/null || die "Missing prerequisite: $cmd. Run the SKILL.md install block before lab start."
   done
   /usr/bin/python3 -c 'import pyatspi' || die 'Install python3-pyatspi (see SKILL.md).'
@@ -32,15 +32,13 @@ start)
   for port in ${ports//,/ }; do [[ -z $(ss -Hlt "sport = :$port") ]] || die "Busy port $port"; done
   umask 077; mkdir -m 700 "$R"; echo "$PWD" >"$R/owner"; mkdir -p "$E" "$R/state" web/.wrangler
   ln -s "$R/state" web/.wrangler/state
-  printf 'CREDS_KEY=%s\nGOOGLE_CLIENT_ID=test-client\nGOOGLE_CLIENT_SECRET=test-secret\nGOOGLE_OAUTH=http://127.0.0.1:9393\nYOUTUBE_API=http://127.0.0.1:9393\nAPP_PASSWORD=local-only-clips-verification\n' "$(openssl rand -base64 32)" >"$R/vars"
+  printf 'CREDS_KEY=%s\nGOOGLE_CLIENT_ID=test-client\nGOOGLE_CLIENT_SECRET=test-secret\nGOOGLE_OAUTH=http://127.0.0.1:9393\nYOUTUBE_API=http://127.0.0.1:9393\n' "$(openssl rand -base64 32)" >"$R/vars"
   ln -s "$R/vars" web/.dev.vars
   # Orbs can forward loopback listeners onto eth0. Scope a temporary rule to these lab ports.
   sudo -n iptables -I INPUT "${rule[@]}"
   pnpm --dir web build >"$E/web-build.log" 2>&1
   (cd web; pnpm exec wrangler d1 migrations apply clips-app --local -c wrangler.app.jsonc) >"$E/migrations.log" 2>&1
   svc host 'cd web && exec pnpm exec wrangler dev --local -c wrangler.app.jsonc --ip 127.0.0.1 --port 8787 --inspector-port 9229'
-  svc r2 "cd web && exec pnpm exec wrangler dev --local -c wrangler.jsonc --assets dist/client --ip 127.0.0.1 --port 8788 --inspector-port 9230 --persist-to '$R/r2'"
-  svc s3 'exec moto_server -H 127.0.0.1 -p 9394'
   svc x 'exec Xvfb :97 -screen 0 1440x900x24 -s 0 -nolisten tcp'
   for i in {1..30}; do xdpyinfo >/dev/null 2>&1 && break; sleep .2; done
   svc wm 'exec env DISPLAY=:97 openbox'
@@ -56,10 +54,7 @@ start)
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$R/bus"
   printf probe | secret-tool store --label=preflight run "$id"
   [[ $(secret-tool lookup run "$id") == probe ]]; secret-tool clear run "$id"
-  waiturl http://127.0.0.1:9394/
-  curl -fsS -X PUT http://127.0.0.1:9394/clips >/dev/null
-  curl -fsS -X PUT 'http://127.0.0.1:9394/clips?policy' -H 'Content-Type: application/json' -d '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::clips/*"]}]}'
-  waiturl http://localhost:8787/api/me; waiturl http://localhost:8788/api/me
+  waiturl http://localhost:8787/api/me
   "$0" doctor "$id" ;;
 doctor)
   for port in ${ports//,/ }; do
@@ -68,13 +63,10 @@ doctor)
       ! curl -gs --max-time 1 -o /dev/null "http://$addr:$port/" || die "Lab port $port responds off loopback"
     done
   done
-  for pair in 8787:cloudflare 8788:password; do
-    curl -sS "http://localhost:${pair%:*}/api/me" | jq -e --arg a "${pair#*:}" '.auth==$a' >/dev/null
-  done
+  curl -sS http://localhost:8787/api/me | jq -e '.auth=="google"' >/dev/null
   db=$(find "$R/state/v3/d1" -name '*.sqlite' ! -name metadata.sqlite)
   diff <(printf '%s\n' web/migrations/*.sql | sed 's|.*/||') <(sqlite3 -readonly "$db" 'select name from d1_migrations order by name')
-  curl -fsS http://127.0.0.1:9394/ | grep -q '<Name>clips</Name>'; xdpyinfo >/dev/null
-  echo "Hosted/password sign-in, migrations, S3 and Xvfb ready; non-loopback checks passed. Evidence: $E"
+  xdpyinfo >/dev/null; echo "Google sign-in, migrations and Xvfb ready."
   if pgrep -x obs >/dev/null; then grep -h 'plugin loaded successfully' "$(ls -t "$C"/logs/*.txt | head -1)"; fi ;;
 protocol)
   # This exercise owns 9393; --serve must not run at the same time.
@@ -82,26 +74,12 @@ protocol)
   python3 web/worker/tests/youtube_local.py >"$E/protocol.log" 2>&1
   "$S/no-qt-tls.sh" >"$E/no-qt-tls.log" 2>&1
   svc google "exec env R='$R' python3 -B '$S/interactive-google.py'"; waiturl http://127.0.0.1:9393/ ;;
-legacy)
-  noobs; mkdir "$R/old"; gh release download 0.2.0 --repo aarsh21/better-clips -p '*-x86_64-linux-gnu.deb' -D "$R/old"
-  dpkg-deb -x "$R/old/"*.deb "$R/old/tree"; o=$C/plugins/obs-replay-r2; mkdir -p "$o/bin/64bit" "$C/basic/profiles/Untitled"
-  cp "$R/old/tree"/usr/lib/*/obs-plugins/obs-replay-r2.so "$o/bin/64bit/"; cp -R "$R/old/tree/usr/share/obs/obs-plugins/obs-replay-r2" "$o/data"
-  printf '[SimpleOutput]\nFilePath=%s/recordings\nRecRB=true\nRecRBTime=8\nRecEncoder=x264\n[Video]\nBaseCX=640\nBaseCY=360\nOutputCX=640\nOutputCY=360\n' "$R" >"$C/basic/profiles/Untitled/basic.ini"
-  mkdir -p "$R/recordings"
-  "$0" obs "$id" ;;
 obs)
   noobs
   # Keep Qt accessibility on the display's bus even for the no-keyring run.
   a11y=$(gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress | cut -d "'" -f 2)
   bus=$R/bus; [[ ! -e $R/no-keyring ]] || bus=$R/unavailable
-  runtime=obs
-  # The shipped plugin needs libobs 31's obs_encoder_get_mixer_index on Save.
-  if [[ -x $R/obs31/root/usr/bin/obs ]]; then
-    # OBS searches its extracted modules, then the system's incompatible ones.
-    # Hide only the latter in this process's mount namespace; run OBS as the lab user.
-    runtime="sudo -nE unshare -m --propagation private sh -c 'mount -t tmpfs tmpfs /usr/lib/x86_64-linux-gnu/obs-plugins && exec setpriv --reuid=$UID --regid=$(id -g) --init-groups env HOME=$HOME LD_LIBRARY_PATH=$R/obs31/root/usr/lib/x86_64-linux-gnu $R/obs31/root/usr/bin/obs \"\$@\"' obs"
-  fi
-  svc obs "export DBUS_SESSION_BUS_ADDRESS='unix:path=$bus' AT_SPI_BUS_ADDRESS='$a11y' DISPLAY=:97 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 XDG_CONFIG_HOME='$R/config' LIBGL_ALWAYS_SOFTWARE=1 BC_BROWSER='$BC_BROWSER' BROWSER='$S/xdg-open' PATH='$S':\$PATH YOUTUBE_AUTH_BASE=http://127.0.0.1:9393 YOUTUBE_TOKEN_BASE=http://127.0.0.1:9393 YOUTUBE_API=http://127.0.0.1:9393; exec $runtime --disable-shutdown-check"
+  svc obs "export DBUS_SESSION_BUS_ADDRESS='unix:path=$bus' AT_SPI_BUS_ADDRESS='$a11y' DISPLAY=:97 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 XDG_CONFIG_HOME='$R/config' LIBGL_ALWAYS_SOFTWARE=1 BC_BROWSER='$BC_BROWSER' BROWSER='$S/xdg-open' PATH='$S':\$PATH YOUTUBE_AUTH_BASE=http://127.0.0.1:9393 YOUTUBE_TOKEN_BASE=http://127.0.0.1:9393 YOUTUBE_API=http://127.0.0.1:9393; exec obs --disable-shutdown-check"
   timeout 20 xdotool search --sync --onlyvisible --name '^OBS .*Profile:' >/dev/null
   # The X window exists before Qt registers its controls on the accessibility bus.
   for i in {1..30}; do "$S/obs-ui" --has Settings && break; sleep .2; done
@@ -112,7 +90,7 @@ quit)
   if timeout 3 xdotool search --sync --onlyvisible --name '^Exit OBS\?$' >/dev/null; then "$S/obs-ui" Yes --role button; fi
   for i in {1..50}; do ! pgrep -x obs >/dev/null && break; sleep .1; done
   noobs; amp orb service stop "$n-obs" ;;
-upgrade)
+install)
   noobs
   # install.sh removes system-wide legacy installs too. Only exercise the run's own per-user copy.
   [[ $(dpkg-query -W -f='${db:Status-Status}' obs-replay-r2 2>/dev/null || :) != installed ]] || die 'System package present'
@@ -121,14 +99,10 @@ upgrade)
   cmake --build build_x86_64 --parallel 2 >>"$E/plugin-build.log"
   cpack --config build_x86_64/CPackConfig.cmake -G DEB >>"$E/plugin-build.log"
   pkg=$(ls -t release/better-clips-*-x86_64-linux-gnu.deb | head -1)
-  broken="$R/bad-install/obs-studio/plugins"; mkdir -p "$broken"; cp -a "$C/plugins/obs-replay-r2" "$broken/"
-  env -u DISPLAY -u WAYLAND_DISPLAY -u CLIPS_SETUP_CODE XDG_CONFIG_HOME="$R/config" OBS_R2_PACKAGE="$PWD/$pkg" sh install.sh >"$E/install.log"
+  env -u DISPLAY -u WAYLAND_DISPLAY XDG_CONFIG_HOME="$R/config" OBS_R2_PACKAGE="$PWD/$pkg" sh install.sh >"$E/install.log"
   test ! -e "$C/plugins/obs-replay-r2"; test -s "$C/plugins/better-clips/bin/64bit/better-clips.so"
-  # A failed replacement must preserve both trees, including resources.
-  cp -a "$C/plugins/better-clips" "$broken/"
-  cp -a "$broken" "$R/before-corrupt"; printf 'not a deb\n' >"$R/corrupt.deb"
-  if env -u DISPLAY -u WAYLAND_DISPLAY -u CLIPS_SETUP_CODE XDG_CONFIG_HOME="$R/bad-install" OBS_R2_PACKAGE="$R/corrupt.deb" sh install.sh >"$E/corrupt-install.log" 2>&1; then die 'Corrupt package accepted'; fi
-  diff -qr "$R/before-corrupt" "$broken"; echo 'Both installed trees unchanged' >>"$E/corrupt-install.log"
+  mkdir -p "$C/basic/profiles/Untitled" "$R/recordings"
+  printf '[SimpleOutput]\nFilePath=%s/recordings\nRecRB=true\nRecRBTime=8\nRecEncoder=x264\n[Video]\nBaseCX=640\nBaseCY=360\nOutputCX=640\nOutputCY=360\n' "$R" >"$C/basic/profiles/Untitled/basic.ini"
   "$0" obs "$id" ;;
 gates)
   rc=0
@@ -140,11 +114,9 @@ gates)
     if [[ -z $files ]]; then echo 'No changed CMake files in CI scope'; else mapfile -t paths <<<"$files"; build-aux/run-gersemi --fail-error --check "${paths[@]}"; fi
   }
   gate gersemi cmake_changes
-  gate clip-title node --test web/worker/tests/clip-title.test.mjs
-  gate r2-local python3 web/worker/tests/r2_local.py
   gate web-check pnpm --dir web check; gate web-build pnpm --dir web build; exit "$rc" ;;
 stop)
-  for session in "r2-$id" "$BC_BROWSER"; do agent-browser --session "$session" close >/dev/null 2>&1 || :; done
+  agent-browser --session "$BC_BROWSER" close >/dev/null 2>&1 || :
   if [[ -f $R/services ]]; then
     while read -r name; do
       if amp orb service list | grep -Fq "amp-svc-$n-$name.service "; then amp orb service stop "$n-$name"; fi

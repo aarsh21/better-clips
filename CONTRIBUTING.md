@@ -11,13 +11,11 @@ src/                  the OBS plugin (C++17, libobs, Qt 6, libcurl)
   replay-output.cpp     the in-memory replay buffer, attached to OBS's encoders
   memory-mux.cpp        writes the MP4 in memory (H.264/HEVC/AV1, AAC/Opus)
   uploader.cpp          upload queue and retries
-  app-upload.cpp        multipart upload through the clips app
-  s3-upload.cpp         direct SigV4 upload to an S3-compatible bucket
+  youtube-upload.cpp    resumable uploads to YouTube, through the app or directly
   save-dock.cpp         the Better Clips dock
   settings-dialog.cpp   Tools → Better Clips Settings
 web/                  the clips app (Cloudflare Worker + React), see web/README.md
-  worker/               API: index.ts (routes), hosted.ts (accounts, OAuth),
-                        store.ts (R2 access), meta.ts (shares, settings)
+  worker/               API routes, account sessions and YouTube OAuth/uploads
   src/                  the React app
   migrations/           D1 schema for hosted mode
 install.sh, install.ps1 one-line installers
@@ -57,16 +55,16 @@ Before you push:
 ```sh
 cd web
 pnpm install
-cp .dev.vars.example .dev.vars   # set a password, or DEV_NO_AUTH=1
-pnpm dev                         # app and Worker with a local bucket
+cp .dev.vars.example .dev.vars   # see web/README.md for OAuth configuration
+pnpm exec wrangler d1 migrations apply clips-app --local
+pnpm dev
 pnpm check                       # must pass before you open a pull request
 ```
 
 `pnpm check` runs TypeScript, ESLint, Oxlint with the anti-slop rules and
 React Doctor, which has to stay at 100. Format with `pnpm format`.
 
-Changes to the Worker must keep both modes working: self-hosted (one bucket
-bound as `BUCKET`) and hosted (D1 plus OAuth). Changes to the database go in a
+Changes to the database go in a
 new numbered file in `web/migrations/`; never edit one that has shipped.
 
 ## Pull requests

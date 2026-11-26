@@ -36,7 +36,6 @@ CHANNEL = "UC-local-testing"
 PREFIX = "https://www.googleapis.com/auth/youtube."
 codes, tokens, sessions, videos = {}, {}, {}, {}
 grants = set()
-extra_grants = set()  # Google may return an older, wider grant on reconnect.
 unticked = None
 quota = False
 revoked = False
@@ -152,7 +151,6 @@ class Google(BaseHTTPRequestHandler):
                 )
                 grants.clear()
                 grants.update(req["scope"].split())
-                grants.update(extra_grants)
                 grants.discard(unticked)
                 revoked = False
             elif revoked or f.get("refresh_token") != "testing-refresh":
@@ -487,15 +485,7 @@ def exercise():
     ]:
         login("pair", True)
     unticked = None
-    extra_grants.update({PREFIX + "upload", PREFIX + "readonly"})
     token = login("pair", True)
-    assert set(sql("SELECT scopes FROM youtube_accounts")[0][0].split()) >= extra_grants
-    extra_grants.clear()
-    check(call("/api/youtube/obs/status", bearer=token)["channelId"] == CHANNEL, "older broad grant still paired")
-    old = call("/api/youtube/upload/start", "POST", dict(title="Existing grant", description="", privacy="private",
-               madeForKids=True, size=1, category="", recordedAt="2026-11-01"), bearer=token)
-    check(sessions[urlsplit(old["sessionUrl"]).path]["meta"]["status"]["selfDeclaredMadeForKids"] is True,
-          "existing broad grant refreshes and starts an upload without reconnecting")
     second = login("pair", True, existing=True)
     assert len(call("/api/me")["youtube"]["devices"]) == 2
     status_path = "/api/youtube/obs/status"
@@ -582,9 +572,9 @@ def exercise():
         "OBS pairing requires a challenge",
     )
     me = call("/api/me")
-    assert me["storage"] is None and me["youtube"]["channelId"] == CHANNEL
-    assert call("/api/clips") == {"clips": [], "youtube": [], "returning": True}
-    print("Bucketless Google login, OBS state and single-use exchange: OK", flush=True)
+    assert me["youtube"]["channelId"] == CHANNEL
+    assert call("/api/clips") == {"youtube": [], "returning": True}
+    print("Google login, OBS state and single-use exchange: OK", flush=True)
 
     def upload(direct=False):
         n = len(sessions)
@@ -720,16 +710,7 @@ def exercise():
         sync_due()
         check(call("/api/clips")["youtube"][0]["madeForKids"] is audience,
               f"library reflects Google's audience: {audience}")
-    call(endpoint + "/cut", "PUT", {"start": 2.5, "end": 7}, 400)
-    call(endpoint + "/cut", "PUT", {"start": 2, "end": 7})
-    assert call("/api/clips")["youtube"][0]["cut"] == {"start": 2, "end": 7}
-    # D1 changes zero rows if the clip disappears after the handler reads it.
-    sql("CREATE TRIGGER skip_cut BEFORE UPDATE OF start ON youtube_clips BEGIN SELECT RAISE(IGNORE); END")
-    try:
-        check(call(endpoint + "/cut", "PUT", None, status=None) == 404, "zero-row cut update reports the clip is gone")
-    finally:
-        sql("DROP TRIGGER skip_cut")
-    call(endpoint + "/cut", "PUT", None)
+    call(endpoint + "/cut", "PUT", {"start": 2, "end": 7}, 404)
     videos[vid]["snippet"]["title"] = "Renamed on YouTube"
     videos[vid]["status"]["privacyStatus"] = "unlisted"
     sync_due()
@@ -774,17 +755,16 @@ def exercise():
     check(title == "Latest Studio title",
           f"description-only PATCH preserved Studio title: {title}")
     sync_due()  # Finish the post-edit refresh before making the video disappear.
-    call(endpoint + "/cut", "PUT", {"start": 2, "end": 7})
     omitted = videos.pop(vid)
     sql("UPDATE youtube_clips SET uploaded='2020-01-01' WHERE videoId=?", (vid,))
     sync_due()
     missing = call("/api/clips")["youtube"][0]
-    assert missing["status"] == "missing" and missing["cut"] == {"start":2,"end":7}
+    assert missing["status"] == "missing"
     assert sql("SELECT nextSync-missing_since FROM youtube_clips WHERE videoId=?", (vid,))[0][0] >= 86400000
     sync_due()
     videos[vid] = omitted
     sync_due()
-    check(call("/api/clips")["youtube"][0]["cut"] == missing["cut"], "missing video reappeared with original cuts")
+    check(call("/api/clips")["youtube"][0]["videoId"] == vid, "missing video reappeared")
     del videos[vid]
     sync_due()
     sql("UPDATE youtube_clips SET missing_since=1 WHERE videoId=?", (vid,))
@@ -797,7 +777,7 @@ def exercise():
     call("/api/youtube/clips/" + clip["id"], "DELETE")
     assert vid not in videos and not call("/api/clips")["youtube"]
     print(
-        "Single consent: rename, visibility, cut, delete, external rename/deletion: OK",
+        "Single consent: rename, visibility, delete, external rename/deletion: OK",
         flush=True,
     )
     metadata = {
@@ -849,9 +829,6 @@ def exercise():
         subprocess.run([str(probe), action], env=probe_env, timeout=15, check=True)
 
     account("connect")
-    extra_grants.update({"openid", "email"})
-    account("connect")
-    extra_grants.clear()
     print("Direct loopback, state rejection, PKCE exchange and channel lookup: OK")
     for processing_result in ["processed", "rejected"]:
         upload(direct=True)

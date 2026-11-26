@@ -4,12 +4,10 @@
 #include <functional>
 #include <string>
 
-/* Where saved replays go. ClipsApp and S3 use R2Config as before. */
-enum class Destination { ClipsApp, S3, YouTube };
 enum class YouTubeRoute { ClipsApp, Direct };
 
 struct YouTubeSettings {
-	Destination destination = Destination::ClipsApp;
+	bool start_replay_buffer = true;
 	YouTubeRoute route = YouTubeRoute::ClipsApp;
 	std::string refresh_token; /* Direct only; never sent to the Clips app */
 	/* Set by youtube_connect_async; empty when not connected. */

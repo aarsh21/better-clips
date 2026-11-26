@@ -3,7 +3,19 @@
 All notable changes. The plugin follows [semantic versioning](https://semver.org);
 the web app ships from `main`.
 
-## Unreleased
+## [0.6.0] - 2026-11-26
+
+- YouTube is the only upload destination. Connect your channel from the Better Clips dock.
+- OBS keeps a local MP4 after every upload. **Download** in the dashboard opens the video in YouTube Studio.
+- Removed bucket storage and the clip editor. YouTube clip editing is coming soon.
+
+## [0.5.1] - 2026-11-26
+
+- YouTube clips default to **not made for kids**. You can change this in OBS
+  or in the dashboard’s YouTube settings. Older plugins can upload without
+  choosing an audience first.
+
+## [0.5.0] - 2026-11-26
 
 ### Web app
 
@@ -61,14 +73,6 @@ the web app ships from `main`.
   versions use it.
 - Videos that are made for kids, or whose audience isn't confirmed yet, open on
   YouTube instead of playing in the app.
-
-## [0.5.1] - 2026-11-26
-
-- YouTube clips default to **not made for kids**. You can change this in OBS
-  or in the dashboard’s YouTube settings. Older plugins can upload without
-  choosing an audience first.
-
-## [0.5.0] - 2026-11-26
 
 ### Plugin
 

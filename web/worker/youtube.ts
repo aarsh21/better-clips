@@ -127,11 +127,11 @@ export async function youtubeInfo(env: HostedEnv, user: string) {
       ).results,
       ...(await env
         .DB!.prepare(
-          `SELECT count(*) AS clipCount, count(start) + count(end) AS cutPointCount
+          `SELECT count(*) AS clipCount
            FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL`
         )
         .bind(user)
-        .first<{ clipCount: number; cutPointCount: number }>()),
+        .first<{ clipCount: number }>()),
     }
   )
 }
@@ -418,7 +418,7 @@ export async function youtubeClips(
     .prepare(
       `SELECT id,videoId,coalesce(pendingTitle,title) AS title,pendingTitle,
        coalesce(pendingDescription,description) AS description,pendingDescription,category,
-       coalesce(pendingPrivacy,privacy) AS privacy,pendingPrivacy,recordedAt,uploaded,durationSeconds,thumbnail,CASE WHEN missing_since IS NULL THEN status ELSE 'missing' END AS status,start,end,madeForKids
+       coalesce(pendingPrivacy,privacy) AS privacy,pendingPrivacy,recordedAt,uploaded,durationSeconds,thumbnail,CASE WHEN missing_since IS NULL THEN status ELSE 'missing' END AS status,madeForKids
        FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL ORDER BY recordedAt DESC`
     )
     .bind(user)
@@ -427,10 +427,9 @@ export async function youtubeClips(
   return {
     returning: Boolean(a.had_clips),
     stale: Boolean(a.sync_failed),
-    clips: results.map(({ start, end, madeForKids, ...row }) => ({
+    clips: results.map(({ madeForKids, ...row }) => ({
       ...row,
       madeForKids: madeForKids === 0 ? false : madeForKids === 1 ? true : null,
-      cut: start === null ? null : { start, end },
       url: `https://youtu.be/${row.videoId}`,
     })),
   }
@@ -632,7 +631,7 @@ export function youtubeRoutes(app: Hono<any>) {
       if (!hasAllScopes(t.scope)) {
         error = "insufficient_scope"
         throw new Error(
-          "YouTube needs all permissions together. Select every permission, or use Cloudflare sign-in for bucket storage only."
+          "YouTube needs all permissions together. Select every permission to connect your channel."
         )
       }
 
@@ -1066,175 +1065,141 @@ export function youtubeRoutes(app: Hono<any>) {
 
     return c.json({ error: "Another edit is still saving. Try again." }, 409)
   })
-  app.on(
-    ["PATCH", "PUT", "DELETE"],
-    [path + "/clips/:id", path + "/clips/:id/cut"],
-    async (c) => {
-      const env: HostedEnv = c.env,
-        db = env.DB!,
-        user = c.get("who").userId,
-        a = await account(env, user),
-        id = c.req.param("id")
+  app.on(["PATCH", "DELETE"], path + "/clips/:id", async (c) => {
+    const env: HostedEnv = c.env,
+      db = env.DB!,
+      user = c.get("who").userId,
+      a = await account(env, user),
+      id = c.req.param("id")
 
-      if (!a) return c.json({ error: reconnect }, 401)
+    if (!a) return c.json({ error: reconnect }, 401)
 
-      const clip = await db
-        .prepare(
-          "SELECT videoId,durationSeconds FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
-        )
+    const clip = await db
+      .prepare(
+        "SELECT videoId FROM youtube_clips WHERE id=? AND user_id=? AND videoId IS NOT NULL"
+      )
+      .bind(id, user)
+      .first<{
+        videoId: string
+      }>()
+
+    if (!clip) return c.json({ error: "Clip not found" }, 404)
+
+    if (c.req.method === "DELETE") {
+      await google(
+        env,
+        await access(env, a),
+        `/youtube/v3/videos?id=${clip.videoId}`,
+        { method: "DELETE" }
+      )
+      await db
+        .prepare("DELETE FROM youtube_clips WHERE id=? AND user_id=?")
         .bind(id, user)
-        .first<{
-          videoId: string
-          durationSeconds: number | null
-        }>()
+        .run()
+    } else if (c.req.method === "PATCH") {
+      const { title, description, privacy } = await c.req.json()
 
-      if (!clip) return c.json({ error: "Clip not found" }, 404)
+      if (
+        (title !== undefined && !titleOk(title)) ||
+        (description !== undefined && !descriptionOk(description)) ||
+        (privacy !== undefined && !privacyOk(privacy)) ||
+        [title, description, privacy].every((v) => v === undefined)
+      )
+        return c.json({ error: "Invalid clip details" }, 400)
 
-      if (c.req.path.endsWith("/cut")) {
-        if (c.req.method !== "PUT")
-          return c.json({ error: "Use PUT for cuts" }, 405)
-        const cut = await c.req.json()
+      const token = await access(env, a)
 
-        if (
-          cut !== null &&
-          (!Number.isSafeInteger(cut?.start) ||
-            !Number.isSafeInteger(cut?.end) ||
-            cut.start < 0 ||
-            cut.end <= cut.start ||
-            (clip.durationSeconds !== null &&
-              cut.end > Math.ceil(clip.durationSeconds)))
-        )
-          return c.json({ error: "Invalid whole-second cut" }, 400)
+      for (let attempt = 0; ; attempt++) {
+        const [v] = await videos(env, token, [clip.videoId])
 
-        const saved = await db
-          .prepare(
-            "UPDATE youtube_clips SET start=?,end=? WHERE id=? AND user_id=?"
-          )
-          .bind(cut?.start ?? null, cut?.end ?? null, id, user)
-          .run()
+        if (!v || v.snippet.channelId !== a.channel_id)
+          return c.json({ error: "Clip not found" }, 404)
 
-        if (!saved.meta.changes)
-          return c.json({ error: "This clip is gone." }, 404)
-      } else if (c.req.method === "DELETE") {
-        await google(
-          env,
-          await access(env, a),
-          `/youtube/v3/videos?id=${clip.videoId}`,
-          { method: "DELETE" }
-        )
-        await db
-          .prepare("DELETE FROM youtube_clips WHERE id=? AND user_id=?")
-          .bind(id, user)
-          .run()
-      } else if (c.req.method === "PATCH") {
-        const { title, description, privacy } = await c.req.json()
-
-        if (
-          (title !== undefined && !titleOk(title)) ||
-          (description !== undefined && !descriptionOk(description)) ||
-          (privacy !== undefined && !privacyOk(privacy)) ||
-          [title, description, privacy].every((v) => v === undefined)
-        )
-          return c.json({ error: "Invalid clip details" }, 400)
-
-        const token = await access(env, a)
-
-        for (let attempt = 0; ; attempt++) {
-          const [v] = await videos(env, token, [clip.videoId])
-
-          if (!v || v.snippet.channelId !== a.channel_id)
-            return c.json({ error: "Clip not found" }, 404)
-
-          type UpdateParts = {
-            snippet?: Omit<Video["snippet"], "channelId">
-            status?: Omit<Video["status"], "uploadStatus">
-          }
-
-          const parts: UpdateParts = {}
-
-          if (title !== undefined || description !== undefined)
-            parts.snippet = {
-              title: title ?? v.snippet.title,
-              description: description ?? v.snippet.description,
-              categoryId: v.snippet.categoryId,
-              tags: v.snippet.tags,
-              defaultLanguage: v.snippet.defaultLanguage,
-            }
-
-          if (privacy !== undefined) {
-            const {
-              license,
-              embeddable,
-              publicStatsViewable,
-              selfDeclaredMadeForKids,
-              containsSyntheticMedia,
-              publishAt,
-            } = v.status
-
-            parts.status = {
-              privacyStatus: privacy,
-              license,
-              embeddable,
-              publicStatsViewable,
-              selfDeclaredMadeForKids,
-              containsSyntheticMedia,
-              publishAt: privacy === "private" ? publishAt : undefined,
-            }
-          }
-
-          // YouTube replaces whole parts. Re-read and rebuild on a stale ETag;
-          // never fill an untouched field from our pending edit.
-          if (!v.etag)
-            throw new Error("YouTube didn't return a video version. Try again.")
-
-          try {
-            await google(
-              env,
-              token,
-              "/youtube/v3/videos?part=" + Object.keys(parts).join(","),
-              {
-                method: "PUT",
-                headers: {
-                  "content-type": "application/json",
-                  "if-match": v.etag.startsWith('"') ? v.etag : `"${v.etag}"`,
-                },
-                body: JSON.stringify({ id: v.id, ...parts }),
-              }
-            )
-          } catch (err) {
-            if (
-              err instanceof HTTPException &&
-              err.status === 412 &&
-              attempt < 2
-            )
-              continue
-            throw err
-          }
-
-          await db
-            .prepare(
-              `UPDATE youtube_clips SET title=?,description=?,privacy=?,pendingTitle=?,pendingDescription=?,pendingPrivacy=?,
-             editedAt=max(editedAt+1,?),nextSync=0 WHERE id=? AND user_id=?`
-            )
-            .bind(
-              v.snippet.title,
-              v.snippet.description,
-              v.status.privacyStatus,
-              title ?? null,
-              description ?? null,
-              privacy ?? null,
-              Date.now(),
-              id,
-              user
-            )
-            .run()
-          break
+        type UpdateParts = {
+          snippet?: Omit<Video["snippet"], "channelId">
+          status?: Omit<Video["status"], "uploadStatus">
         }
-      } else return c.json({ error: "Use PATCH to edit clips" }, 405)
 
-      return c.json({ ok: true })
-    }
-  )
+        const parts: UpdateParts = {}
+
+        if (title !== undefined || description !== undefined)
+          parts.snippet = {
+            title: title ?? v.snippet.title,
+            description: description ?? v.snippet.description,
+            categoryId: v.snippet.categoryId,
+            tags: v.snippet.tags,
+            defaultLanguage: v.snippet.defaultLanguage,
+          }
+
+        if (privacy !== undefined) {
+          const {
+            license,
+            embeddable,
+            publicStatsViewable,
+            selfDeclaredMadeForKids,
+            containsSyntheticMedia,
+            publishAt,
+          } = v.status
+
+          parts.status = {
+            privacyStatus: privacy,
+            license,
+            embeddable,
+            publicStatsViewable,
+            selfDeclaredMadeForKids,
+            containsSyntheticMedia,
+            publishAt: privacy === "private" ? publishAt : undefined,
+          }
+        }
+
+        // YouTube replaces whole parts. Re-read and rebuild on a stale ETag;
+        // never fill an untouched field from our pending edit.
+        if (!v.etag)
+          throw new Error("YouTube didn't return a video version. Try again.")
+
+        try {
+          await google(
+            env,
+            token,
+            "/youtube/v3/videos?part=" + Object.keys(parts).join(","),
+            {
+              method: "PUT",
+              headers: {
+                "content-type": "application/json",
+                "if-match": v.etag.startsWith('"') ? v.etag : `"${v.etag}"`,
+              },
+              body: JSON.stringify({ id: v.id, ...parts }),
+            }
+          )
+        } catch (err) {
+          if (err instanceof HTTPException && err.status === 412 && attempt < 2)
+            continue
+          throw err
+        }
+
+        await db
+          .prepare(
+            `UPDATE youtube_clips SET title=?,description=?,privacy=?,pendingTitle=?,pendingDescription=?,pendingPrivacy=?,
+             editedAt=max(editedAt+1,?),nextSync=0 WHERE id=? AND user_id=?`
+          )
+          .bind(
+            v.snippet.title,
+            v.snippet.description,
+            v.status.privacyStatus,
+            title ?? null,
+            description ?? null,
+            privacy ?? null,
+            Date.now(),
+            id,
+            user
+          )
+          .run()
+        break
+      }
+    } else return c.json({ error: "Use PATCH to edit clips" }, 405)
+
+    return c.json({ ok: true })
+  })
   app.post(path + "/disconnect", async (c) => {
     if (
       !c.req.header("authorization") &&

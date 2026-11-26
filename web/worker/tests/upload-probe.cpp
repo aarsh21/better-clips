@@ -1,6 +1,6 @@
 /* Linux integration driver. The network code is the plugin's real translation
  * unit; this just supplies the clip normally handed over by the muxer. */
-#include "replay-r2.hpp"
+#include "replay.hpp"
 #include <QDesktopServices>
 #include <QGuiApplication>
 #include <QFile>

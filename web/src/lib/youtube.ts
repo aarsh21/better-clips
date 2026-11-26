@@ -3,13 +3,7 @@ import { ClockIcon, GlobeIcon, LinkIcon, LockIcon } from "@phosphor-icons/react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
-import {
-  api,
-  formatDuration,
-  type Cut,
-  type Privacy,
-  type YouTubeClip,
-} from "@/lib/api"
+import { api, type Privacy, type YouTubeClip } from "@/lib/api"
 import { copyLink } from "@/lib/clip-actions"
 import { updateClips } from "@/lib/clips"
 
@@ -51,7 +45,6 @@ export const privacyOption = (privacy: Privacy | null) =>
 export type YouTubeChange =
   | { kind: "title"; title: string }
   | { kind: "privacy"; privacy: Privacy }
-  | { kind: "cut"; cut: Cut | null }
   | { kind: "delete" }
 
 function send(clip: YouTubeClip, change: YouTubeChange) {
@@ -60,8 +53,6 @@ function send(clip: YouTubeClip, change: YouTubeChange) {
       return api.updateYouTube(clip.id, { title: change.title })
     case "privacy":
       return api.updateYouTube(clip.id, { privacy: change.privacy })
-    case "cut":
-      return api.cutYouTube(clip.id, change.cut)
     case "delete":
       return api.deleteYouTube(clip.id)
   }
@@ -74,8 +65,6 @@ function changed(clip: YouTubeClip, change: YouTubeChange) {
       return { ...clip, title: change.title, pendingTitle: change.title }
     case "privacy":
       return { ...clip, privacy: null, pendingPrivacy: change.privacy }
-    case "cut":
-      return { ...clip, cut: change.cut }
     case "delete":
       return null
   }
@@ -87,14 +76,12 @@ function doneText(change: YouTubeChange) {
       return "Title change submitted"
     case "privacy":
       return "Visibility change submitted"
-    case "cut":
-      return change.cut ? "Cut saved" : "Cut removed"
     case "delete":
       return "Deleted from YouTube"
   }
 }
 
-/* Renames, changes visibility, cuts or deletes a YouTube clip, updating the
+/* Renames, changes visibility or deletes a YouTube clip, updating the
  * list right away. */
 export function useYouTubeChange() {
   const qc = useQueryClient()
@@ -130,24 +117,13 @@ export function useYouTubeChange() {
   })
 }
 
-/* The link a YouTube clip shares: from its cut's start, since a link can't
- * end early. */
-export function youtubeLink(clip: YouTubeClip) {
-  return clip.cut ? `${clip.url}?t=${clip.cut.start}` : clip.url
-}
-
 export function copyYouTubeLink(clip: YouTubeClip) {
   const notes = []
-
-  if (clip.cut)
-    notes.push(
-      `Starts at ${formatDuration(clip.cut.start) || "0:00"}; YouTube plays the rest too.`
-    )
 
   if (clip.privacy === "private")
     notes.push("It's private: only you can watch it.")
   else if (clip.privacy === null)
     notes.push("YouTube visibility isn't confirmed yet.")
 
-  return copyLink(youtubeLink(clip), notes.join(" ") || undefined)
+  return copyLink(clip.url, notes.join(" ") || undefined)
 }

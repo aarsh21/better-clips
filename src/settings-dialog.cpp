@@ -1,7 +1,7 @@
 /* Tools > Better Clips Settings, and the dialog that reviews a clip before
  * it goes to YouTube. */
 
-#include "replay-r2.hpp"
+#include "replay.hpp"
 #include "youtube.hpp"
 
 #include <obs-frontend-api.h>
@@ -42,10 +42,6 @@
 
 namespace {
 
-/* Test uploads run on their own thread; OBS waits for them before it unloads
- * the plugin and shuts curl down. */
-std::atomic<int> tests_running{0};
-
 /* YouTube clips go through the hosted app, which keeps the Google tokens,
  * unless OBS uploads to YouTube directly. */
 constexpr const char *HOSTED_APP = "https://clips.zabimaru.me";
@@ -60,6 +56,14 @@ bool youtube_connected(const YouTubeSettings &settings)
 						      : !settings.upload_token.empty();
 }
 
+bool secure_url(const std::string &text)
+{
+	const QUrl url(QString::fromStdString(text));
+	return url.isValid() && !url.host().isEmpty() && url.userInfo().isEmpty() &&
+	       (url.scheme() == "https" ||
+		(url.scheme() == "http" && (url.host() == "localhost" || url.host() == "127.0.0.1")));
+}
+
 /* The Better Clips app's FAQ, which opens without signing in. */
 void open_faq(std::string app_url)
 {
@@ -68,32 +72,6 @@ void open_faq(std::string app_url)
 	if (!secure_url(app_url))
 		app_url = HOSTED_APP;
 	QDesktopServices::openUrl(QUrl(QString::fromStdString(app_url + "/faq")));
-}
-
-bool test_connection(Destination to, const R2Config &config, std::string &error)
-{
-	if (to == Destination::ClipsApp) {
-		if (config.app_url.empty()) {
-			error = "Enter your Better Clips app URL or paste a setup code.";
-			return false;
-		}
-		return app_check(config, error);
-	}
-	const auto key = object_key(config, "better-clips-test-" +
-						    QUuid::createUuid().toString(QUuid::Id128).toStdString() + ".txt");
-	if (!s3_put_object(config, key, {'O', 'B', 'S'}, "text/plain", error))
-		return false;
-	if (!s3_delete_object(config, key, error)) {
-		error = "Wrote the test object but couldn't remove " + key + ": " + error;
-		return false;
-	}
-	return true;
-}
-
-QString test_success(Destination to)
-{
-	return to == Destination::ClipsApp ? "Better Clips app: storage check passed."
-					   : "S3: wrote and deleted a test object.";
 }
 
 /* Visibility choices, in YouTube's words. */
@@ -208,7 +186,7 @@ public:
 			const auto before = get_youtube_settings();
 			QMessageBox confirm(
 				QMessageBox::Warning, "Remove channel everywhere?",
-				"This removes the channel from Better Clips on every device. All of its app library entries and cut points disappear. The videos stay on YouTube.",
+				"This removes the channel from Better Clips on every device. All of its app library entries disappear. The videos stay on YouTube.",
 				QMessageBox::Cancel, this);
 			auto *remove = confirm.addButton("Remove channel everywhere", QMessageBox::DestructiveRole);
 			confirm.setDefaultButton(QMessageBox::Cancel);
@@ -363,7 +341,7 @@ private:
 		const bool app = route() == YouTubeRoute::ClipsApp;
 		const bool reconnect = app ? settings.previously_paired : settings.previously_direct;
 		sign_in->setText(reconnect ? "Reconnect YouTube" : "Sign in with YouTube");
-		route_hint->setText(app ? "Clips show up in the Better Clips app, to rename, cut and delete them."
+		route_hint->setText(app ? "Clips show up in the Better Clips app, to watch, rename and delete them."
 					: "No Better Clips app needed, but clips won't show up in its library.");
 		form->setRowVisible(app_url, app);
 		access->setText(QString("You can remove %1 access to your channel any time in "
@@ -496,67 +474,21 @@ public:
 			return;
 		}
 
-		R2Config config = get_config();
-		YouTubeSettings youtube = get_youtube_settings();
-
-		destination = new QComboBox();
-		destination->addItem("Better Clips app (R2)", int(Destination::ClipsApp));
-		destination->addItem("S3 bucket", int(Destination::S3));
-		destination->addItem("YouTube", int(Destination::YouTube));
-		destination->setCurrentIndex(destination->findData(int(youtube.destination)));
-
-		app_url = new QLineEdit(QString::fromStdString(config.app_url));
-		app_url->setPlaceholderText("https://clips.<you>.workers.dev");
-		upload_token = new QLineEdit(QString::fromStdString(config.upload_token));
-		upload_token->setEchoMode(QLineEdit::Password);
-		s3_url = new QLineEdit(QString::fromStdString(config.s3_url));
-		s3_url->setPlaceholderText("https://<account-id>.r2.cloudflarestorage.com/<bucket>");
-		access_key = new QLineEdit(QString::fromStdString(config.access_key));
-		secret_key = new QLineEdit(QString::fromStdString(config.secret_key));
-		secret_key->setEchoMode(QLineEdit::Password);
-		folder = new QLineEdit(QString::fromStdString(config.folder));
-		public_url = new QLineEdit(QString::fromStdString(config.public_url));
-		public_url->setPlaceholderText("Optional: https://pub-xxxx.r2.dev or your custom domain");
-
-		app_page = new QWidget();
-		auto *app_form = new QFormLayout(app_page);
-		app_form->setContentsMargins(0, 0, 0, 0);
-		app_form->addRow("Better Clips app", app_url);
-		app_form->addRow("Upload token", upload_token);
-
-		s3_page = new QWidget();
-		auto *s3_form = new QFormLayout(s3_page);
-		s3_form->setContentsMargins(0, 0, 0, 0);
-		s3_form->addRow("S3 API URL", s3_url);
-		s3_form->addRow("Access Key ID", access_key);
-		s3_form->addRow("Secret Access Key", secret_key);
-		s3_form->addRow("Folder", folder);
-		s3_form->addRow("Public URL", public_url);
-
-		youtube_page = new YouTubePage(youtube);
+		youtube_page = new YouTubePage(get_youtube_settings());
 		open_account = youtube_page;
 
-		help = new QLabel();
-		help->setWordWrap(true);
-
 		start_replay = new QCheckBox("Start the Replay Buffer when OBS opens");
-		start_replay->setChecked(config.start_replay_buffer);
-
-		auto *top = new QFormLayout();
-		top->addRow("Destination", destination);
+		start_replay->setChecked(get_youtube_settings().start_replay_buffer);
 
 		status = new QLabel();
 		status->setWordWrap(true);
 		status->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
 		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
-		paste = buttons->addButton("Paste setup code", QDialogButtonBox::ActionRole);
-		test = buttons->addButton("Test Upload", QDialogButtonBox::ActionRole);
-		connect(paste, &QPushButton::clicked, this, [this]() { paste_setup_code(); });
 		connect(buttons, &QDialogButtonBox::accepted, this, [this]() {
 			YouTubeSettings settings = youtube_page->current();
-			settings.destination = chosen();
-			if (!save_settings(current(), settings)) {
+			settings.start_replay_buffer = start_replay->isChecked();
+			if (!save_settings(settings)) {
 				status->setText(
 					"Settings weren't saved. Check the permissions on the Better Clips settings folder, then try again.");
 				return;
@@ -564,16 +496,8 @@ public:
 			accept();
 		});
 		connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-		connect(test, &QPushButton::clicked, this, [this]() { run_test(); });
-		connect(destination, &QComboBox::currentIndexChanged, this, [this]() {
-			invalidate_test();
-			show_destination();
-		});
-		for (auto *field : {app_url, upload_token, s3_url, access_key, secret_key, folder, public_url})
-			connect(field, &QLineEdit::textChanged, this, [this] { invalidate_test(); });
-
 		auto *faq = new QLabel("<a href=\"faq\">Questions? Read the FAQ</a>");
-		connect(faq, &QLabel::linkActivated, this, [this]() { open_faq(faq_app()); });
+		connect(faq, &QLabel::linkActivated, this, [this]() { open_faq(youtube_page->faq_app()); });
 		auto *bottom = new QHBoxLayout();
 		bottom->addWidget(faq);
 		bottom->addWidget(buttons, 1);
@@ -582,10 +506,6 @@ public:
 		auto *fields = new QVBoxLayout(content);
 		fields->setContentsMargins(0, 0, 0, 0);
 		fields->setSizeConstraint(QLayout::SetMinAndMaxSize);
-		fields->addWidget(help);
-		fields->addLayout(top);
-		fields->addWidget(app_page);
-		fields->addWidget(s3_page);
 		fields->addWidget(youtube_page);
 		fields->addWidget(start_replay);
 		fields->addWidget(status);
@@ -598,8 +518,7 @@ public:
 		layout->addWidget(scroll);
 		layout->addLayout(bottom);
 
-		align_labels({top, app_form, s3_form, youtube_page->form, youtube_page->defaults});
-		show_destination();
+		align_labels({youtube_page->form, youtube_page->defaults});
 		status->setText(plugin_startup_notice());
 	}
 
@@ -641,127 +560,9 @@ private:
 			move(x(), std::max(area.top(), bottom - frameGeometry().height() + 1));
 	}
 
-	QComboBox *destination;
-	QWidget *app_page, *s3_page;
 	YouTubePage *youtube_page;
-	QLineEdit *app_url, *upload_token, *s3_url, *access_key, *secret_key, *folder, *public_url;
 	QCheckBox *start_replay;
-	QLabel *help, *status;
-	QPushButton *paste, *test;
-	unsigned test_generation = 0;
-	void invalidate_test()
-	{
-		++test_generation;
-		status->clear();
-		test->setEnabled(true);
-	}
-
-	Destination chosen() const { return Destination(destination->currentData().toInt()); }
-
-	/* The FAQ is in every Better Clips app, so it opens in the one you use. */
-	std::string faq_app() const
-	{
-		if (chosen() == Destination::YouTube)
-			return youtube_page->faq_app();
-		return chosen() == Destination::ClipsApp ? app_url->text().trimmed().toStdString() : HOSTED_APP;
-	}
-
-	/* Shows the chosen destination's fields, and sizes the dialog to them. */
-	void show_destination()
-	{
-		Destination to = chosen();
-		app_page->setVisible(to == Destination::ClipsApp);
-		s3_page->setVisible(to == Destination::S3);
-		youtube_page->setVisible(to == Destination::YouTube);
-
-		const char *hotkey = "Then bind <b>Save Replay and Upload</b> in Settings &gt; Hotkeys.";
-		if (to == Destination::ClipsApp)
-			help->setText(QString("Saved replays upload from memory to your Better Clips app and are "
-					      "never written to disk.<br>Easiest: click <b>Connect OBS</b> in your "
-					      "Better Clips app, copy the setup code, then click <b>Paste setup "
-					      "code</b>.<br>%1")
-					      .arg(hotkey));
-		else if (to == Destination::S3)
-			help->setText(QString("Saved replays upload from memory straight to your own S3-compatible "
-					      "bucket, such as Cloudflare R2.<br>%1")
-					      .arg(hotkey));
-		else
-			help->setText(
-				QString("Saved replays upload from memory to your YouTube channel.<br>%1").arg(hotkey));
-
-		/* YouTube has no setup code, and signing in is its test. */
-		paste->setVisible(to != Destination::YouTube);
-		test->setVisible(to != Destination::YouTube);
-		status->clear();
-		// Let Qt recompute the newly visible form's size hints before measuring it.
-		QMetaObject::invokeMethod(this, &SettingsDialog::fit_page, Qt::QueuedConnection);
-	}
-
-	R2Config current() const
-	{
-		R2Config config;
-		config.app_url = app_url->text().trimmed().toStdString();
-		config.upload_token = upload_token->text().trimmed().toStdString();
-		config.s3_url = s3_url->text().trimmed().toStdString();
-		config.access_key = access_key->text().trimmed().toStdString();
-		config.secret_key = secret_key->text().trimmed().toStdString();
-		config.folder = folder->text().trimmed().toStdString();
-		config.public_url = public_url->text().trimmed().toStdString();
-		config.start_replay_buffer = start_replay->isChecked();
-		return config;
-	}
-
-	void paste_setup_code()
-	{
-		R2Config config = current();
-		const auto code = QApplication::clipboard()->text().trimmed();
-		if (!apply_setup_code(code.toStdString(), config)) {
-			status->setText(
-				"No setup code on the clipboard. Copy it from Connect OBS in your Better Clips app.");
-			return;
-		}
-		app_url->setText(QString::fromStdString(config.app_url));
-		upload_token->setText(QString::fromStdString(config.upload_token));
-		s3_url->setText(QString::fromStdString(config.s3_url));
-		access_key->setText(QString::fromStdString(config.access_key));
-		secret_key->setText(QString::fromStdString(config.secret_key));
-		folder->setText(QString::fromStdString(config.folder));
-		public_url->setText(QString::fromStdString(config.public_url));
-		destination->setCurrentIndex(destination->findData(
-			int(code.startsWith("r2obs2:") ? Destination::ClipsApp : Destination::S3)));
-		status->setText("Setup code pasted. Click Test Upload, then Save.");
-	}
-
-	/* Checks the settings now, so a typo shows up before a clip is lost. */
-	void run_test()
-	{
-		R2Config config = current();
-		const auto to = chosen();
-		const auto generation = ++test_generation;
-		test->setEnabled(false);
-		status->setText("Testing...");
-
-		QPointer<SettingsDialog> self(this);
-		tests_running++;
-		std::thread([config, self, to, generation]() {
-			std::string error;
-			bool ok = test_connection(to, config, error);
-			QString message = ok ? test_success(to)
-					     : QString("Test failed: %1").arg(QString::fromStdString(error));
-			QMetaObject::invokeMethod(
-				qApp,
-				[self, message, generation, ok, to]() {
-					if (!self || self->test_generation != generation)
-						return;
-					if (ok)
-						record_destination_success(to, false);
-					self->status->setText(message);
-					self->test->setEnabled(true);
-				},
-				Qt::QueuedConnection);
-			tests_running--;
-		}).detach();
-	}
+	QLabel *status;
 };
 
 /* ---- Reviewing a clip before it goes to YouTube ---- */
@@ -833,70 +634,6 @@ private:
 };
 
 } // namespace
-
-/* "r2obs2:" + base64 of {"a": app URL, "t": upload token}. Older apps gave
- * "r2obs1:" + base64 of {"u": S3 API URL, "k": access key, "s": secret key,
- * "f": folder}. */
-bool apply_setup_code(const std::string &text, R2Config &config)
-{
-	QString code = QString::fromStdString(text).trimmed();
-	if (!code.startsWith("r2obs1:") && !code.startsWith("r2obs2:"))
-		return false;
-	auto payload = QByteArray::fromBase64Encoding(code.mid(7).toUtf8(), QByteArray::AbortOnBase64DecodingErrors);
-	if (!payload)
-		return false;
-	QJsonObject fields = QJsonDocument::fromJson(payload.decoded).object();
-	auto field = [&](const char *name) {
-		return fields.value(name).toString().trimmed().toStdString();
-	};
-	const bool app = code.startsWith("r2obs2:");
-	const QUrl url(QString::fromStdString(field(app ? "a" : "u")), QUrl::StrictMode);
-	if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty() || url.hasQuery() ||
-	    url.hasFragment() || !secure_url(url.toString().toStdString()) ||
-	    (!app && url.path().split('/', Qt::SkipEmptyParts).isEmpty()))
-		return false;
-	if (app && !field("t").empty()) {
-		config.app_url = field("a");
-		config.upload_token = field("t");
-	} else if (!app && !field("k").empty() && !field("s").empty()) {
-		if (config.s3_url != field("u"))
-			config.public_url.clear();
-		config.s3_url = field("u");
-		config.access_key = field("k");
-		config.secret_key = field("s");
-		config.folder = fields.value("f").toString("replays").toStdString();
-	} else {
-		return false;
-	}
-	return true;
-}
-
-void check_connection_async(const R2Config &config)
-{
-	const auto to = get_youtube_settings().destination;
-	tests_running++;
-	std::thread([config, to]() {
-		std::string error;
-		bool ok = test_connection(to, config, error);
-		const auto now = get_config();
-		if (get_youtube_settings().destination == to && now.app_url == config.app_url &&
-		    now.upload_token == config.upload_token && now.s3_url == config.s3_url &&
-		    now.access_key == config.access_key && now.secret_key == config.secret_key &&
-		    now.folder == config.folder) {
-			if (ok)
-				record_destination_success(to, false);
-			notify_user(ok ? test_success(to).toStdString()
-				       : "Better Clips: storage check failed (" + error + ")");
-		}
-		tests_running--;
-	}).detach();
-}
-
-void wait_for_tests()
-{
-	while (tests_running > 0)
-		std::this_thread::sleep_for(std::chrono::milliseconds(50));
-}
 
 void show_settings_dialog()
 {

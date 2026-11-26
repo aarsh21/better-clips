@@ -6,25 +6,15 @@
   "packageManager": "pnpm@12.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "wrangler types && tsc -b && vite build",
+    "build": "pnpm cf-typegen && tsc -b && vite build",
     "lint": "eslint . && oxlint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "deploy": "wrangler deploy",
-    "cf-typegen": "wrangler types",
+    "deploy": "wrangler deploy -c wrangler.app.jsonc",
+    "cf-typegen": "wrangler types -c wrangler.app.jsonc",
     "doctor": "react-doctor --blocking warning",
-    "check": "wrangler types && tsc -b && eslint . && oxlint && react-doctor --blocking warning"
-  },
-  "cloudflare": {
-    "bindings": {
-      "APP_PASSWORD": {
-        "description": "The password you sign in to your clips app with. Use **12 or more characters**, for example from `openssl rand -base64 18`."
-      },
-      "BUCKET": {
-        "description": "The R2 bucket your clips are stored in. OBS uploads to it through this app, so you need no R2 API keys."
-      }
-    }
+    "check": "pnpm cf-typegen && tsc -b && eslint . && oxlint && react-doctor --blocking warning"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -34,13 +24,10 @@
     "@phosphor-icons/react": "^2.1.10",
     "@tailwindcss/vite": "^4",
     "@tanstack/react-query": "^5.108.3",
-    "aws4fetch": "^1.0.20",
     "class-variance-authority": "^0.7.1",
     "cmdk": "^1.1.1",
     "cn": "^0.5.2",
     "hono": "^4.13.20",
-    "jose": "^6.2.18",
-    "mediabunny": "^1.66.2",
     "next-themes": "^0.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

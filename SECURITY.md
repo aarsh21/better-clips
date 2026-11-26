@@ -17,15 +17,10 @@ security fixes.
 
 ## What's in scope
 
-- The plugin leaking its upload token or bucket keys, or uploading somewhere
-  other than the configured app or bucket.
+- The plugin leaking a pairing token or Google credential, or uploading to the wrong channel.
 - The clips app letting someone read, change or delete clips, share links or
   settings they don't own, or sign in as someone else.
-- In hosted mode: one account reaching another account's bucket, stored bucket
-  keys or OBS tokens being exposed, or the OAuth flow being abused.
+- One account reaching another account’s videos or tokens, or the OAuth flow being abused.
 - The install scripts running anything other than the official release.
 
-Out of scope: anything that needs an already-leaked setup code, bucket key or
-`CREDS_KEY`; denial of service through Cloudflare's own limits; and trimmed
-clips containing a little footage before the in point, which is documented
-behavior.
+Out of scope: attacks that require an already-leaked credential or encryption key, and denial of service through Cloudflare’s own limits.

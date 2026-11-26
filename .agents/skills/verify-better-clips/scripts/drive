@@ -2,16 +2,16 @@
 # Run one chapter against the local stack. No HTTP mutation substitutes for a UI action.
 set -euo pipefail
 phase=${1:-help}; id=${2:-}; S=$(dirname "$(realpath "$0")")
-if [[ ! $id =~ ^[a-z0-9]{1,8}$ ]]; then echo 'drive {upgrade|rollout|stores|length|library|channel|player|edit|direct|credentials} RUN_ID'; exit 2; fi
+if [[ ! $id =~ ^[a-z0-9]{1,8}$ ]]; then echo 'drive {install|length|channel|player|edit|direct|credentials} RUN_ID'; exit 2; fi
 cd "$(git rev-parse --show-toplevel)"; export DISPLAY=:97 R=/dev/shm/better-clips-$UID-$id E=$PWD/.amp/in/artifacts/bc-$id
 [[ -f $R/owner && $(cat "$R/owner") == "$PWD" ]] || { echo 'Start this run with lab start first'; exit 1; }
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
-C=$R/config/obs-studio; cfg=$C/plugin_config/better-clips/config.json; old=$C/plugin_config/obs-replay-r2/config.json
+C=$R/config/obs-studio; cfg=$C/plugin_config/better-clips/config.json
 db=$(find "$R/state/v3/d1" -name '*.sqlite' ! -name metadata.sqlite)
-session=r2-$id; b(){ agent-browser --session "$session" "$@"; }; button(){ b find role button click --name "$1"; }
+session=yt-$id; b(){ agent-browser --session "$session" "$@"; }; button(){ b find role button click --name "$1"; }
 o(){ "$S/obs-ui" "$@"; }; osnap(){ import -window root -resize 1100 "$E/$1.jpg"; }; bsnap(){ b screenshot "$E/$1.png"; }
 settings(){ o Settings --role button --last; }; dest(){ o "$1" --role 'combo box'; xdotool key "$2" Return; }
-field(){ o "$1"; xdotool key ctrl+a; xdotool type --clearmodifiers "$2"; }; hotkey(){ xdotool keydown Shift_L keydown F8 sleep .25 keyup F8 keyup Shift_L; }
+field(){ o "$1"; xdotool key ctrl+a; xdotool type --clearmodifiers "$2"; }; hotkey(){ xdotool keydown Control_L keydown Alt_L keydown r sleep .25 keyup r keyup Alt_L keyup Control_L; }
 waitfor(){ for i in {1..100}; do "$@" >/dev/null 2>&1 && return; sleep .4; done; echo "Timed out waiting for $1" >&2; return 1; }
 sql(){ sqlite3 -readonly "$db" "$1"; }; row(){ [[ $(sql "$1") == "$2" ]]; }; log(){ grep '\[better-clips\]' "$(ls -t "$C"/logs/*.txt | head -1)"; }
 uploads(){ [[ $(log | grep -c 'Uploaded ') -ge $1 ]]; }; clip(){ xclip -sel clipboard -o 2>/dev/null; }; copied(){ [[ $(clip) == $1* && $(clip) != "${2:-}" ]]; }
@@ -25,35 +25,12 @@ ready_copy(){
   local path
   path=$(find "$R/recordings" -name "*${1}.mp4" -type f); test -s "$path"
   ffprobe -v error -show_entries format=duration,size -of compact "$path" >>"$E/recovery.log"
-  waitfor o --has 'is ready to play'; test ! -e "$path"; echo "Removed after ready: ${path##*/}" >>"$E/recovery.log"
+  waitfor o --has 'is ready to play'; test -s "$path"; echo "Retained after ready: ${path##*/}" >>"$E/recovery.log"
 }
 last_uuid(){ log | sed -nE 's/.*Saved replay .*_([a-f0-9]{32})\.mp4 from memory.*/\1/p' | tail -1; }
-range(){
-  local side fraction x y target geom
-  b wait '[data-handle=end]'; sleep .5  # dialog and iframe resize when switching to the taller editor
-  for side in start end; do
-    fraction=2; [[ $side == start ]] || fraction=8
-    geom="const h=document.querySelector('[data-handle=$side]'); if(!h)return false; const r=h.getBoundingClientRect(),t=h.parentElement.getBoundingClientRect(),x=Math.round(r.x+r.width/2),y=Math.round(r.y+r.height/2);"
-    for attempt in 1 2; do
-      b wait --fn "(()=>{$geom return h.contains(document.elementFromPoint(x,y))})()"
-      read -r x y target < <(b eval "(()=>{$geom return [x,y,Math.round(t.x+t.width*$fraction/13)].join(' ')})()" | tr -d '"')
-      b mouse move "$x" "$y"; [[ $(b eval "document.querySelector('[data-handle=$side]').matches(':hover')") == true ]] || continue
-      b mouse down left; b mouse move "$target" "$y"; b mouse up left
-      [[ $(b eval "(()=>{$geom return Math.abs(parseFloat(h.style.left)-100*$fraction/13)<1})()") == true ]] && break
-      echo "Re-measuring $side handle after editor moved" >&2
-    done
-    b wait --fn "(()=>{$geom return Math.abs(parseFloat(h.style.left)-100*$fraction/13)<1})()"
-  done
-}
 case "$phase" in
-upgrade)
-  b open http://localhost:8788/apps/; b set viewport 1100 740 2; b wait 'input[type=password]'; bsnap before-login
-  b fill 'input[type=password]' local-only-clips-verification; button 'Sign in'; b wait --text 'Waiting for OBS'; bsnap r2-unpaired
-  button Copy; b wait --text Copied
-  # Chrome clipboard-read is denied. Paste the copied command as inert text, never execute it.
-  b tab new about:blank; b eval 'document.body.appendChild(document.createElement("textarea")).focus()'; b press Control+v
-  b eval 'document.querySelector("textarea").value.match(/r2obs2:[A-Za-z0-9+/=]+/)[0]' | tr -d '"\n' >"$R/setup"; b tab close; grep -q '^r2obs2:' "$R/setup"
-  "$S/lab" legacy "$id"; timeout 15 xdotool search --sync --onlyvisible --name 'Auto-Configuration Wizard' >/dev/null
+install)
+  "$S/lab" install "$id"; timeout 15 xdotool search --sync --onlyvisible --name "Auto-Configuration Wizard" >/dev/null
   waitfor o --has 'Auto-Configuration Wizard'; xdotool key Escape
   # xdotool search can hit BadWindow as the wizard disappears. Observe the modal itself.
   for i in {1..20}; do
@@ -61,78 +38,7 @@ upgrade)
     sleep .2
   done
   waitfor bash -c '[[ $(xdotool getactivewindow getwindowname) == OBS\ *Profile:* ]]'
-  sleep 1; osnap legacy; grep 'plugin loaded successfully (version 0.2.0)' "$(ls -t "$C"/logs/*.txt | head -1)" >"$E/upgrade.log"
-  "$S/lab" quit "$id"; "$S/scene.py"; cp "$R/setup" "${old%/*}/setup-code.txt"
-  jq '.save_hotkey=[{key:"OBS_KEY_F8",shift:true}]' "$old" >"$R/new"; mv "$R/new" "$old"
-  "$S/lab" obs "$id"; waitfor jq -e '.app_url=="http://localhost:8788" and (.upload_token|length)>0' "$old"; sleep 1; "$S/lab" quit "$id"
-  "$S/lab" upgrade "$id"; waitfor test -f "$cfg"; cmp <(jq -Sc '{app_url,upload_token,save_hotkey,folder}' "$old") <(jq -Sc '{app_url,upload_token,save_hotkey,folder}' "$cfg")
-  jq -e '.save_hotkey==[{key:"OBS_KEY_F8",shift:true}]' "$cfg" >/dev/null
-  log | grep 'plugin loaded successfully' >>"$E/upgrade.log"; test ! -e "$C/plugins/obs-replay-r2"; osnap upgraded ;;
-rollout)
-  # Start with the release Worker and plugin; keep the same D1 and encryption key on upgrade.
-  session=yt-$id; b open about:blank; b network route 'https://**' --abort; b set viewport 1100 740 2
-  "$S/lab" quit "$id"; mkdir "$R/rel040" "$R/obs31"
-  git archive c44718a web/worker web/wrangler.app.jsonc | tar -x -C "$R/rel040"
-  ln -s "$PWD/web/node_modules" "$PWD/web/dist" "$R/rel040/web/"; ln -s "$R/vars" "$R/rel040/web/.dev.vars"
-  switch_host(){
-    amp orb service stop "bc-$id-host"
-    amp orb service start "bc-$id-host" --cwd "$1" --command "unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; exec '$PWD/web/node_modules/.bin/wrangler' dev --local -c wrangler.app.jsonc --ip 127.0.0.1 --port 8787 --inspector-port 9229 --persist-to '$R/state'"
-    waitfor curl -sS -o /dev/null http://localhost:8787/api/me
-  }
-  touch "$R/worker040"; switch_host "$R/rel040/web"
-  gh release download 0.4.0 -R aarsh21/better-clips -p '*-x86_64-linux-gnu.deb' -D "$R/rel040"
-  published=$(ls "$R/rel040/"*.deb); echo "276a6bfd296dc233f011a0f66fabbcc46a44ed24c0a280e37884e2b0ce06cde6  $published" | sha256sum -c -
-  install_deb(){ env -u DISPLAY -u WAYLAND_DISPLAY -u CLIPS_SETUP_CODE XDG_CONFIG_HOME="$R/config" OBS_R2_PACKAGE="$1" sh install.sh; }
-  install_deb "$published"; dpkg-deb -x "$published" "$R/rel040/tree"
-  cmp "$R"/rel040/tree/usr/lib/*/obs-plugins/better-clips.so "$C/plugins/better-clips/bin/64bit/better-clips.so"
-  # On Debian 13 the distro OBS 30 loads the release but lacks a symbol used on Save.
-  gh release download 31.1.1 -R obsproject/obs-studio -p '*plucky_amd64.deb' -D "$R/obs31"
-  dpkg-deb -x "$R/obs31/"*.deb "$R/obs31/root"; mkdir "$R/obs31/unused"
-  for p in "$R/obs31/root/usr/lib/x86_64-linux-gnu/obs-plugins/"*.so; do
-    case ${p##*/} in obs-outputs.so|obs-ffmpeg.so|obs-x264.so|obs-transitions.so|image-source.so|linux-pulseaudio.so|frontend-tools.so|rtmp-services.so) ;; *) mv "$p" "$R/obs31/unused/";; esac
-  done
-  "$S/lab" obs "$id"; log | grep 'plugin loaded successfully (version 0.4.0)'
-  settings; dest 'Better Clips app (R2)' y; field 'Better Clips app' http://localhost:8787; connect 'Sign in with YouTube' 0; o Save --role button
-  identity="select user_id||':'||grant_id from youtube_accounts where subject='rollout-subject' and scopes like '%youtube.upload%' and scopes like '%youtube.readonly%'"
-  original=$(sql "$identity"); test -n "$original"
-  b cookies clear; rm "$R/worker040"; touch "$R/returning-grant"; switch_host "$PWD/web"
-  b open http://localhost:8787/apps/; b wait --text 'Sign in with Google'; google_signin; b wait 'button[aria-label="Settings"]'; row "$identity" "$original"
-  [[ $(b eval 'document.body.innerText.includes("Made for kids?")') == false ]]; bsnap library-no-prompt
-  settings; o 'Unpair this OBS'; waitfor o --has 'Reconnect YouTube'; connect 'Reconnect YouTube' 0; o Save --role button; row "$identity" "$original"
-  save_audience(){
-    local previous; previous=$(clip || :); o 'Save Replay to YouTube'; waitfor copied https://youtu.be/test "$previous"; ready_copy "$(last_uuid)"
-    row "select madeForKids from youtube_clips where videoId='$(basename "$(clip)")' and status='ready'" "$1"
-    echo "$(clip) ready, madeForKids=$1"
-  }
-  row 'select default_made_for_kids is null from youtube_accounts' 1; save_audience 0; osnap legacy-default-ready
-  for theme in dark light; do
-    b open http://localhost:8787/apps/; b wait 'button[aria-label="Settings"]'
-    if [[ $(b eval "document.documentElement.classList.contains('$theme')") != true ]]; then button 'Switch between light and dark'; fi
-    account; b wait --fn 'document.querySelectorAll("input[name=settings-audience]")[1]?.checked'; bsnap "default-$theme"
-  done
-  b record start "$E/save-choice.mp4" --fps 12 --cursor; sleep 1.3
-  b hover 'label:has(input[type=radio]):last-child'; sleep .7; b hover 'label:has(input[type=radio]):first-child'; sleep .7
-  b find role radio click --name Yes; b wait --fn 'document.querySelector("input[name=settings-audience]").checked'; sleep 1; b record stop
-  account; b wait --fn 'document.querySelector("input[name=settings-audience]").checked'; bsnap settings-choice
-  save_audience 1; osnap legacy-ready
-  "$S/lab" quit "$id"; mv "$R/obs31/root" "$R/obs31/used"; install_deb "$(realpath "$(ls -t release/*-x86_64-linux-gnu.deb | head -1)")"
-  "$S/lab" obs "$id"; settings
-  for size in 1440x900 1366x768; do
-    if [[ $size == 1366x768 ]]; then xrandr --newmode "$size" 85.5 1366 1436 1579 1792 768 771 774 798; xrandr --addmode screen "$size"; xrandr --output screen --mode "$size"; sleep .6; fi
-    o No --role 'combo box'; sleep .3; o --has Yes; o --has No; osnap "dropdown-$size"; xdotool key Escape
-    o --scroll-end; osnap "bottom-$size"; o Cancel --role button; settings
-  done
-  xrandr --output screen --mode 1440x900; sleep .5; o Save --role button
-  jq -e '.youtube_made_for_kids==false' "$cfg"; save_audience 0
-  row 'select default_made_for_kids from youtube_accounts' 1; row "select count(*) from youtube_clips where status='ready'" 3; osnap override-ready ;;
-stores)
-  waitfor o --has 'OBS buffer: running · Better Clips: running'; osnap r2-before; sleep 10
-  ffmpeg -loglevel error -f x11grab -draw_mouse 1 -video_size 1440x900 -framerate 12 -i :97 -t 9 -vf scale=1008:-2 -threads 2 -c:v libx264 -pix_fmt yuv420p -crf 27 -y "$E/obs.mp4" & recorder=$!
-  sleep 1; o 'Save Replay to R2'; waitfor uploads 1; sleep 1.2; hotkey; waitfor uploads 2; osnap r2-after; wait "$recorder"
-  waitfor o --has 'Last success: Better Clips app upload'; settings; dest 'Better Clips app (R2)' s; o Save --role button; waitfor o --has 'Set up S3'; o 'Set up S3'
-  field 'S3 API URL' http://127.0.0.1:9394/clips; field 'Access Key ID' verify; field 'Secret Access Key' local-verification; field Folder verified; field 'Public URL' http://127.0.0.1:9394/clips
-  o 'Test Upload'; sleep .5; osnap s3-settings; o Save --role button; sleep 1; o 'Save Replay to S3'; waitfor copied http://127.0.0.1:9394/clips/verified/
-  curl -fsS "$(clip)" -o "$R/saved.mp4"; ffprobe -v error -show_entries stream=codec_name,width,height:format=duration,size -of compact "$R/saved.mp4" | tee "$E/s3.log"; grep -q codec_name=h264 "$E/s3.log"; log | grep -E '(Saved replay|Built |Uploaded )' >"$E/stores.log"; osnap s3-after ;;
+  "$S/lab" quit "$id"; "$S/scene.py"; "$S/lab" obs "$id"; waitfor o --has "Connect YouTube"; osnap first-run ;;
 length)
   # Interrupt only the plugin output, via the disposable scene's fault fixture.
   touch "$R/stop-output"; waitfor o --has 'Retry Better Clips Buffer'; o --has 'OBS buffer: running · Better Clips: off'; osnap retry-buffer
@@ -144,10 +50,9 @@ length)
       sed -i "s|^RecFilePath=.*|RecFilePath=$R/recordings|" "$p/basic.ini"
       printf '{"keyint_sec":1}\n' >"$p/recordEncoder.json"; "$S/lab" obs "$id"; "$S/lab" doctor "$id"
     fi
-    waitfor o --has 'Save Replay to S3'; o '' --role 'spin button' --last; xdotool key ctrl+a; xdotool type 12; xdotool key Return
-    sleep 24; old_link=$(clip || :); o 'Save Replay to S3'; waitfor copied http://127.0.0.1:9394/clips/verified/ "$old_link"
-    curl -fsS "$(clip)" -o "$R/window.mp4"
-    # Scope the warning count to the last arm, not the preceding stores chapter.
+    waitfor o --has "Save Replay to YouTube"; o "" --role "spin button" --last; xdotool key ctrl+a; xdotool type 12; xdotool key Return
+    sleep 24; old_link=$(clip || :); o "Save Replay to YouTube"; waitfor copied https://youtu.be/test "$old_link"
+    cp "$R/recordings/$(ls -t "$R/recordings" | head -1)" "$R/window.mp4"
     log | sed -n '/In-memory replay buffer started/h; /In-memory replay buffer started/!H; ${x;p;}' >"$R/arm.log"
     warnings=$(grep -Ec 'Better Clips: clips can be up to about [0-9.]+ s longer than the setting\. Set the recording encoder.s keyframe interval to 1–2 s in Settings → Output → Recording → Keyframe Interval\.' "$R/arm.log" || :)
     python3 - "$R/window.mp4" "$profile" "$warnings" <<'PY' | tee -a "$E/keyframes.log"
@@ -161,29 +66,16 @@ assert 'K' in video['packets'][0]['flags'] and 12 <= duration <= 12+gap
 assert (0.99 <= gap <= 1.01 and warnings=='0') if profile=='one-second' else (gap>2 and warnings=='1')
 PY
   done ;;
-library)
-  b open http://localhost:8788/apps/; b wait --text '2 clips'; bsnap library-before
-  b wait --fn '!/[a-f0-9]{32}/.test(document.body.innerText) && document.body.innerText.includes("Scene")'
-  b record start "$E/dashboard.mp4" --fps 15 --cursor; trap 'b record stop >/dev/null 2>&1 || :' EXIT
-  b mouse move 120 130; b mouse move 300 190; button 'Clip 2'; b wait --fn 'document.querySelector("video[controls]")?.currentTime > 0.3'
-  b eval 'document.querySelector("video[controls]").currentTime' >"$E/play-times.log"; sleep .7; b eval 'document.querySelector("video[controls]").currentTime' >>"$E/play-times.log"; awk 'NR==1{a=$1} END{exit !($1>a)}' "$E/play-times.log"; bsnap player
-  b press e; b find role textbox fill 'Calibration replay' --name 'Clip name'; b press Enter; b wait --text 'Calibration replay'; sleep 1
-  button Trim; b wait --fn 'document.querySelector("video:not([controls])")?.duration>0'; range; button 'Save trim'; b wait --text 'Saved as a new clip'; b wait --text 'Trim 1'; bsnap trim; b record stop; trap - EXIT
-  button Close; b reload; b wait --text '3 clips'; b snapshot -i >"$E/library-after.txt"; grep -q 'Calibration replay · Trim 1' "$E/library-after.txt"
-  # Freeze a one-clip confirmation. A second tab trashes another clip before confirmation.
-  button 'Clip 1'; button Delete; b wait --text 'Moved to trash'; button Close; b wait --fn '!document.querySelector("[role=dialog]")'; button 'Trash 1'; button 'Empty trash'; b wait --text 'Delete the clips shown?'; bsnap trash-confirm
-  b tab new http://localhost:8788/apps/; b wait --text '2 clips'; button 'Calibration replay · Trim 1'; button Delete; b wait --text 'Moved to trash'; b tab close
-  button 'Delete forever'; b wait --text 'Deleted 1 clip forever'; b reload; b wait --text 'Calibration replay'; button 'Trash 1'; b wait --text 'Calibration replay · Trim 1'; bsnap trash-survivor ;;
 channel)
   session=yt-$id; b open about:blank; b network route 'https://**' --abort; b open http://localhost:8787/apps/; b set viewport 1100 740 2; b wait --text 'Sign in with Google'; bsnap google-before; google_signin; b wait --text 'NO CLIPS YET'
   cp "$cfg" "$R/never-paired.json"
-  settings; dest 'S3 bucket' y; field 'Better Clips app' http://localhost:8787; connect 'Sign in with YouTube' 0
+  settings; field 'Better Clips app' http://localhost:8787; connect 'Sign in with YouTube' 0
   o 'Remove channel from app…'; waitfor o --has 'Remove channel everywhere?'; osnap remove-confirm; xdotool key Escape; row 'select count(*) from youtube_accounts' 1
   o 'Remove channel from app…'; o 'Remove channel everywhere'; waitfor row 'select count(*) from youtube_accounts' 0
   connect 'Reconnect YouTube' 0; o Save --role button; first=$(sql 'select id from youtube_devices'); test -n "$first"
   # Simulate a second machine by launching the same real OBS with a never-paired config.
   "$S/lab" quit "$id"; cp "$R/never-paired.json" "$cfg"; "$S/lab" obs "$id"; "$S/lab" doctor "$id"
-  settings; dest 'S3 bucket' y; field 'Better Clips app' http://localhost:8787; connect 'Sign in with YouTube' 0
+  settings; field 'Better Clips app' http://localhost:8787; connect 'Sign in with YouTube' 0
   row 'select count(*) from youtube_devices' 2; o 'Unpair this OBS'; waitfor o --has 'Reconnect YouTube'; row 'select id from youtube_devices' "$first"; row 'select count(*) from youtube_accounts' 1
   connect 'Reconnect YouTube' 0; account; b wait --fn 'document.querySelectorAll("[aria-label^=\"Remove OBS\"]").length===2'; bsnap devices
   button "Remove OBS ${first:0:8}"; waitfor row 'select count(*) from youtube_devices' 1; row "select count(*) from youtube_devices where id='$first'" 0
@@ -222,9 +114,9 @@ edit)
   session=yt-$id; bsnap edit-before; button 'Unlisted 0:13'; b press e; b find role textbox fill 'Night practice' --name 'Clip name'; b press Enter; b wait --text 'Pending: Night practice'; bsnap pending-title
   button Unlisted; b wait '[role=menuitem]'; b find role menuitem click --name 'Private Only you can watch it'; b wait --text 'Waiting for YouTube to confirm visibility'; bsnap pending-privacy
   b wait --text 'Private on YouTube' --timeout 90000; b wait --fn 'document.body.innerText.includes("Night practice") && !document.body.innerText.includes("Pending: Night practice")'; row "select count(*) from youtube_clips where title='Night practice' and privacy='private' and pendingPrivacy is null and pendingTitle is null" 1
-  button Cut; range
-  button 'Save cut'; b wait --text '0:02–0:08'; bsnap cut; sql 'select title,privacy,start,end,status from youtube_clips' | tee "$E/edited.txt"; grep -qx 'Night practice|private|2|8|ready' "$E/edited.txt"
-  button Close; account; button 'Disconnect YouTube'; b wait --text 'This removes 1 library entry and 2 saved cut points from Better Clips. This unpairs 1 OBS device.'; bsnap disconnect-counts; button Cancel; button Close; b wait --fn '!document.querySelector("[role=dialog]")'
+  [[ $(b eval "[...document.querySelectorAll('button')].find(x=>x.textContent.includes('Edit — coming soon'))?.disabled") == true ]]
+  [[ $(b get attr 'a[href^="https://studio.youtube.com/video/"]' href | tr -d '"') == "https://studio.youtube.com/video/$(basename "$(cat "$E/host-link.txt")")/edit" ]]
+  button Close; account; button 'Disconnect YouTube'; b wait --text 'This removes 1 library entry from Better Clips. This unpairs 1 OBS device.'; bsnap disconnect-counts; button Cancel; button Close; b wait --fn '!document.querySelector("[role=dialog]")'
   button 'Night practice'; button Delete; b wait --text 'Delete this video from YouTube?'; sleep .4; button 'Delete from YouTube'; b wait --text 'Save a replay in OBS and it will show up here.'; row 'select count(*) from youtube_clips' 0
   # Verify deletion survives a reload and the closing confirmation no longer covers Settings.
   b reload; b wait --text 'Save a replay in OBS and it will show up here.'
@@ -243,14 +135,14 @@ direct)
   settings; o Disconnect; waitfor jq -e '.youtube_credential_id=="" and .youtube_channel_title==""' "$cfg"; clean_tokens; [[ -z $(keyring lookup grant "$grant") ]]; osnap direct-disconnected; o Cancel --role button
   log | grep -E '(plugin loaded|In-memory replay buffer|Saved replay|Built |Uploaded |YouTube upload failed)' >"$E/plugin.log"
   sed -nE 's/.*\[better-clips\] Saved replay (.*) from memory .*/\1/p' "$C"/logs/*.txt >"$E/save-names.log"
-  awk -F_ '{id=$NF; sub(/\.mp4$/,"",id); if ($0 !~ /_[a-f0-9]+\.mp4$/ || length(id)!=32 || seen[id]++) bad=1} END{exit bad || NR<8}' "$E/save-names.log" ;;
+  awk -F_ '{id=$NF; sub(/\.mp4$/,"",id); if ($0 !~ /_[a-f0-9]+\.mp4$/ || length(id)!=32 || seen[id]++) bad=1} END{exit bad || NR<2}' "$E/save-names.log" ;;
 credentials)
   o 'Connect YouTube'; connect 'Reconnect YouTube' 1; o Save --role button
   # Emulate upgrading that connected channel from the plaintext release.
   last_id=$(jq -er '.youtube_credential_id | select(length>0)' "$cfg")
   "$S/lab" quit "$id"
   keyring clear grant "$last_id"
-  jq '.youtube_route=1 | .destination=2 | .youtube_refresh_token="testing-refresh" | .youtube_channel_id="UC-local-testing" | .youtube_channel_title="Local channel" | .youtube_review=false | .youtube_made_for_kids=false | del(.youtube_credential_id)' "$cfg" >"$R/legacy-direct.json"
+  jq '.youtube_route=1 | .youtube_refresh_token="testing-refresh" | .youtube_channel_id="UC-local-testing" | .youtube_channel_title="Local channel" | .youtube_review=false | .youtube_made_for_kids=false | del(.youtube_credential_id)' "$cfg" >"$R/legacy-direct.json"
   for storage in keyring session; do
     cp "$R/legacy-direct.json" "$cfg"; jq '.youtube_refresh_token="obsolete-testing-refresh"' "$cfg" >"$cfg.bak"
     if [[ $storage == session ]]; then touch "$R/no-keyring"; fi

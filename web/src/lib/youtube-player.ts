@@ -1,6 +1,6 @@
 import * as React from "react"
 
-import type { Cut, YouTubeClip } from "@/lib/api"
+import type { YouTubeClip } from "@/lib/api"
 
 /* The parts of YouTube's IFrame Player API this app uses:
  * https://developers.google.com/youtube/iframe_api_reference */
@@ -68,8 +68,8 @@ function loadPlayerApi() {
 
 /* The embed URL. YouTube refuses to play an embed that can't tell which site
  * it's on (error 153), so it gets this page's origin, and the iframe sends
- * the referrer. A cut plays through the player's start and end. */
-export function embedUrl(clip: YouTubeClip, cut: Cut | null) {
+ * the referrer. */
+export function embedUrl(clip: YouTubeClip) {
   if (clip.status !== "ready" || clip.madeForKids !== false) return ""
 
   const params = new URLSearchParams({
@@ -79,11 +79,6 @@ export function embedUrl(clip: YouTubeClip, cut: Cut | null) {
     enablejsapi: "1",
     origin: location.origin,
   })
-
-  if (cut) {
-    params.set("start", String(cut.start))
-    params.set("end", String(cut.end))
-  }
 
   return `https://www.youtube.com/embed/${encodeURIComponent(clip.videoId)}?${params}`
 }
@@ -125,26 +120,6 @@ export function useYouTubePlayer(
   }, [iframe, src])
 
   return { player, playing }
-}
-
-/* YouTube's end parameter only stops the first play: its replay button, or
- * a seek past the end, plays the whole video. So a cut clip stops at the
- * cut's end here, and waits at its start for the next play. */
-export function useCutEnd(player: Player | null, cut: Cut | null) {
-  const start = cut?.start
-  const end = cut?.end
-
-  React.useEffect(() => {
-    if (!player || start === undefined || end === undefined) return
-
-    const timer = setInterval(() => {
-      if (player.getCurrentTime() < end - 0.15) return
-      player.pauseVideo()
-      player.seekTo(start, true)
-    }, 100)
-
-    return () => clearInterval(timer)
-  }, [player, start, end])
 }
 
 export function togglePlayer(player: Player | null, playing: boolean) {

@@ -1,7 +1,7 @@
 /*
 Better Clips for OBS
-Keeps an in-memory replay buffer and uploads saved clips straight to
-Cloudflare R2, without writing them to disk.
+Keeps a replay buffer, saves clips locally and uploads them to YouTube.
+
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
-#include "replay-r2.hpp"
+#include "replay.hpp"
 #include "plugin-support.h"
 #include "youtube-credential.hpp"
 
@@ -43,15 +43,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <cstring>
 #include <mutex>
 
-void wait_for_tests();
-
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
 namespace {
 
 std::mutex config_mutex;
-R2Config config;
 YouTubeSettings youtube;
 std::string credential_id;
 bool session_only = false, storage_notice_shown = false;
@@ -59,7 +56,6 @@ obs_hotkey_id save_hotkey = OBS_INVALID_HOTKEY_ID;
 obs_output_t *replay_output = nullptr; /* our in-memory replay buffer */
 bool ui_alive = true;
 bool initialized = false;
-bool just_set_up = false; /* the install script's setup code was applied */
 bool dock_placed = false; /* the dock was put next to Controls once */
 QString startup_notice;
 
@@ -115,10 +111,9 @@ bool migrate_config()
 {
 	const QString target = QString::fromStdString(config_path());
 	const QDir dir = QFileInfo(target).dir();
-	const QString legacy = QDir::cleanPath(dir.filePath("../obs-replay-r2/config.json"));
 	bool found = false, selected = false;
 	QJsonObject active;
-	for (const auto &path : {target, target + ".bak", legacy, legacy + ".bak"}) {
+	for (const auto &path : {target, target + ".bak"}) {
 		QFile source(path);
 		if (!source.exists())
 			continue;
@@ -167,19 +162,9 @@ void load_config()
 	obs_data_t *data = obs_data_create_from_json_file_safe(config_path().c_str(), "bak");
 	if (!data)
 		return;
-	obs_data_set_default_string(data, "folder", "replays");
 	obs_data_set_default_bool(data, "start_replay_buffer", true);
-	config.app_url = obs_data_get_string(data, "app_url");
-	config.upload_token = obs_data_get_string(data, "upload_token");
-	config.s3_url = obs_data_get_string(data, "s3_url");
-	config.access_key = obs_data_get_string(data, "access_key");
-	config.secret_key = obs_data_get_string(data, "secret_key");
-	config.folder = obs_data_get_string(data, "folder");
-	config.public_url = obs_data_get_string(data, "public_url");
-	config.start_replay_buffer = obs_data_get_bool(data, "start_replay_buffer");
+	youtube.start_replay_buffer = obs_data_get_bool(data, "start_replay_buffer");
 	dock_placed = obs_data_get_bool(data, "dock_placed");
-	obs_data_set_default_int(data, "destination", config.app_url.empty() && !config.s3_url.empty() ? 1 : 0);
-	youtube.destination = static_cast<Destination>(obs_data_get_int(data, "destination"));
 	youtube.route = static_cast<YouTubeRoute>(obs_data_get_int(data, "youtube_route"));
 	youtube.app_url = obs_data_get_string(data, "youtube_app_url");
 	youtube.upload_token = obs_data_get_string(data, "youtube_upload_token");
@@ -206,21 +191,12 @@ void load_config()
 }
 
 /* config_mutex serializes the file transaction and the settings it publishes. */
-bool write_config(const R2Config &next, const YouTubeSettings &account)
+bool write_config(const YouTubeSettings &account)
 {
 	obs_data_t *data = obs_data_create();
 	{
-		const auto &config = next;
 		const auto &youtube = account;
-		obs_data_set_string(data, "app_url", config.app_url.c_str());
-		obs_data_set_string(data, "upload_token", config.upload_token.c_str());
-		obs_data_set_string(data, "s3_url", config.s3_url.c_str());
-		obs_data_set_string(data, "access_key", config.access_key.c_str());
-		obs_data_set_string(data, "secret_key", config.secret_key.c_str());
-		obs_data_set_string(data, "folder", config.folder.c_str());
-		obs_data_set_string(data, "public_url", config.public_url.c_str());
-		obs_data_set_bool(data, "start_replay_buffer", config.start_replay_buffer);
-		obs_data_set_int(data, "destination", static_cast<int>(youtube.destination));
+		obs_data_set_bool(data, "start_replay_buffer", youtube.start_replay_buffer);
 		obs_data_set_int(data, "youtube_route", static_cast<int>(youtube.route));
 		obs_data_set_string(data, "youtube_credential_id", credential_id.c_str());
 		obs_data_set_string(data, "youtube_app_url", youtube.app_url.c_str());
@@ -254,7 +230,7 @@ bool write_config(const R2Config &next, const YouTubeSettings &account)
 void save_config()
 {
 	std::lock_guard<std::mutex> lock(config_mutex);
-	write_config(config, youtube);
+	write_config(youtube);
 }
 
 /* Starts our replay buffer on the encoders of OBS's replay buffer. OBS's
@@ -267,7 +243,7 @@ void start_replay_output()
 		return;
 
 	obs_output_release(replay_output);
-	replay_output = obs_output_create("replay_r2_output", "Better Clips", nullptr, nullptr);
+	replay_output = obs_output_create("better_clips_output", "Better Clips", nullptr, nullptr);
 
 	obs_data_t *obs_settings = obs_output_get_settings(obs_replay);
 	int max_time_sec = (int)obs_data_get_int(obs_settings, "max_time_sec");
@@ -333,48 +309,10 @@ void bind_default_hotkey()
 	obs_data_release(key);
 }
 
-/* The install script leaves the setup code from the clips app here. Applying
- * it while OBS loads plugins sets everything up on OBS's first start: the
- * upload settings, the Replay Buffer and a hotkey. */
-void apply_pending_setup_code()
-{
-	char *path = obs_module_config_path("setup-code.txt");
-	std::string file = path ? path : "";
-	bfree(path);
-
-	char *text = os_quick_read_utf8_file(file.c_str());
-	if (!text)
-		return;
-	R2Config next = get_config();
-	const bool app = QString::fromUtf8(text).trimmed().startsWith("r2obs2:");
-	bool applied = apply_setup_code(text, next);
-	bfree(text);
-
-	if (!applied) {
-		os_unlink(file.c_str());
-		startup_notice = "Invalid setup code. Copy a fresh setup code from your Better Clips app.";
-		obs_log(LOG_WARNING, "Ignored %s: not a setup code", file.c_str());
-		return;
-	}
-	next.start_replay_buffer = true;
-	auto account = get_youtube_settings();
-	account.destination = app ? Destination::ClipsApp : Destination::S3;
-	bind_default_hotkey();
-	if (!save_settings(next, account)) {
-		startup_notice =
-			"Could not save the setup code. Check the settings folder permissions and restart OBS to retry.";
-		return;
-	}
-	os_unlink(file.c_str());
-	enable_replay_buffer_in_profile();
-	just_set_up = true;
-	obs_log(LOG_INFO, "Applied the setup code from the install script");
-}
-
 /* Starts OBS's Replay Buffer, which starts ours, unless that is turned off. */
 void start_obs_replay_buffer()
 {
-	if (!get_config().start_replay_buffer || obs_frontend_replay_buffer_active())
+	if (!get_youtube_settings().start_replay_buffer || obs_frontend_replay_buffer_active())
 		return;
 	obs_output_t *output = obs_frontend_get_replay_buffer_output();
 	if (!output) {
@@ -402,7 +340,7 @@ void on_save_hotkey(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 			qApp,
 			[] {
 				if (ui_alive)
-					save_replay_to_r2();
+					save_replay();
 			},
 			Qt::AutoConnection);
 }
@@ -423,10 +361,6 @@ void on_frontend_event(enum obs_frontend_event event, void *)
 			place_save_dock();
 		check_youtube_pairing();
 		start_obs_replay_buffer();
-		if (just_set_up) {
-			just_set_up = false;
-			check_connection_async(get_config());
-		}
 		break;
 	case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED:
 		start_replay_output();
@@ -463,7 +397,7 @@ void on_frontend_save(obs_data_t *, bool saving, void *)
 
 } // namespace
 
-bool replay_r2_running()
+bool replay_running()
 {
 	return replay_output && obs_output_active(replay_output);
 }
@@ -480,31 +414,24 @@ bool plugin_disabled()
 
 QString destination_setup_action()
 {
-	R2Config current = get_config();
 	auto yt = get_youtube_settings();
-	if (yt.destination == Destination::YouTube &&
-	    (yt.route == YouTubeRoute::Direct ? !youtube_direct_available() || yt.refresh_token.empty()
-					      : yt.app_url.empty() || yt.upload_token.empty()))
+	if (yt.route == YouTubeRoute::Direct ? !youtube_direct_available() || yt.refresh_token.empty()
+					     : yt.app_url.empty() || yt.upload_token.empty())
 		return "Connect YouTube";
-	if (yt.destination == Destination::S3 &&
-	    (current.s3_url.empty() || current.access_key.empty() || current.secret_key.empty()))
-		return "Set up S3";
-	if (yt.destination == Destination::ClipsApp && (current.app_url.empty() || current.upload_token.empty()))
-		return "Connect Better Clips app";
 	return {};
 }
 
 void retry_plugin_buffer()
 {
-	if (obs_frontend_replay_buffer_active() && !replay_r2_running())
+	if (obs_frontend_replay_buffer_active() && !replay_running())
 		start_replay_output();
-	if (!replay_r2_running())
+	if (!replay_running())
 		notify_user("Better Clips buffer could not start. Check the OBS log for the encoder error.");
 }
 
-void save_replay_to_r2()
+void save_replay()
 {
-	if (!replay_r2_running()) {
+	if (!replay_running()) {
 		notify_user(obs_frontend_replay_buffer_active()
 				    ? "Better Clips buffer is stopped. Retry it in the Better Clips dock."
 				    : "Better Clips: start the Replay Buffer first");
@@ -515,7 +442,7 @@ void save_replay_to_r2()
 		notify_user(action.toStdString() + " in Tools > Better Clips Settings");
 		return;
 	}
-	replay_r2_request_save(replay_output);
+	replay_request_save(replay_output);
 }
 
 int get_replay_seconds()
@@ -557,12 +484,6 @@ void sync_replay_seconds()
 	obs_log(LOG_INFO, "Replay length set to %d s", seconds);
 }
 
-R2Config get_config()
-{
-	std::lock_guard<std::mutex> lock(config_mutex);
-	return config;
-}
-
 YouTubeSettings get_youtube_settings()
 {
 	std::lock_guard<std::mutex> lock(config_mutex);
@@ -580,23 +501,17 @@ void set_youtube_settings(const YouTubeSettings &settings)
 	youtube = settings;
 	youtube.previously_paired |= !youtube.upload_token.empty();
 	youtube.previously_direct |= !youtube.refresh_token.empty();
-	if (!write_config(config, youtube))
+	if (!write_config(youtube))
 		notify_user(
 			"Better Clips: could not save the YouTube connection. Check your settings folder permissions.");
 	QMetaObject::invokeMethod(qApp, refresh_youtube_account, Qt::QueuedConnection);
 }
 
-void set_config(const R2Config &new_config)
-{
-	save_settings(new_config, get_youtube_settings());
-}
-
-bool save_settings(const R2Config &next, const YouTubeSettings &account)
+bool save_settings(const YouTubeSettings &account)
 {
 	std::lock_guard<std::mutex> lock(config_mutex);
-	if (!write_config(next, account))
+	if (!write_config(account))
 		return false;
-	config = next;
 	youtube = account;
 	startup_notice.clear();
 	return true;
@@ -650,18 +565,20 @@ void obs_module_post_load(void)
 	}
 	initialized = true;
 	curl_global_init(CURL_GLOBAL_DEFAULT);
-	register_replay_r2_output();
+	register_better_clips_output();
 
 	save_hotkey = obs_hotkey_register_frontend("ReplayR2.Save", obs_module_text("ReplayR2.Save"), on_save_hotkey,
 						   nullptr);
 	load_config();
-	apply_pending_setup_code();
+	if (!QFileInfo::exists(QString::fromStdString(config_path()))) {
+		enable_replay_buffer_in_profile();
+		bind_default_hotkey();
+	}
 
 	obs_frontend_add_save_callback(on_frontend_save, nullptr);
 	create_save_dock();
 
 	start_youtube_reviews();
-	set_upload_success_handler([](Destination to) { record_destination_success(to, true); });
 	uploader_start();
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 }
@@ -676,7 +593,6 @@ void obs_module_unload(void)
 	obs_frontend_remove_save_callback(on_frontend_save, nullptr);
 	stop_replay_output();
 	uploader_stop();
-	wait_for_tests();
 	curl_global_cleanup();
 	obs_log(LOG_INFO, "plugin unloaded");
 }

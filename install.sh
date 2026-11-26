@@ -1,15 +1,8 @@
 #!/bin/sh
-# Installs Better Clips for OBS on macOS or Linux and connects it to your
-# clips app. Copy the command from your app (Settings > OBS), or run:
-#
-#   curl -fsSL https://raw.githubusercontent.com/aarsh21/better-clips/main/install.sh | sh -s -- '<setup code>'
-#
-# Without a setup code it only installs the plugin. Only removing an old
-# system-wide install may need sudo.
+# Installs Better Clips for OBS on macOS or Linux.
 set -eu
 
 REPO="aarsh21/better-clips"
-CODE="${1:-${CLIPS_SETUP_CODE:-}}"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 fail() {
@@ -17,28 +10,6 @@ fail() {
 	exit 1
 }
 
-case "$CODE" in
-"" | r2obs1:* | r2obs2:*) ;;
-*) fail "That doesn't look like a setup code. Copy it again from Settings > OBS in your clips app." ;;
-esac
-
-if [ -n "$CODE" ]; then
-	command -v python3 >/dev/null || fail 'Validating a setup code requires Python 3. You can also install without the code and paste it in OBS.'
-	printf '%s' "$CODE" | python3 -c '
-import base64, json, sys, urllib.parse
-try:
-    prefix, payload = sys.stdin.read().split(":", 1)
-    data = json.loads(base64.b64decode(payload, validate=True).decode("utf-8"))
-    app = prefix == "r2obs2"
-    keys = ("a", "t") if app else ("u", "k", "s")
-    valid = all(isinstance(data.get(k), str) and data[k].strip() for k in keys)
-    url = urllib.parse.urlsplit(data[keys[0]].strip())
-    valid = valid and url.hostname and url.username is None and not url.query and not url.fragment and (app or url.path.strip("/")) and (url.scheme == "https" or (url.scheme == "http" and url.hostname in ("127.0.0.1", "localhost") and url.port))
-except (TypeError, ValueError, KeyError, AttributeError):
-    valid = False
-sys.exit(0 if valid else 1)
-' || fail 'Invalid setup code. Copy a fresh setup code from your Better Clips app.'
-fi
 
 command -v curl >/dev/null || fail "curl is required."
 TMP=$(mktemp -d)
@@ -147,20 +118,9 @@ else
 	done
 fi
 
-if [ -n "$CODE" ]; then
-	# The plugin reads this on OBS's next start, then deletes it.
-	DIR="$OBS_CONFIG/plugin_config/better-clips"
-	mkdir -p "$DIR"
-	(umask 077 && pending=$(mktemp "$DIR/setup-code.XXXXXX") && printf '%s' "$CODE" >"$pending" && mv -f "$pending" "$DIR/setup-code.txt")
-fi
 
 say "Installed to $PLUGIN"
-if [ -n "$CODE" ]; then
-	say "When OBS opens, it connects to your clips app and starts the Replay Buffer."
-	say "Press Ctrl+Alt+R to save a replay (change it in Settings > Hotkeys)."
-else
-	say "In OBS, open Tools > Better Clips Settings and choose YouTube, an S3 bucket, or your Better Clips app."
-fi
+say "In OBS, open Tools > Better Clips Settings and sign in with YouTube."
 
 # Open OBS, if this is a desktop session.
 if [ "$OS" = macos ]; then

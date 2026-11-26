@@ -1,11 +1,4 @@
-// The hosted app at clips.zabimaru.me: everyone signs in with Cloudflare and
-// brings their own bucket (see worker/hosted.ts). Self-hosting uses
-// wrangler.jsonc instead.
-//
-// Deploy: pnpm build && wrangler d1 migrations apply clips-app --remote -c wrangler.app.jsonc
-//         && wrangler deploy -c wrangler.app.jsonc
-// Secrets (wrangler secret put … -c wrangler.app.jsonc): CREDS_KEY,
-// OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET.
+// Hosted YouTube app. Secrets: CREDS_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "clips-app",
@@ -18,7 +11,7 @@
     "directory": "dist/client",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/", "/api/*", "/s/*"],
+    "run_worker_first": ["/api/*"],
   },
   "d1_databases": [
     {
@@ -28,14 +21,6 @@
       "migrations_dir": "migrations",
     },
   ],
-  "ratelimits": [
-    {
-      "name": "LOGIN_LIMIT",
-      "namespace_id": "4274",
-      "simple": { "limit": 10, "period": 60 },
-    },
-  ],
-  // Each run cleans the buckets that are due, a few at a time.
   "triggers": { "crons": ["*/15 * * * *"] },
   "observability": { "enabled": true },
 }

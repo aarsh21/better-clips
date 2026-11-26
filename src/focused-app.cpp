@@ -4,7 +4,7 @@
  * or document lands in the same category. Returns "" when OBS itself is
  * focused or the system can't say, and the clip falls back to the scene. */
 
-#include "replay-r2.hpp"
+#include "replay.hpp"
 
 #include <string>
 

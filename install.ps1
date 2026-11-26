@@ -1,10 +1,4 @@
-# Installs Better Clips for OBS on Windows and connects it to your clips app.
-# Copy the command from your app (Settings > OBS), or run in PowerShell:
-#
-#   $env:CLIPS_SETUP_CODE='<setup code>'; irm https://raw.githubusercontent.com/aarsh21/better-clips/main/install.ps1 | iex
-#
-# Without a setup code it only installs the plugin. Windows asks once for
-# permission, because OBS loads plugins from C:\ProgramData.
+# Installs Better Clips for OBS on Windows.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is much faster without it
@@ -12,27 +6,10 @@ $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is much faster with
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
 $Repo = 'aarsh21/better-clips'
-$Code = "$env:CLIPS_SETUP_CODE".Trim()
-Remove-Item Env:CLIPS_SETUP_CODE -ErrorAction SilentlyContinue
 
 function Say($Text) { Write-Host "==> $Text" -ForegroundColor Cyan }
 function Fail($Text) { Write-Host "Error: $Text" -ForegroundColor Red; throw $Text }
 
-if ($Code) {
-    try {
-        if ($Code -cnotmatch '^r2obs([12]):([A-Za-z0-9+/]+={0,2})$') { throw 'prefix or encoding' }
-        $App = $Matches[1] -eq '2'
-        $Payload = [Text.UTF8Encoding]::new($false, $true).GetString([Convert]::FromBase64String($Matches[2])) | ConvertFrom-Json
-        $Keys = if ($App) { 'a','t' } else { 'u','k','s' }
-        foreach ($Key in $Keys) {
-            if ($Payload.$Key -isnot [string] -or !$Payload.$Key.Trim()) { throw 'missing field' }
-        }
-        $Url = [uri]$Payload.($Keys[0])
-        if (!$Url.IsAbsoluteUri -or !$Url.Host -or $Url.UserInfo -or $Url.Query -or $Url.Fragment -or
-            (!$App -and !$Url.AbsolutePath.Trim('/')) -or
-            ($Url.Scheme -ne 'https' -and !($Url.Scheme -eq 'http' -and $Url.Host -in 'localhost','127.0.0.1' -and $Url.Authority.Contains(':')))) { throw 'invalid URL' }
-    } catch { Fail 'Invalid setup code. Copy a fresh setup code from your Better Clips app.' }
-}
 if (-not [Environment]::Is64BitOperatingSystem) { Fail 'Only 64-bit Windows is supported.' }
 
 # The plugin replaces files OBS has open, so OBS must be closed.
@@ -141,23 +118,12 @@ try {
     $Old = Join-Path $env:APPDATA 'obs-studio\plugins\obs-replay-r2'
     if (Test-Path -LiteralPath $Old) { Remove-Item -LiteralPath $Old -Recurse -Force }
 
-    if ($Code) {
-        # The plugin reads this on OBS's next start, then deletes it.
-        $Config = Join-Path $env:APPDATA 'obs-studio\plugin_config\better-clips'
-        New-Item -ItemType Directory -Force -Path $Config | Out-Null
-        [IO.File]::WriteAllText((Join-Path $Config 'setup-code.txt'), $Code)
-    }
 } finally {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -Path $Temp
 }
 
 Say "Installed to $Plugin"
-if ($Code) {
-    Say 'When OBS opens, it connects to your clips app and starts the Replay Buffer.'
-    Say 'Press Ctrl+Alt+R to save a replay (change it in Settings > Hotkeys).'
-} else {
-    Say 'In OBS, open Tools > Better Clips Settings and choose YouTube, an S3 bucket, or your Better Clips app.'
-}
+Say 'In OBS, open Tools > Better Clips Settings and sign in with YouTube.'
 
 # Open OBS. It must start from its own folder to find its files.
 $ObsBin = Join-Path $ObsDir 'bin\64bit'

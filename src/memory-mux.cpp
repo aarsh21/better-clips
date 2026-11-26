@@ -11,7 +11,7 @@
  * 14496-12 (ISO BMFF), 14496-14 (esds) and 14496-15 (avcC, hvcC), the AV1
  * ISO BMFF binding (av1C) and the Opus in ISO BMFF spec (dOps). */
 
-#include "replay-r2.hpp"
+#include "replay.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -970,8 +970,7 @@ bool mux_clip_to_mp4(const Clip &clip, std::vector<uint8_t> &mp4, std::string &e
 	video.to_length_prefixed = video.codec != Codec::AV1 && !(header.size() >= 7 && header[0] == 1);
 
 	for (const AudioTrack &audio : clip.audio) {
-		if (clip.youtube.destination == Destination::YouTube && clip.youtube_audio_index >= 0 &&
-		    audio.track_idx != static_cast<size_t>(clip.youtube_audio_index))
+		if (clip.youtube_audio_index >= 0 && audio.track_idx != static_cast<size_t>(clip.youtube_audio_index))
 			continue;
 		Track t;
 		if (!codec_of(audio.codec, t.codec) || (t.codec != Codec::AAC && t.codec != Codec::OPUS)) {
