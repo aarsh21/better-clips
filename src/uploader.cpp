@@ -7,6 +7,7 @@
 
 #include <obs-frontend-api.h>
 #include <util/platform.h>
+#include <QFile>
 #include <QObject>
 
 #include <chrono>
@@ -84,21 +85,24 @@ std::string save_to_disk(const Clip &clip, const std::vector<uint8_t> &mp4)
 		file.resize(file.size() - 4);
 	const std::string base = clip.save_dir + "/Replay " + file;
 
-	std::string path = base + ".mp4";
-	for (int n = 2; os_file_exists(path.c_str()); n++)
-		path = base + "-" + std::to_string(n) + ".mp4";
-
 	os_mkdirs(clip.save_dir.c_str());
-	FILE *f = os_fopen(path.c_str(), "wb");
-	if (!f)
-		return {};
-	bool ok = fwrite(mp4.data(), 1, mp4.size(), f) == mp4.size();
-	ok = fclose(f) == 0 && ok;
-	if (!ok) {
-		os_unlink(path.c_str());
+	for (int n = 1;; n++) {
+		const auto path = base + (n == 1 ? "" : "-" + std::to_string(n)) + ".mp4";
+		QFile f(QString::fromStdString(path));
+		if (!f.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+			if (f.exists())
+				continue;
+			return {};
+		}
+		const auto size = static_cast<qint64>(mp4.size());
+		if (f.write(reinterpret_cast<const char *>(mp4.data()), size) == size && f.flush()) {
+			f.close();
+			if (f.error() == QFileDevice::NoError)
+				return path;
+		}
+		f.remove();
 		return {};
 	}
-	return path;
 }
 
 /* Keeps a clip that couldn't be uploaded, and says where it went. */

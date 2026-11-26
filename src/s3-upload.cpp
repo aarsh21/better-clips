@@ -199,6 +199,7 @@ bool s3_put_object(const R2Config &config, const std::string &key, const std::ve
 	headers = curl_slist_append(headers, ("x-amz-content-sha256: " + payload_hash).c_str());
 	headers = curl_slist_append(headers, (std::string("x-amz-date: ") + amz_date).c_str());
 	headers = curl_slist_append(headers, authorization.c_str());
+	headers = curl_slist_append(headers, "If-None-Match: *");
 	headers = curl_slist_append(headers, "Expect:");
 
 	const std::string request_url = url.scheme_host + path;

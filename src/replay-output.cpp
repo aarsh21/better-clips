@@ -12,6 +12,7 @@
 #include <util/platform.h>
 #include <obs-frontend-api.h>
 #include <util/config-file.h>
+#include <QUuid>
 
 #include <algorithm>
 #include <cctype>
@@ -19,7 +20,6 @@
 #include <ctime>
 #include <deque>
 #include <mutex>
-#include <random>
 #include <string>
 
 namespace {
@@ -185,10 +185,8 @@ std::string url_safe(const std::string &text)
 	return out.substr(0, 40);
 }
 
-/* A name people can browse: a folder per day, then the time and the app
- * or scene, e.g. "2026-11-24/14-35-07_Valorant.mp4". With a public URL, a short random
- * code is appended so nobody can guess a clip's link from the time. */
-std::string clip_name(time_t wall_time, const std::string &scene, bool add_code)
+/* Keep the browsable name, but give every Save its own unguessable identity. */
+std::string clip_name(time_t wall_time, const std::string &scene)
 {
 	struct tm local;
 #ifdef _WIN32
@@ -201,17 +199,8 @@ std::string clip_name(time_t wall_time, const std::string &scene, bool add_code)
 	std::string name = stamp;
 
 	std::string label = url_safe(scene);
-	if (!label.empty())
-		name += "_" + label;
-
-	if (add_code) {
-		static const char alphabet[] = "abcdefghijkmnpqrstuvwxyz23456789";
-		std::random_device random;
-		name += '_';
-		for (int i = 0; i < 6; i++)
-			name += alphabet[random() % (sizeof(alphabet) - 1)];
-	}
-	return name + ".mp4";
+	return name + "_" + (label.empty() ? "Replay" : label) + "_" +
+	       QUuid::createUuid().toRfc4122().toHex().toStdString() + ".mp4";
 }
 
 /* Copies the buffer into a clip with timestamps starting at zero, sorted by
@@ -224,7 +213,7 @@ Clip *snapshot(ReplayR2 *r)
 	clip->game = r->save_scene;
 	clip->recorded_at = r->save_wall_time;
 
-	clip->name = clip_name(r->save_wall_time, r->save_scene, !clip->config.public_url.empty());
+	clip->name = clip_name(r->save_wall_time, r->save_scene);
 
 	fill_video_track(clip->video, obs_output_get_video_encoder(r->output));
 	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
