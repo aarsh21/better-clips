@@ -23,7 +23,8 @@ struct YouTubeSettings {
 	std::string description;
 	bool review_before_upload = false;
 	int audio_track = 1; /* 1-based OBS audio track sent to YouTube */
-	bool previously_connected = false;
+	bool previously_paired = false;
+	bool previously_direct = false;
 };
 
 YouTubeSettings get_youtube_settings();

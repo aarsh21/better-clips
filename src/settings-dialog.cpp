@@ -24,10 +24,12 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
-#include <QStackedWidget>
+#include <QScreen>
+#include <QScrollArea>
 #include <QUrl>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <QWindow>
 
 #include <algorithm>
 #include <atomic>
@@ -180,7 +182,7 @@ public:
 		const bool can_direct = youtube_direct_available();
 		(can_direct && settings.route == YouTubeRoute::Direct ? direct : via_app)->setChecked(true);
 		connect(direct, &QRadioButton::toggled, this, [this]() {
-			show_route();
+			show_route(get_youtube_settings());
 			show_status("");
 		});
 
@@ -336,10 +338,24 @@ private:
 
 	YouTubeRoute route() const { return direct->isChecked() ? YouTubeRoute::Direct : YouTubeRoute::ClipsApp; }
 
+	void resizeEvent(QResizeEvent *event) override
+	{
+		QWidget::resizeEvent(event);
+		fit_status();
+	}
+
+	void fit_status()
+	{
+		// This full-width row must not be compressed when a scrollbar narrows the page.
+		status->setMinimumHeight(status->isHidden() ? 0 : status->heightForWidth(width()));
+	}
+
 	/* The trade-off of the chosen route, and the fields it needs. */
-	void show_route()
+	void show_route(const YouTubeSettings &settings)
 	{
 		const bool app = route() == YouTubeRoute::ClipsApp;
+		const bool reconnect = app ? settings.previously_paired : settings.previously_direct;
+		sign_in->setText(reconnect ? "Reconnect YouTube" : "Sign in with YouTube");
 		route_hint->setText(app ? "Clips show up in the Better Clips app, to rename, cut and delete them."
 					: "No Better Clips app needed, but clips won't show up in its library.");
 		form->setRowVisible(app_url, app);
@@ -370,11 +386,10 @@ private:
 		sign_in->setVisible(!connected);
 		cancel_sign_in->hide();
 		sign_in->setEnabled(true);
-		sign_in->setText(settings.previously_connected ? "Reconnect YouTube" : "Sign in with YouTube");
 		disconnect_button->setVisible(connected);
 		disconnect_button->setText(settings.route == YouTubeRoute::ClipsApp ? "Unpair this OBS" : "Disconnect");
 		form->setRowVisible(remove_channel, connected && settings.route == YouTubeRoute::ClipsApp);
-		show_route();
+		show_route(settings);
 	}
 
 	/* Progress in grey, errors in the normal text color so they stand out. */
@@ -383,6 +398,7 @@ private:
 		status->setText(text);
 		status->setStyleSheet(error ? "" : "color: palette(placeholder-text);");
 		status->setVisible(!text.isEmpty());
+		fit_status();
 	}
 
 	void show_disconnected(DisconnectResult result)
@@ -496,13 +512,13 @@ public:
 		public_url = new QLineEdit(QString::fromStdString(config.public_url));
 		public_url->setPlaceholderText("Optional: https://pub-xxxx.r2.dev or your custom domain");
 
-		auto *app_page = new QWidget();
+		app_page = new QWidget();
 		auto *app_form = new QFormLayout(app_page);
 		app_form->setContentsMargins(0, 0, 0, 0);
 		app_form->addRow("Better Clips app", app_url);
 		app_form->addRow("Upload token", upload_token);
 
-		auto *s3_page = new QWidget();
+		s3_page = new QWidget();
 		auto *s3_form = new QFormLayout(s3_page);
 		s3_form->setContentsMargins(0, 0, 0, 0);
 		s3_form->addRow("S3 API URL", s3_url);
@@ -513,11 +529,6 @@ public:
 
 		youtube_page = new YouTubePage(youtube);
 		open_account = youtube_page;
-
-		pages = new QStackedWidget();
-		pages->addWidget(app_page);
-		pages->addWidget(s3_page);
-		pages->addWidget(youtube_page);
 
 		help = new QLabel();
 		help->setWordWrap(true);
@@ -561,12 +572,24 @@ public:
 		bottom->addWidget(faq);
 		bottom->addWidget(buttons, 1);
 
+		auto *content = new QWidget();
+		auto *fields = new QVBoxLayout(content);
+		fields->setContentsMargins(0, 0, 0, 0);
+		fields->setSizeConstraint(QLayout::SetMinAndMaxSize);
+		fields->addWidget(help);
+		fields->addLayout(top);
+		fields->addWidget(app_page);
+		fields->addWidget(s3_page);
+		fields->addWidget(youtube_page);
+		fields->addWidget(start_replay);
+		fields->addWidget(status);
+		fields->addStretch();
+		scroll = new QScrollArea();
+		scroll->setFrameShape(QFrame::NoFrame);
+		scroll->setWidgetResizable(true);
+		scroll->setWidget(content);
 		auto *layout = new QVBoxLayout(this);
-		layout->addWidget(help);
-		layout->addLayout(top);
-		layout->addWidget(pages);
-		layout->addWidget(start_replay);
-		layout->addWidget(status);
+		layout->addWidget(scroll);
 		layout->addLayout(bottom);
 
 		align_labels({top, app_form, s3_form, youtube_page->form});
@@ -574,9 +597,46 @@ public:
 		status->setText(plugin_startup_notice());
 	}
 
+	void showEvent(QShowEvent *event) override
+	{
+		QDialog::showEvent(event);
+		if (!scroll || !windowHandle())
+			return;
+		connect(windowHandle(), &QWindow::screenChanged, this, &SettingsDialog::watch_screen,
+			Qt::UniqueConnection);
+		watch_screen(screen());
+	}
+
 private:
+	QScrollArea *scroll = nullptr;
+	QMetaObject::Connection work_area_changed;
+	void watch_screen(QScreen *screen)
+	{
+		disconnect(work_area_changed);
+		if (screen) {
+			work_area_changed =
+				connect(screen, &QScreen::availableGeometryChanged, this, [this] { fit_page(); });
+			fit_page();
+		}
+	}
+
+	void fit_page()
+	{
+		const QRect area = screen()->availableGeometry();
+		// Leave space for the window frame even before the window manager adds it.
+		setMaximumHeight(area.height() * 9 / 10);
+		const int w = std::max(minimumSizeHint().width(), 640);
+		const auto margins = layout()->contentsMargins();
+		const int body = scroll->widget()->heightForWidth(w - margins.left() - margins.right());
+		resize(w, body + margins.top() + margins.bottom() + layout()->spacing() +
+				  layout()->itemAt(1)->sizeHint().height());
+		const int bottom = area.bottom() - margins.bottom();
+		if (isVisible() && frameGeometry().bottom() > bottom)
+			move(x(), std::max(area.top(), bottom - frameGeometry().height() + 1));
+	}
+
 	QComboBox *destination;
-	QStackedWidget *pages;
+	QWidget *app_page, *s3_page;
 	YouTubePage *youtube_page;
 	QLineEdit *app_url, *upload_token, *s3_url, *access_key, *secret_key, *folder, *public_url;
 	QCheckBox *start_replay;
@@ -604,10 +664,9 @@ private:
 	void show_destination()
 	{
 		Destination to = chosen();
-		pages->setCurrentIndex(int(to));
-		for (int i = 0; i < pages->count(); i++)
-			pages->widget(i)->setSizePolicy(QSizePolicy::Preferred,
-							i == int(to) ? QSizePolicy::Preferred : QSizePolicy::Ignored);
+		app_page->setVisible(to == Destination::ClipsApp);
+		s3_page->setVisible(to == Destination::S3);
+		youtube_page->setVisible(to == Destination::YouTube);
 
 		const char *hotkey = "Then bind <b>Save Replay and Upload</b> in Settings &gt; Hotkeys.";
 		if (to == Destination::ClipsApp)
@@ -628,7 +687,8 @@ private:
 		paste->setVisible(to != Destination::YouTube);
 		test->setVisible(to != Destination::YouTube);
 		status->clear();
-		adjustSize();
+		// Let Qt recompute the newly visible form's size hints before measuring it.
+		QMetaObject::invokeMethod(this, &SettingsDialog::fit_page, Qt::QueuedConnection);
 	}
 
 	R2Config current() const
