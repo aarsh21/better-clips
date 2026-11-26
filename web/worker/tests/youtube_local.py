@@ -129,7 +129,7 @@ class Google(BaseHTTPRequestHandler):
             if p.path == "/revoke":
                 assert f["token"] == "testing-refresh"
                 if revoke_failure:
-                    return self.reply(503, {})
+                    return self.reply(400, {"error":"invalid_request"})
                 if revoked:
                     return self.reply(400, {"error": "invalid_token"})
                 revoked = True
@@ -499,6 +499,11 @@ def exercise():
         origin="https://other.example",
     )
     assert not revoked
+    revoke_failure = True
+    call("/api/youtube/disconnect", "POST", {}, status=502, origin=BASE)
+    check(bool(call("/api/me")["youtube"]), "unknown revocation error retains the grant for retry")
+    revoke_failure = False
+    revoked = True  # Google confirms invalid_token when the user retries.
     call("/api/youtube/disconnect", "POST", {}, origin=BASE)
     assert revoked
     cookies.clear()

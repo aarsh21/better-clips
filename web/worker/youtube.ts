@@ -42,6 +42,7 @@ const editGrace = 30000
 
 type Account = {
   user_id: string
+  grant_id: string
   subject: string
   channel_id: string
   channel_title: string
@@ -153,12 +154,13 @@ async function access(env: HostedEnv, a: Account) {
 
   if (!t.access_token) {
     if (t.error === "invalid_grant") {
-      await env
+      const deleted = await env
         .DB!.prepare(
-          "DELETE FROM youtube_accounts WHERE user_id=? AND refresh_enc=?"
+          "DELETE FROM youtube_accounts WHERE user_id=? AND refresh_enc=? AND grant_id=?"
         )
-        .bind(a.user_id, a.refresh_enc)
+        .bind(a.user_id, a.refresh_enc, a.grant_id)
         .run()
+      if (!deleted.meta.changes) throw new HTTPException(409, { message: "The channel connection changed. Try again." })
       throw new HTTPException(401, { message: reconnect })
     }
 
@@ -608,7 +610,7 @@ export function youtubeRoutes(app: Hono<any>) {
 
       const saved = await db
         .prepare(
-          `INSERT INTO youtube_accounts(user_id,subject,channel_id,channel_title,scopes,refresh_enc,key_version,checked) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET channel_title=excluded.channel_title,scopes=excluded.scopes,refresh_enc=excluded.refresh_enc,key_version=excluded.key_version WHERE subject=excluded.subject AND channel_id=excluded.channel_id`
+          `INSERT INTO youtube_accounts(user_id,subject,channel_id,channel_title,scopes,refresh_enc,key_version,checked,grant_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET channel_title=excluded.channel_title,scopes=excluded.scopes,refresh_enc=excluded.refresh_enc,key_version=excluded.key_version,grant_id=excluded.grant_id WHERE subject=excluded.subject AND channel_id=excluded.channel_id AND grant_id IS ?`
         )
         .bind(
           user,
@@ -618,7 +620,7 @@ export function youtubeRoutes(app: Hono<any>) {
           t.scope,
           await encrypt(env, refresh),
           currentVersion(env),
-          Date.now()
+          Date.now(), t.refresh_token || !old ? crypto.randomUUID() : old.grant_id, old?.grant_id ?? null
         )
         .run()
 
@@ -1090,15 +1092,17 @@ export function youtubeRoutes(app: Hono<any>) {
       }),
     })
 
-    if (!res.ok && res.status !== 400)
+    const alreadyInvalid = res.status === 400 && (await res.json<{error?:string}>().catch(() => null))?.error === "invalid_token"
+    if (!res.ok && !alreadyInvalid)
       return c.json(
         { error: "Google could not confirm disconnection. Try again." },
         502
       )
-    await env
-      .DB!.prepare("DELETE FROM youtube_accounts WHERE user_id=?")
-      .bind(a.user_id)
+    const deleted = await env
+      .DB!.prepare("DELETE FROM youtube_accounts WHERE user_id=? AND grant_id=?")
+      .bind(a.user_id,a.grant_id)
       .run()
+    if (!deleted.meta.changes) return c.json({ error: "The channel connection changed. Review it before disconnecting again." }, 409)
 
     return c.json({ ok: true })
   })
