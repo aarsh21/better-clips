@@ -182,3 +182,4 @@ bool save_settings(const R2Config &next, const YouTubeSettings &account);
 void refresh_youtube_account();
 QString plugin_startup_notice();
 bool plugin_disabled();
+bool s3_delete_object(const R2Config &config, const std::string &key, std::string &error);

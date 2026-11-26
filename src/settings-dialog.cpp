@@ -26,6 +26,7 @@
 #include <QRadioButton>
 #include <QStackedWidget>
 #include <QUrl>
+#include <QUuid>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -67,17 +68,30 @@ void open_faq(std::string app_url)
 	QDesktopServices::openUrl(QUrl(QString::fromStdString(app_url + "/faq")));
 }
 
-/* The same check as Test Upload. With S3, uploads a small text file. */
-bool test_connection(const R2Config &config, std::string &where, std::string &error)
+bool test_connection(Destination to, const R2Config &config, std::string &error)
 {
-	if (!config.app_url.empty()) {
-		where = config.app_url;
+	if (to == Destination::ClipsApp) {
+		if (config.app_url.empty()) {
+			error = "Enter your Better Clips app URL or paste a setup code.";
+			return false;
+		}
 		return app_check(config, error);
 	}
-	where = object_key(config, "better-clips-test.txt");
-	const std::string text = "Better Clips for OBS can upload to this bucket.\n";
-	std::vector<uint8_t> body(text.begin(), text.end());
-	return s3_put_object(config, where, body, "text/plain", error);
+	const auto key = object_key(config, "better-clips-test-" +
+						    QUuid::createUuid().toString(QUuid::Id128).toStdString() + ".txt");
+	if (!s3_put_object(config, key, {'O', 'B', 'S'}, "text/plain", error))
+		return false;
+	if (!s3_delete_object(config, key, error)) {
+		error = "Wrote the test object but couldn't remove " + key + ": " + error;
+		return false;
+	}
+	return true;
+}
+
+QString test_success(Destination to)
+{
+	return to == Destination::ClipsApp ? "Better Clips app: storage check passed."
+					   : "S3: wrote and deleted a test object.";
 }
 
 /* Visibility choices, in YouTube's words. */
@@ -534,7 +548,12 @@ public:
 		});
 		connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 		connect(test, &QPushButton::clicked, this, [this]() { run_test(); });
-		connect(destination, &QComboBox::currentIndexChanged, this, [this]() { show_destination(); });
+		connect(destination, &QComboBox::currentIndexChanged, this, [this]() {
+			invalidate_test();
+			show_destination();
+		});
+		for (auto *field : {app_url, upload_token, s3_url, access_key, secret_key, folder, public_url})
+			connect(field, &QLineEdit::textChanged, this, [this] { invalidate_test(); });
 
 		auto *faq = new QLabel("<a href=\"faq\">Questions? Read the FAQ</a>");
 		connect(faq, &QLabel::linkActivated, this, [this]() { open_faq(faq_app()); });
@@ -563,6 +582,13 @@ private:
 	QCheckBox *start_replay;
 	QLabel *help, *status;
 	QPushButton *paste, *test;
+	unsigned test_generation = 0;
+	void invalidate_test()
+	{
+		++test_generation;
+		status->clear();
+		test->setEnabled(true);
+	}
 
 	Destination chosen() const { return Destination(destination->currentData().toInt()); }
 
@@ -644,26 +670,22 @@ private:
 	void run_test()
 	{
 		R2Config config = current();
-		/* Test the bucket that's chosen, even when a Better Clips app is filled in. */
-		if (chosen() == Destination::S3) {
-			config.app_url.clear();
-			config.upload_token.clear();
-		}
+		const auto to = chosen();
+		const auto generation = ++test_generation;
 		test->setEnabled(false);
 		status->setText("Testing...");
 
 		QPointer<SettingsDialog> self(this);
 		tests_running++;
-		std::thread([config, self]() {
-			std::string where, error;
-			bool ok = test_connection(config, where, error);
-			QString message =
-				ok ? QString("Test worked: clips will upload to %1").arg(QString::fromStdString(where))
-				   : QString("Test failed: %1").arg(QString::fromStdString(error));
+		std::thread([config, self, to, generation]() {
+			std::string error;
+			bool ok = test_connection(to, config, error);
+			QString message = ok ? test_success(to)
+					     : QString("Test failed: %1").arg(QString::fromStdString(error));
 			QMetaObject::invokeMethod(
 				qApp,
-				[self, message]() {
-					if (!self)
+				[self, message, generation]() {
+					if (!self || self->test_generation != generation)
 						return;
 					self->status->setText(message);
 					self->test->setEnabled(true);
@@ -783,14 +805,18 @@ bool apply_setup_code(const std::string &text, R2Config &config)
 
 void check_connection_async(const R2Config &config)
 {
+	const auto to = get_youtube_settings().destination;
 	tests_running++;
-	std::thread([config]() {
-		std::string where, error;
-		if (test_connection(config, where, error))
-			notify_user("Better Clips: connected to " + where +
-				    ". Press your Save Replay and Upload hotkey to save a clip.");
-		else
-			notify_user("Better Clips: could not connect (" + error + ")");
+	std::thread([config, to]() {
+		std::string error;
+		bool ok = test_connection(to, config, error);
+		const auto now = get_config();
+		if (get_youtube_settings().destination == to && now.app_url == config.app_url &&
+		    now.upload_token == config.upload_token && now.s3_url == config.s3_url &&
+		    now.access_key == config.access_key && now.secret_key == config.secret_key &&
+		    now.folder == config.folder)
+			notify_user(ok ? test_success(to).toStdString()
+				       : "Better Clips: storage check failed (" + error + ")");
 		tests_running--;
 	}).detach();
 }
