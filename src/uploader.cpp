@@ -30,6 +30,7 @@ std::atomic<bool> stopping{false};
 std::thread worker;
 std::thread disk_worker;
 QObject *processing = nullptr; /* UI-thread owner of processing timers and requests */
+void (*upload_succeeded)(Destination) = nullptr;
 
 /* Seconds to wait before each retry; the clip only lives in memory, so try
  * for a couple of minutes before giving up. */
@@ -171,12 +172,14 @@ void upload_clip(Clip &clip)
 			error = "OBS is closing";
 			break;
 		}
-		bool uploaded = yt ? youtube_upload(clip, details, mp4, session, link, error, stopping)
+		bool uploaded = yt ? youtube_upload(clip, details, mp4, session, link, error, stopping, processing)
 				: via_app
 					? app_upload(clip.config, clip.name, mp4, key, error, receipt,
 						     session.permanent_failure, stopping)
 					: s3_upload(clip.config, key, mp4, error, session.permanent_failure, stopping);
 		if (uploaded) {
+			if (upload_succeeded)
+				upload_succeeded(clip.youtube.destination);
 			auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 					  std::chrono::steady_clock::now() - upload_start)
 					  .count();
@@ -238,6 +241,11 @@ void run(std::deque<std::unique_ptr<Clip>> &clips, void (*handle)(Clip &))
 }
 
 } // namespace
+
+void set_upload_success_handler(void (*handler)(Destination))
+{
+	upload_succeeded = handler;
+}
 
 void uploader_start()
 {

@@ -165,3 +165,8 @@ struct MultipartReceipt {
 };
 bool app_upload(const R2Config &config, const std::string &name, const std::vector<uint8_t> &mp4, std::string &key,
 		std::string &error, MultipartReceipt &receipt, bool &permanent, const std::atomic<bool> &stop);
+
+bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::vector<uint8_t> &mp4,
+		    YouTubeSession &session, std::string &link, std::string &error, const std::atomic<bool> &stopping,
+		    QObject *owner);
+void set_upload_success_handler(void (*handler)(Destination));

@@ -15,6 +15,19 @@ QString text(const std::string &s)
 }
 
 using namespace youtube_http;
+void unpaired(const std::string &token)
+{
+	auto current = get_youtube_settings();
+	if (current.route != YouTubeRoute::ClipsApp || token.empty() || current.upload_token != token)
+		return;
+	current.upload_token.clear();
+	current.channel_title.clear();
+	current.channel_id.clear();
+	set_youtube_settings(current);
+	notify_user(
+		"Better Clips: this OBS isn't connected to YouTube any more. Open Tools → Better Clips Settings → YouTube to reconnect.");
+}
+
 Request request(const QUrl &url, const QByteArray &bearer, const QByteArray &range, const QByteArray &body,
 		qint64 upload_size = -1)
 {
@@ -51,6 +64,13 @@ std::string youtube_title(const std::string &title_template, const std::string &
 
 bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::vector<uint8_t> &mp4,
 		    YouTubeSession &session, std::string &link, std::string &error, const std::atomic<bool> &stopping)
+{
+	return youtube_upload(clip, details, mp4, session, link, error, stopping, nullptr);
+}
+
+bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::vector<uint8_t> &mp4,
+		    YouTubeSession &session, std::string &link, std::string &error, const std::atomic<bool> &stopping,
+		    QObject *owner)
 {
 	std::string diagnostic;
 	auto transfer = [&](const Request &req) {
@@ -109,9 +129,13 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		return status / 100 != 2;
 	};
 	auto app = [&](const char *path, QJsonObject data) {
-		return transfer(request(QUrl(text(clip.youtube.app_url)).resolved(QUrl(path)),
-					QByteArray::fromStdString(clip.youtube.upload_token), {},
-					QJsonDocument(data).toJson(QJsonDocument::Compact)));
+		auto reply = transfer(request(QUrl(text(clip.youtube.app_url)).resolved(QUrl(path)),
+					      QByteArray::fromStdString(clip.youtube.upload_token), {},
+					      QJsonDocument(data).toJson(QJsonDocument::Compact)));
+		if (owner && reply.status == 401 && reply.code == CURLE_OK)
+			QMetaObject::invokeMethod(
+				owner, [token = clip.youtube.upload_token] { unpaired(token); }, Qt::QueuedConnection);
+		return reply;
 	};
 	error.clear();
 	bool query = !session.url.empty();
@@ -238,6 +262,8 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 							status = "failed";
 					}
 					const auto http = reply.code == CURLE_OK ? reply.status : 0;
+					if (!direct && http == 401)
+						unpaired(token);
 					if (http == 200 && status == "ready")
 						notify_user("YouTube: " + title + " is ready to play.");
 					else if (http == 200 && status == "failed")
