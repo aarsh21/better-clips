@@ -264,11 +264,6 @@ void uploader_stop()
 
 void uploader_enqueue(Clip *clip)
 {
-	/* Read now, so a failed upload lands where this profile records. */
-	if (char *dir = obs_frontend_get_current_record_output_path()) {
-		clip->save_dir = dir;
-		bfree(dir);
-	}
 	{
 		std::lock_guard<std::mutex> lock(mutex);
 		if (queue.size() < MAX_QUEUED) {

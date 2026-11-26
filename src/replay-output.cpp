@@ -19,6 +19,7 @@
 #include <atomic>
 #include <ctime>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -38,13 +39,18 @@ struct ReplayR2 {
 	int64_t max_size_bytes = 0;
 
 	std::atomic<bool> active{false};
-	std::atomic<int64_t> save_ts{0};       /* save once a packet reaches this sys time */
-	std::atomic<time_t> save_wall_time{0}; /* for the file name */
-	std::string save_scene;                /* for the file name, guarded by mutex */
+	struct Save {
+		int64_t timestamp;
+		std::unique_ptr<Clip> clip;
+	};
+	std::deque<Save> pending;
 };
 
 void clear(ReplayR2 *r)
 {
+	for (const auto &save : r->pending)
+		notify_user("Better Clips: buffer stopped before " + save.clip->name + " could be saved.");
+	r->pending.clear();
 	for (encoder_packet &pkt : r->packets)
 		obs_encoder_packet_release(&pkt);
 	r->packets.clear();
@@ -205,16 +211,8 @@ std::string clip_name(time_t wall_time, const std::string &scene)
 
 /* Copies the buffer into a clip with timestamps starting at zero, sorted by
  * dts_usec, as replay_buffer_save() does in obs-ffmpeg-mux.c. */
-Clip *snapshot(ReplayR2 *r)
+void snapshot(ReplayR2 *r, Clip *clip)
 {
-	Clip *clip = new Clip();
-	clip->config = get_config();
-	clip->youtube = get_youtube_settings();
-	clip->game = r->save_scene;
-	clip->recorded_at = r->save_wall_time;
-
-	clip->name = clip_name(r->save_wall_time, r->save_scene);
-
 	fill_video_track(clip->video, obs_output_get_video_encoder(r->output));
 	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
 		obs_encoder_t *encoder = obs_output_get_audio_encoder(r->output, i);
@@ -273,7 +271,6 @@ Clip *snapshot(ReplayR2 *r)
 	}
 	std::stable_sort(clip->packets.begin(), clip->packets.end(),
 			 [](const encoder_packet &a, const encoder_packet &b) { return a.dts_usec < b.dts_usec; });
-	return clip;
 }
 
 const char *get_name(void *)
@@ -349,7 +346,6 @@ bool start(void *data)
 	if (!obs_output_initialize_encoders(r->output, 0))
 		return false;
 
-	r->save_ts = 0;
 	r->active = true;
 	obs_output_begin_data_capture(r->output, 0);
 	return true;
@@ -372,12 +368,18 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 
 	if (!packet) { /* encoder failure */
 		r->active = false;
+		{
+			std::lock_guard<std::mutex> lock(r->mutex);
+			clear(r);
+		}
 		obs_output_signal_stop(r->output, OBS_OUTPUT_ENCODE_ERROR);
 		return;
 	}
 
 	std::lock_guard<std::mutex> lock(r->mutex);
 
+	if (!r->active)
+		return;
 	/* We may have joined the shared encoder mid-GOP: start on a keyframe. */
 	bool is_keyframe = packet->type == OBS_ENCODER_VIDEO && packet->keyframe;
 	if (r->packets.empty() && !is_keyframe)
@@ -394,10 +396,11 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 	if (is_keyframe)
 		r->keyframes.push_back(pkt.dts_usec);
 
-	int64_t save_ts = r->save_ts;
-	if (save_ts && packet->sys_dts_usec >= save_ts) {
-		r->save_ts = 0;
-		uploader_enqueue(snapshot(r));
+	while (!r->pending.empty() && packet->sys_dts_usec >= r->pending.front().timestamp) {
+		auto clip = std::move(r->pending.front().clip);
+		r->pending.pop_front();
+		snapshot(r, clip.get());
+		uploader_enqueue(clip.release());
 	}
 }
 
@@ -406,8 +409,19 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 void replay_r2_request_save(obs_output_t *output)
 {
 	ReplayR2 *r = (ReplayR2 *)obs_obj_get_data(output);
-	if (!r || !r->active)
+	if (!r || !r->active) {
+		notify_user("Better Clips: the replay buffer stopped. This save was declined.");
 		return;
+	}
+	const auto timestamp = static_cast<int64_t>(os_gettime_ns() / 1000);
+	auto clip = std::make_unique<Clip>();
+	clip->recorded_at = time(nullptr);
+	clip->config = get_config();
+	clip->youtube = get_youtube_settings();
+	if (char *dir = obs_frontend_get_current_record_output_path()) {
+		clip->save_dir = dir;
+		bfree(dir);
+	}
 	/* The clip's category: the app you're using, usually the game, or
 	 * else the scene on screen now; the program output is a transition,
 	 * whose active source is the current scene. */
@@ -423,12 +437,14 @@ void replay_r2_request_save(obs_output_t *output)
 		}
 		obs_source_release(program);
 	}
-	{
-		std::lock_guard<std::mutex> lock(r->mutex);
-		r->save_scene = scene;
+	clip->game = scene;
+	clip->name = clip_name(clip->recorded_at, scene);
+	std::lock_guard<std::mutex> lock(r->mutex);
+	if (!r->active || r->packets.empty()) {
+		notify_user("Better Clips: no replay frames available yet. This save was declined.");
+		return;
 	}
-	r->save_wall_time = time(nullptr);
-	r->save_ts = (int64_t)(os_gettime_ns() / 1000);
+	r->pending.push_back({timestamp, std::move(clip)});
 }
 
 void register_replay_r2_output()
