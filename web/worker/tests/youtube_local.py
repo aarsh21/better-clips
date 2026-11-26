@@ -809,9 +809,24 @@ def exercise():
         "category": "Game",
         "recordedAt": "2026-11-25T00:00:00Z",
     }
-    for invalid in ({}, {"madeForKids": None}, {"madeForKids": "false"}):
-        details = {k: v for k, v in metadata.items() if k != "madeForKids"}
-        call("/api/youtube/upload/start", "POST", {**details, **invalid}, 400, token)
+    legacy = {k: v for k, v in metadata.items() if k != "madeForKids"}
+    start = "/api/youtube/upload/start"
+    audience_url = "/api/youtube/audience"
+    assert call("/api/me")["youtube"]["defaultMadeForKids"] is None
+    before = len(sessions)
+    error = call(start, "POST", legacy, 422, token)["error"]
+    assert "clips.zabimaru.me" in error and "Settings → YouTube" in error and "update Better Clips" in error
+    assert len(sessions) == before
+    for value in [True, False]:
+        call(audience_url, "PUT", {"madeForKids": value})
+        assert call("/api/me")["youtube"]["defaultMadeForKids"] is value
+        for request, expected in [(legacy, value), ({**legacy, "madeForKids": not value}, not value)]:
+            opened = call(start, "POST", request, bearer=token)
+            assert sessions[urlsplit(opened["sessionUrl"]).path]["meta"]["status"]["selfDeclaredMadeForKids"] is expected
+    for invalid in [None, "false", 0]:
+        call(audience_url, "PUT", {"madeForKids": invalid}, 400)
+        call(start, "POST", {**legacy, "madeForKids": invalid}, 400, token)
+    print("Legacy upload: missing choice returns actionable 422; both account defaults and opposite plugin overrides reach insert")
     quota = True
     assert (
         "limit"

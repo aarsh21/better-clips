@@ -315,6 +315,7 @@ export type Me =
       youtube?: {
         channelId: string
         channelTitle: string
+        defaultMadeForKids: boolean | null
         devices: { id: string; lastSeen: number | null }[]
         clipCount: number
         cutPointCount: number
@@ -495,6 +496,12 @@ export const api = {
     }),
   deleteYouTube: (id: string) =>
     request<{ ok?: boolean }>(youtubeClip(id), { method: "DELETE" }),
+  setYouTubeAudience: (madeForKids: boolean) =>
+    request<{ ok: true }>("/api/youtube/audience", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ madeForKids }),
+    }),
   disconnectYouTube: () =>
     request<{ ok?: boolean }>("/api/youtube/disconnect", { method: "POST" }),
   removeDevice: (id: string) =>

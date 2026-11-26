@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button-variants"
 import { Skeleton } from "@/components/ui/skeleton"
 import { YOUTUBE_RED } from "@/components/youtube"
+import { YouTubeAudience } from "@/components/youtube-audience"
 import { api, youtubeConnectUrl } from "@/lib/api"
 import { useAccount, useMe } from "@/lib/settings"
 
@@ -139,6 +140,7 @@ function ConnectedChannel({
         </div>
         <CheckIcon className="ml-auto size-4 shrink-0 text-emerald-500" />
       </div>
+      <YouTubeAudience />
       <section className="flex flex-col gap-2">
         <h3 className="font-medium">Paired OBS devices</h3>
         {devices.length === 0 && (

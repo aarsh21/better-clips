@@ -37,6 +37,7 @@ import { buttonVariants } from "@/components/ui/button-variants"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { YOUTUBE_RED, YouTubeObsSteps } from "@/components/youtube"
+import { YouTubeAudience } from "@/components/youtube-audience"
 import {
   api,
   bucketBytes,
@@ -267,6 +268,7 @@ function Library() {
       />
 
       <main className="mx-auto max-w-[1600px] px-4 pt-4 pb-24 sm:px-6">
+        <YouTubeAudience prompt />
         {notice && (
           <p
             role="status"

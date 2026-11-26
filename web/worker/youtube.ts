@@ -49,6 +49,7 @@ type Account = {
   grant_id: string
   sync_failed: number
   had_clips: number
+  default_made_for_kids: number | null
   subject: string
   channel_id: string
   channel_title: string
@@ -115,6 +116,7 @@ export async function youtubeInfo(env: HostedEnv, user: string) {
     a && {
       channelId: a.channel_id,
       channelTitle: a.channel_title,
+      defaultMadeForKids: accountAudience(a),
       devices: (
         await env
           .DB!.prepare(
@@ -507,6 +509,9 @@ const isText = (value: unknown): value is string => typeof value === "string"
 const isAudience = (value: unknown): value is boolean =>
   value === true || value === false
 
+const accountAudience = (a: Account) =>
+  a.default_made_for_kids === null ? null : a.default_made_for_kids === 1
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- untrusted request field
 const titleOk = (v: unknown) =>
   isText(v) && !!v.trim() && [...v].length <= 100 && !/[<>]/.test(v)
@@ -822,6 +827,24 @@ export function youtubeRoutes(app: Hono<any>) {
       ? c.json({ unpaired: true })
       : c.json({ error: "Device is no longer paired." }, 404)
   })
+  app.put(path + "/audience", async (c) => {
+    const env: HostedEnv = c.env
+    const { madeForKids } = await c.req.json()
+
+    if (!isAudience(madeForKids))
+      return c.json({ error: "Choose Yes or No." }, 400)
+
+    const saved = await env
+      .DB!.prepare(
+        "UPDATE youtube_accounts SET default_made_for_kids=? WHERE user_id=?"
+      )
+      .bind(Number(madeForKids), c.get("who").userId)
+      .run()
+
+    return saved.meta.changes
+      ? c.json({ ok: true })
+      : c.json({ error: reconnect }, 404)
+  })
   app.post(path + "/upload/start", async (c) => {
     const env: HostedEnv = c.env,
       a = await obs(c)
@@ -832,11 +855,20 @@ export function youtubeRoutes(app: Hono<any>) {
       title,
       description,
       privacy,
-      madeForKids,
+      madeForKids = accountAudience(a) ?? undefined,
       size,
       category,
       recordedAt,
     } = await c.req.json()
+
+    if (madeForKids === undefined)
+      return c.json(
+        {
+          error:
+            "Choose whether your clips are made for kids at clips.zabimaru.me → Settings → YouTube, or update Better Clips.",
+        },
+        422
+      )
 
     if (
       !titleOk(title) ||
