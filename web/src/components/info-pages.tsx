@@ -206,8 +206,10 @@ export function Faq() {
             tick every box.
           </p>
           <p>
-            In direct mode, OBS asks only to upload videos and to view your
-            YouTube account, since it never renames or deletes them.
+            Direct OBS uploads need permission to upload videos and view your
+            channel and processing status. Version 0.4.0 also requests your
+            Google account ID and email, but does not use them. Direct OBS does
+            not ask to edit or delete your existing videos.
           </p>
         </Q>
         <Q q="Does OBS hold my Google token?">
@@ -232,11 +234,12 @@ export function Faq() {
               token.
             </li>
             <li>
-              <b>In OBS</b>: <b>Disconnect</b> on the YouTube page of{" "}
-              <b>Tools → Better Clips Settings</b>. Through the Better Clips
-              app, this also removes the app&apos;s access. If OBS says your
-              channel is still connected to the Better Clips app, disconnect it
-              in the app. In direct mode, OBS gives up its own access.
+              <b>In OBS</b>: on the YouTube page of{" "}
+              <b>Tools → Better Clips Settings</b>,<b> Unpair this OBS</b>{" "}
+              disconnects only this device. Use
+              <b> Remove channel from app…</b> to disconnect the hosted channel
+              everywhere. In direct mode, <b>Disconnect</b> revokes the Google
+              grant and clears the connection on this computer.
             </li>
             <li>
               <b>Any time</b>: remove the app in{" "}
@@ -249,8 +252,11 @@ export function Faq() {
         </Q>
         <Q q="What happens to my clips when I disconnect?">
           <p>
-            They leave your Better Clips library, but the videos stay on your
-            YouTube channel.
+            Removing a hosted channel removes its library entries and cut
+            points. Unpairing one device does not. Revoking the Google grant can
+            disconnect both routes for the same account. Your videos stay on
+            YouTube. For full account deletion, see the{" "}
+            <Link href="/privacy">privacy policy</Link>.
           </p>
         </Q>
       </Section>
@@ -321,11 +327,11 @@ export function Privacy() {
         <>
           <p>
             This covers the hosted Better Clips app at clips.zabimaru.me and the
-            Better Clips plugin for OBS. A self-hosted Better Clips app runs in
-            your own Cloudflare account, and its data stays there. Questions?
-            Read the <Link href="/faq">FAQ</Link>.
+            Better Clips plugin for OBS. If you self-host, the web app and its
+            storage run in your own Cloudflare account. Questions? Read the{" "}
+            <Link href="/faq">FAQ</Link>.
           </p>
-          <p className="mt-2">Last updated 25 November 2026.</p>
+          <p className="mt-2">Last updated 26 November 2026.</p>
         </>
       }
     >
@@ -372,9 +378,12 @@ export function Privacy() {
         </Q>
         <Q q="Sharing">
           <p>
-            Better Clips doesn&apos;t sell or share your data, and doesn&apos;t
-            use it for ads. Better Clips&apos; use and transfer of information
-            received from Google APIs adheres to the{" "}
+            Cloudflare runs the hosted app and stores its account and library
+            records. Google receives the channel requests, video files and
+            metadata needed for the YouTube features you choose. OBS sends the
+            video file directly to YouTube on both YouTube routes. Better Clips
+            does not sell Google data or use it for ads. Its use and transfer of
+            information received from Google APIs adheres to the{" "}
             <Link href={USER_DATA_POLICY}>
               Google API Services User Data Policy
             </Link>
@@ -397,21 +406,55 @@ export function Privacy() {
             Google. It never reaches Better Clips&apos; servers.
           </p>
         </Q>
+        <Q q="Cookies and playback">
+          <p>
+            We use cookies to complete sign-in and keep you signed in. Your
+            browser remembers preferences such as your theme. When a YouTube
+            thumbnail or player loads, Google receives information such as your
+            IP address and site origin. Opening a clip can start playback.
+            Google may use cookies, collect playback information and show ads
+            under its own policy.
+          </p>
+        </Q>
       </Section>
 
       <Section title="Your choices">
+        <Q q="How long is data kept?">
+          <p>
+            The hosted app keeps your sign-in ID and email for the life of the
+            account. While your channel is connected it keeps its Google token,
+            paired devices and clip records. It schedules a channel and video
+            refresh after six days, with retries if Google is unavailable.
+            Direct OBS keeps the channel details and Google token in the plugin
+            settings until you disconnect or it detects loss of access.
+          </p>
+        </Q>
         <Q q="Removing access">
           <p>
             Click <b>Disconnect YouTube</b> in <b>Settings → YouTube</b>, or
             remove Better Clips in{" "}
-            <Link href={GOOGLE_PERMISSIONS}>your Google Account</Link>.
-            Disconnecting deletes the stored token and Better Clips&apos;
-            library entries for your YouTube clips. The videos stay on YouTube.
+            <Link href={GOOGLE_PERMISSIONS}>your Google Account</Link>. A
+            successful hosted disconnect removes its YouTube token, paired
+            devices, library entries and cut points. If you revoke at Google,
+            the app removes these records when it detects the revoked grant.
+            Google revocation affects both routes for the same Google account.
+            Disconnect direct OBS to clear its local connection. The videos stay
+            on YouTube; delete them in YouTube Studio if you want them removed
+            there too.
           </p>
         </Q>
-        <Q q="Contact">
+        <Q q="Delete your hosted account or ask a privacy question">
           <p>
-            Open an issue on <Link href={ISSUES}>GitHub</Link>.
+            Disconnecting YouTube does not erase your hosted sign-in account. To
+            delete it, email{" "}
+            <Link href="mailto:aarshpersonal@proton.me">
+              aarshpersonal@proton.me
+            </Link>{" "}
+            from your sign-in address with the subject “Delete my Better Clips
+            account”. We verify your request before removing the remaining
+            sign-in ID, email and hosted account records. This does not delete
+            videos on YouTube or files in your own bucket. Use the same address
+            for privacy questions. Do not send passwords or tokens.
           </p>
         </Q>
       </Section>
