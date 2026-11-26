@@ -183,3 +183,7 @@ void refresh_youtube_account();
 QString plugin_startup_notice();
 bool plugin_disabled();
 bool s3_delete_object(const R2Config &config, const std::string &key, std::string &error);
+void set_upload_success_handler(void (*handler)(Destination));
+void record_destination_success(Destination to, bool upload);
+QString destination_setup_action();
+void retry_plugin_buffer();

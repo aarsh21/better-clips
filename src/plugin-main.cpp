@@ -323,7 +323,13 @@ void stop_replay_output()
 void on_save_hotkey(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 {
 	if (pressed)
-		save_replay_to_r2();
+		QMetaObject::invokeMethod(
+			qApp,
+			[] {
+				if (ui_alive)
+					save_replay_to_r2();
+			},
+			Qt::AutoConnection);
 }
 
 void on_frontend_event(enum obs_frontend_event event, void *)
@@ -395,23 +401,41 @@ bool plugin_disabled()
 	return !initialized;
 }
 
-void save_replay_to_r2()
+QString destination_setup_action()
 {
-	if (!replay_r2_running()) {
-		notify_user("Better Clips: start the Replay Buffer first");
-		return;
-	}
 	R2Config current = get_config();
 	auto yt = get_youtube_settings();
 	if (yt.destination == Destination::YouTube &&
 	    (yt.route == YouTubeRoute::Direct ? !youtube_direct_available() || yt.refresh_token.empty()
-					      : yt.app_url.empty() || yt.upload_token.empty())) {
-		notify_user("Sign in with YouTube in Tools > Better Clips Settings");
+					      : yt.app_url.empty() || yt.upload_token.empty()))
+		return "Connect YouTube";
+	if (yt.destination == Destination::S3 &&
+	    (current.s3_url.empty() || current.access_key.empty() || current.secret_key.empty()))
+		return "Set up S3";
+	if (yt.destination == Destination::ClipsApp && (current.app_url.empty() || current.upload_token.empty()))
+		return "Connect Better Clips app";
+	return {};
+}
+
+void retry_plugin_buffer()
+{
+	if (obs_frontend_replay_buffer_active() && !replay_r2_running())
+		start_replay_output();
+	if (!replay_r2_running())
+		notify_user("Better Clips buffer could not start. Check the OBS log for the encoder error.");
+}
+
+void save_replay_to_r2()
+{
+	if (!replay_r2_running()) {
+		notify_user(obs_frontend_replay_buffer_active()
+				    ? "Better Clips buffer is stopped. Retry it in the Better Clips dock."
+				    : "Better Clips: start the Replay Buffer first");
 		return;
 	}
-	if ((yt.destination == Destination::ClipsApp && current.app_url.empty()) ||
-	    (yt.destination == Destination::S3 && current.s3_url.empty())) {
-		notify_user("Better Clips: connect your Better Clips app in Tools > Better Clips Settings");
+	const auto action = destination_setup_action();
+	if (!action.isEmpty()) {
+		notify_user(action.toStdString() + " in Tools > Better Clips Settings");
 		return;
 	}
 	replay_r2_request_save(replay_output);
@@ -554,6 +578,7 @@ void obs_module_post_load(void)
 	create_save_dock();
 
 	start_youtube_reviews();
+	set_upload_success_handler([](Destination to) { record_destination_success(to, true); });
 	uploader_start();
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 }

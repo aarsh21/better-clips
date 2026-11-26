@@ -16,6 +16,8 @@ the Free Software Foundation; either version 2 of the License, or
 
 #include <obs-frontend-api.h>
 
+#include <QApplication>
+#include <QTime>
 #include <QDockWidget>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -28,6 +30,13 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QVBoxLayout>
 
 namespace {
+
+QString last_success = "No upload or test yet this session";
+
+const char *destination_name(Destination to)
+{
+	return to == Destination::S3 ? "S3" : to == Destination::YouTube ? "YouTube" : "Better Clips app";
+}
 
 const char *dock_id()
 {
@@ -80,10 +89,14 @@ public:
 		message->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		message->setStyleSheet("color: palette(placeholder-text);");
 		message->setText(plugin_startup_notice());
+		message->setTextFormat(Qt::PlainText);
+		readiness = new QLabel();
+		readiness->setWordWrap(true);
 
 		auto *layout = new QVBoxLayout(this);
 		layout->addWidget(save);
 		layout->addLayout(row);
+		layout->addWidget(readiness);
 		layout->addWidget(message);
 		layout->addStretch(1);
 
@@ -95,22 +108,26 @@ public:
 
 	void refresh()
 	{
-		bool running = obs_frontend_replay_buffer_active();
+		bool host = obs_frontend_replay_buffer_active();
+		bool running = replay_r2_running();
 		auto yt = get_youtube_settings();
 		bool youtube = yt.destination == Destination::YouTube;
-		bool direct = yt.route == YouTubeRoute::Direct;
 		bool s3 = yt.destination == Destination::S3;
 		/* The Better Clips app keeps clips in R2; an S3 bucket may be anywhere. */
-		save->setText(!running  ? "Start Replay Buffer"
-			      : youtube ? "Save Replay to YouTube"
-			      : s3      ? "Save Replay to S3"
-					: "Save Replay to R2");
-		save->setToolTip(
-			!running   ? "Starts OBS's Replay Buffer so you can save clips"
-			: s3       ? "Uploads the last few seconds to your S3 bucket"
-			: !youtube ? "Uploads the last few seconds to your Better Clips app"
-			: direct   ? "Uploads the last few seconds straight to your YouTube channel"
-				   : "Uploads the last few seconds to your YouTube channel, through Better Clips");
+		const auto setup = destination_setup_action();
+		save->setText(!host              ? "Start Replay Buffer"
+			      : !running         ? "Retry Better Clips Buffer"
+			      : !setup.isEmpty() ? setup
+			      : youtube          ? "Save Replay to YouTube"
+			      : s3               ? "Save Replay to S3"
+						 : "Save Replay to R2");
+		readiness->setText(QString("OBS buffer: %1 · Better Clips: %2\n%3: %4\n%5")
+					   .arg(host ? "running" : "off", running ? "running" : "off",
+						destination_name(yt.destination),
+						!setup.isEmpty() ? "not configured"
+						: youtube        ? "paired"
+								 : "configured",
+						last_success));
 
 		int seconds = get_replay_seconds();
 		if (seconds > 0 && !length->hasFocus() && length->value() != seconds) {
@@ -134,12 +151,17 @@ public:
 private:
 	QPushButton *save;
 	QSpinBox *length;
-	QLabel *message;
+	QLabel *message, *readiness;
 
 	void on_click()
 	{
 		if (obs_frontend_replay_buffer_active()) {
-			save_replay_to_r2();
+			if (!replay_r2_running())
+				retry_plugin_buffer();
+			else if (!destination_setup_action().isEmpty())
+				show_settings_dialog();
+			else
+				save_replay_to_r2();
 			return;
 		}
 		obs_output_t *output = obs_frontend_get_replay_buffer_output();
@@ -167,6 +189,19 @@ void update_save_dock()
 {
 	if (dock)
 		dock->refresh();
+}
+
+void record_destination_success(Destination to, bool upload)
+{
+	QMetaObject::invokeMethod(
+		qApp,
+		[to, upload] {
+			last_success = QString("Last success: %1 %2 at %3")
+					       .arg(destination_name(to), upload ? "upload" : "test",
+						    QTime::currentTime().toString("HH:mm"));
+			update_save_dock();
+		},
+		Qt::QueuedConnection);
 }
 
 void place_save_dock()

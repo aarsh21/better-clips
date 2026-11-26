@@ -684,9 +684,11 @@ private:
 					     : QString("Test failed: %1").arg(QString::fromStdString(error));
 			QMetaObject::invokeMethod(
 				qApp,
-				[self, message, generation]() {
+				[self, message, generation, ok, to]() {
 					if (!self || self->test_generation != generation)
 						return;
+					if (ok)
+						record_destination_success(to, false);
 					self->status->setText(message);
 					self->test->setEnabled(true);
 				},
@@ -814,9 +816,12 @@ void check_connection_async(const R2Config &config)
 		if (get_youtube_settings().destination == to && now.app_url == config.app_url &&
 		    now.upload_token == config.upload_token && now.s3_url == config.s3_url &&
 		    now.access_key == config.access_key && now.secret_key == config.secret_key &&
-		    now.folder == config.folder)
+		    now.folder == config.folder) {
+			if (ok)
+				record_destination_success(to, false);
 			notify_user(ok ? test_success(to).toStdString()
 				       : "Better Clips: storage check failed (" + error + ")");
+		}
 		tests_running--;
 	}).detach();
 }
