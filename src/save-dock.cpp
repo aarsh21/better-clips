@@ -29,12 +29,30 @@ the Free Software Foundation; either version 2 of the License, or
 
 namespace {
 
-constexpr const char *DOCK_ID = "ReplayR2Dock";
+const char *dock_id()
+{
+	return plugin_disabled() ? "BetterClipsRecoveryDock" : "ReplayR2Dock";
+}
 
 class SaveDock : public QWidget {
 public:
 	SaveDock()
 	{
+		if (plugin_disabled()) {
+			setMinimumWidth(250);
+			auto *notice = new QLabel(plugin_startup_notice());
+			notice->setTextFormat(Qt::PlainText);
+			notice->setTextInteractionFlags(Qt::TextSelectableByMouse);
+			notice->setWordWrap(true);
+			notice->setToolTip(plugin_startup_notice());
+			auto *details = new QPushButton("Recovery instructions");
+			connect(details, &QPushButton::clicked, this, show_settings_dialog);
+			auto *layout = new QVBoxLayout(this);
+			layout->addWidget(details);
+			layout->addWidget(notice);
+			layout->addStretch();
+			return;
+		}
 		save = new QPushButton();
 		save->setMinimumHeight(40);
 		QFont bold = save->font();
@@ -141,7 +159,7 @@ QPointer<SaveDock> dock;
 void create_save_dock()
 {
 	dock = new SaveDock();
-	if (!obs_frontend_add_dock_by_id(DOCK_ID, "Better Clips", dock))
+	if (!obs_frontend_add_dock_by_id(dock_id(), "Better Clips", dock))
 		delete dock;
 }
 
@@ -156,7 +174,7 @@ void place_save_dock()
 	auto *window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 	if (!window || !dock)
 		return;
-	auto *ours = window->findChild<QDockWidget *>(DOCK_ID);
+	auto *ours = window->findChild<QDockWidget *>(dock_id());
 	auto *controls = window->findChild<QDockWidget *>("controlsDock");
 	if (!ours || !controls || !controls->isVisible())
 		return;

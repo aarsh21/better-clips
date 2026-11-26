@@ -447,6 +447,18 @@ public:
 	{
 		setWindowTitle("Better Clips Settings");
 		setMinimumWidth(560);
+		if (plugin_disabled()) {
+			auto *notice = new QLabel(plugin_startup_notice());
+			notice->setTextFormat(Qt::PlainText);
+			notice->setWordWrap(true);
+			notice->setTextInteractionFlags(Qt::TextSelectableByMouse);
+			auto *layout = new QVBoxLayout(this);
+			layout->addWidget(notice);
+			auto *close = new QDialogButtonBox(QDialogButtonBox::Close);
+			connect(close, &QDialogButtonBox::rejected, this, &QDialog::reject);
+			layout->addWidget(close);
+			return;
+		}
 
 		R2Config config = get_config();
 		YouTubeSettings youtube = get_youtube_settings();

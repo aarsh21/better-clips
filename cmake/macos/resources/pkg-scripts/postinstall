@@ -19,4 +19,4 @@ if ! mv "$stage" "$plugin"; then
     [ ! -d "$backup" ] || mv "$backup" "$plugin"
     exit 1
 fi
-rm -rf "$plugins/obs-replay-r2.plugin"
+rm -rf "$plugins/obs-replay-r2.plugin" "$plugins/obs-replay-r2"

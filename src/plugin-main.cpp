@@ -30,6 +30,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QClipboard>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QSaveFile>
 #include <QMainWindow>
 #include <QMetaObject>
 #include <QStatusBar>
@@ -68,9 +70,25 @@ bool migrate_config()
 	const QFileInfo target(QString::fromStdString(config_path()));
 	const QDir dir = target.dir();
 	const QString legacy = QDir::cleanPath(dir.filePath("../obs-replay-r2/config.json"));
-	if (target.exists() || QFile::exists(target.filePath() + ".bak") || !QFile::exists(legacy))
-		return true;
-	return dir.mkpath(".") && QFile::copy(legacy, target.filePath());
+	bool found = false;
+	for (const QString &path : {target.filePath(), target.filePath() + ".bak", legacy, legacy + ".bak"}) {
+		QFile source(path);
+		if (!source.exists())
+			continue;
+		found = true;
+		if (!source.open(QIODevice::ReadOnly))
+			continue;
+		const auto bytes = source.readAll();
+		if (!QJsonDocument::fromJson(bytes).isObject())
+			continue;
+		if (path == target.filePath())
+			return true;
+		QSaveFile copy(target.filePath());
+		return dir.mkpath(".") && copy.open(QIODevice::WriteOnly) &&
+		       copy.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) &&
+		       copy.write(bytes) == bytes.size() && copy.commit();
+	}
+	return !found; // fresh install, not an unreadable previous configuration
 }
 
 void load_config()
@@ -310,6 +328,11 @@ void on_save_hotkey(void *, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 
 void on_frontend_event(enum obs_frontend_event event, void *)
 {
+	if (!initialized) {
+		if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING)
+			place_save_dock();
+		return;
+	}
 	switch (event) {
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
 		/* Until OBS has saved a layout with the dock in it, put it next
@@ -365,6 +388,11 @@ bool replay_r2_running()
 QString plugin_startup_notice()
 {
 	return startup_notice;
+}
+
+bool plugin_disabled()
+{
+	return !initialized;
 }
 
 void save_replay_to_r2()
@@ -499,16 +527,18 @@ bool obs_module_load(void)
 void obs_module_post_load(void)
 {
 	/* Wait until OBS has opened every module; either filename can load first. */
-	const char *problem = nullptr;
-	if (obs_get_module("obs-replay-r2"))
-		problem =
-			"Better Clips: remove the old obs-replay-r2 plugin and restart OBS. Better Clips is disabled.";
+	if (auto *legacy = obs_get_module("obs-replay-r2"))
+		startup_notice = QString("Better Clips is disabled. Remove the old plugin at %1 and restart OBS.")
+					 .arg(QString::fromUtf8(obs_get_module_binary_path(legacy)));
 	else if (!migrate_config())
-		problem =
-			"Better Clips: could not copy your previous settings. Check file permissions and restart OBS.";
-	if (problem) {
-		obs_log(LOG_WARNING, "%s", problem);
-		notify_user(problem);
+		startup_notice =
+			"Better Clips is disabled. Could not recover your previous settings. Check the config file and its permissions, then restart OBS.";
+	obs_frontend_add_tools_menu_item(
+		obs_module_text("ReplayR2.Settings"), [](void *) { show_settings_dialog(); }, nullptr);
+	obs_frontend_add_event_callback(on_frontend_event, nullptr);
+	if (!startup_notice.isEmpty()) {
+		obs_log(LOG_WARNING, "%s", startup_notice.toUtf8().constData());
+		create_save_dock();
 		return;
 	}
 	initialized = true;
@@ -520,10 +550,7 @@ void obs_module_post_load(void)
 	load_config();
 	apply_pending_setup_code();
 
-	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 	obs_frontend_add_save_callback(on_frontend_save, nullptr);
-	obs_frontend_add_tools_menu_item(
-		obs_module_text("ReplayR2.Settings"), [](void *) { show_settings_dialog(); }, nullptr);
 	create_save_dock();
 
 	start_youtube_reviews();
@@ -533,11 +560,11 @@ void obs_module_post_load(void)
 
 void obs_module_unload(void)
 {
+	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
 	if (!initialized)
 		return;
 	stop_youtube_reviews();
 	stop_youtube_disconnect();
-	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
 	obs_frontend_remove_save_callback(on_frontend_save, nullptr);
 	stop_replay_output();
 	uploader_stop();
