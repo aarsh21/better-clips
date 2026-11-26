@@ -160,7 +160,7 @@ void upload_clip(Clip &clip)
 		}
 	}
 	const bool via_app = clip.youtube.destination == Destination::ClipsApp;
-	std::string key = via_app ? clip.name : object_key(clip.config, clip.name);
+	std::string key = clip.youtube.destination == Destination::S3 ? object_key(clip.config, clip.name) : clip.name;
 	notify_user("Better Clips: uploading " + clip.name + " (" + format_mb(mp4.size()) + ")...");
 
 	for (size_t attempt = 0;; attempt++) {

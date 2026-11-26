@@ -93,16 +93,12 @@ void purge_gop(ReplayR2 *r)
 	}
 }
 
-void purge(ReplayR2 *r, const encoder_packet *incoming)
+void purge(ReplayR2 *r, int64_t now)
 {
-	if (r->max_size_bytes) {
-		while (!r->packets.empty() && r->keyframes.size() > 2 &&
-		       r->cur_size + (int64_t)incoming->size > r->max_size_bytes)
-			purge_gop(r);
-	}
-	/* Drop the oldest group of pictures only while the rest still covers the
-	 * whole length, so a clip is never shorter than the length the user set. */
-	while (r->keyframes.size() > 2 && incoming->dts_usec - r->keyframes[1] >= r->max_time_usec)
+	/* Maximum Replay Time is an upper bound. Never export an older GOP just
+	 * because the next keyframe falls inside the requested window. */
+	while (!r->packets.empty() && ((r->max_time_usec && now - r->cur_time >= r->max_time_usec) ||
+				       (r->max_size_bytes && r->cur_size > r->max_size_bytes)))
 		purge_gop(r);
 }
 
@@ -385,8 +381,6 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 	if (r->packets.empty() && !is_keyframe)
 		return;
 
-	purge(r, packet);
-
 	encoder_packet pkt;
 	obs_encoder_packet_ref(&pkt, packet);
 	if (r->packets.empty())
@@ -395,10 +389,16 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 	r->packets.push_back(pkt);
 	if (is_keyframe)
 		r->keyframes.push_back(pkt.dts_usec);
+	purge(r, pkt.dts_usec);
 
 	while (!r->pending.empty() && packet->sys_dts_usec >= r->pending.front().timestamp) {
 		auto clip = std::move(r->pending.front().clip);
 		r->pending.pop_front();
+		if (r->packets.empty()) {
+			notify_user(
+				"Better Clips: no keyframe in the replay window. Shorten the recording encoder's keyframe interval or increase the buffer limits. Save declined.");
+			continue;
+		}
 		snapshot(r, clip.get());
 		uploader_enqueue(clip.release());
 	}
