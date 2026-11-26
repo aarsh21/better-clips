@@ -31,8 +31,11 @@ struct ReplayR2 {
 
 	std::mutex mutex;
 	std::deque<encoder_packet> packets;
+	std::deque<int64_t> keyframes; /* sys_dts_usec, the same clock as Save */
 	int64_t cur_size = 0;
-	int64_t cur_time = 0; /* dts_usec of the oldest packet */
+	bool memory_limited = false;
+	int64_t last_keyframe = -1;
+	bool warned_keyframe_gap = false;
 
 	int64_t max_time_usec = 0;
 	int64_t max_size_bytes = 0;
@@ -56,49 +59,32 @@ void clear(ReplayR2 *r)
 	for (encoder_packet &pkt : r->packets)
 		obs_encoder_packet_release(&pkt);
 	r->packets.clear();
+	r->keyframes.clear();
 	r->cur_size = 0;
-	r->cur_time = 0;
-}
-
-/* Drops the oldest packet; returns true if it was a video keyframe. */
-bool purge_front(ReplayR2 *r)
-{
-	encoder_packet pkt = r->packets.front();
-	r->packets.pop_front();
-
-	bool keyframe = pkt.type == OBS_ENCODER_VIDEO && pkt.keyframe;
-
-	if (r->packets.empty()) {
-		r->cur_size = 0;
-		r->cur_time = 0;
-	} else {
-		r->cur_size -= (int64_t)pkt.size;
-		r->cur_time = r->packets.front().dts_usec;
-	}
-	obs_encoder_packet_release(&pkt);
-	return keyframe;
+	r->memory_limited = false;
+	r->last_keyframe = -1;
+	r->warned_keyframe_gap = false;
 }
 
 /* Drops one whole group of pictures, so the buffer always starts on a keyframe. */
 void purge_gop(ReplayR2 *r)
 {
-	if (!purge_front(r))
-		return;
-	while (!r->packets.empty()) {
-		const encoder_packet &next = r->packets.front();
-		if (next.type == OBS_ENCODER_VIDEO && next.keyframe)
-			return;
-		purge_front(r);
-	}
+	r->keyframes.pop_front();
+	do {
+		auto &pkt = r->packets.front();
+		r->cur_size -= static_cast<int64_t>(pkt.size);
+		obs_encoder_packet_release(&pkt);
+		r->packets.pop_front();
+	} while (!r->packets.empty() && !(r->packets.front().type == OBS_ENCODER_VIDEO && r->packets.front().keyframe));
 }
 
-void purge(ReplayR2 *r, int64_t now)
+/* Keep the latest keyframe at or before the start, not the first one after it. */
+void trim_to_window(ReplayR2 *r, int64_t end)
 {
-	/* Maximum Replay Time is an upper bound. Never export an older GOP just
-	 * because the next keyframe falls inside the requested window. */
-	while (!r->packets.empty() && ((r->max_time_usec && now - r->cur_time >= r->max_time_usec) ||
-				       (r->max_size_bytes && r->cur_size > r->max_size_bytes)))
+	while (r->max_time_usec && r->keyframes.size() >= 2 && r->keyframes[1] <= end - r->max_time_usec) {
 		purge_gop(r);
+		r->memory_limited = false;
+	}
 }
 
 void fill_video_track(VideoTrack &track, obs_encoder_t *encoder)
@@ -384,15 +370,18 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 		const auto end = r->pending.front().timestamp;
 		auto clip = std::move(r->pending.front().clip);
 		r->pending.pop_front();
-		while (!r->packets.empty() && r->max_time_usec &&
-		       end - r->packets.front().sys_dts_usec > r->max_time_usec)
-			purge_gop(r);
-		if (r->packets.empty() || r->packets.front().sys_dts_usec >= end) {
+		trim_to_window(r, end);
+		if (r->keyframes.empty() || r->keyframes.front() >= end) {
 			uploader_cancel_reservation();
+			if (r->memory_limited)
+				obs_log(LOG_WARNING, "Max Memory left no keyframe for %s", clip->name.c_str());
 			notify_user(
 				"Better Clips: no keyframe in the replay window. Shorten the recording encoder's keyframe interval or increase the buffer limits. Save declined.");
 			continue;
 		}
+		if (r->memory_limited && end - r->keyframes.front() < r->max_time_usec)
+			obs_log(LOG_WARNING, "Max Memory shortened replay %s below the configured length",
+				clip->name.c_str());
 		snapshot(r, clip.get(), end);
 		uploader_enqueue(clip.release());
 	}
@@ -401,13 +390,30 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 	if (r->packets.empty() && !is_keyframe)
 		return;
 
+	if (is_keyframe) {
+		const auto now = packet->sys_dts_usec;
+		const auto gap = now - r->last_keyframe;
+		if (!r->warned_keyframe_gap && r->last_keyframe >= 0 && gap > 2000000) {
+			r->warned_keyframe_gap = true;
+			auto seconds = QString::number(gap / 1000000.0, 'g', 2).toStdString();
+			auto message =
+				"Better Clips: clips can be up to about " + seconds +
+				" s longer than the setting. Set the recording encoder's keyframe interval to 1–2 s in Settings → Output → Recording → Keyframe Interval.";
+			obs_log(LOG_WARNING, "%s", message.c_str());
+			notify_user(message);
+		}
+		r->last_keyframe = now;
+		r->keyframes.push_back(now);
+	}
 	encoder_packet pkt;
 	obs_encoder_packet_ref(&pkt, packet);
-	if (r->packets.empty())
-		r->cur_time = pkt.dts_usec;
 	r->cur_size += (int64_t)pkt.size;
 	r->packets.push_back(pkt);
-	purge(r, pkt.dts_usec);
+	trim_to_window(r, pkt.sys_dts_usec);
+	while (r->max_size_bytes && r->cur_size > r->max_size_bytes) {
+		purge_gop(r);
+		r->memory_limited = true;
+	}
 }
 
 } // namespace
@@ -446,8 +452,8 @@ void replay_r2_request_save(obs_output_t *output)
 	clip->game = scene;
 	clip->name = clip_name(clip->recorded_at, scene);
 	std::lock_guard<std::mutex> lock(r->mutex);
-	if (!r->active || r->packets.empty()) {
-		notify_user("Better Clips: no replay frames available yet. This save was declined.");
+	if (!r->active) {
+		notify_user("Better Clips: the replay buffer stopped. This save was declined.");
 		return;
 	}
 	if (!uploader_reserve()) {
