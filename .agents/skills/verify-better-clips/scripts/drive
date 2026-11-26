@@ -57,7 +57,7 @@ library)
   button Close; b reload; b wait --text '3 clips'; b snapshot -i >"$E/library-after.txt"; grep -q 'Calibration replay · Trim 1' "$E/library-after.txt" ;;
 channel)
   session=yt-$id; b open http://localhost:8787; b set viewport 1100 740 2; b wait --text 'Sign in with Google'; bsnap google-before; b find role link click --name 'Sign in with Google'; b wait --text 'No clips yet'
-  settings; dest 'S3 bucket' y; field 'Better Clips app' http://localhost:8787; o 'Sign in with YouTube'; waitfor pair 0; osnap paired; o Save --role button; sleep 1; o 'Save Replay to YouTube'
+  settings; dest 'S3 bucket' y; field 'Better Clips app' http://localhost:8787; o 'Sign in with YouTube'; waitfor pair 0; waitfor o --has 'Connected. Click Save to upload clips to this channel.'; osnap paired; o Save --role button; waitfor o --has 'Save Replay to YouTube'; o 'Save Replay to YouTube'
   waitfor copied https://youtu.be/test; clip >"$E/host-link.txt"; osnap host-upload; waitfor row "select status from youtube_clips where videoId='$(basename "$(clip)")'" ready
   # The ready state is fetched by the plugin. Capture the dock, not just the database.
   waitfor o --has 'is ready to play'; [[ $(clip) == "$(cat "$E/host-link.txt")" ]]; osnap ready; b open http://localhost:8787; b wait --text '1 clip'; bsnap hosted-library ;;
@@ -72,8 +72,8 @@ edit)
   button Settings; b wait '[role=tablist]'; sleep .4; b find role tab click --name YouTube; b wait --text 'Disconnect YouTube'; sleep .4
   button 'Disconnect YouTube'; b wait --text 'Your videos stay on YouTube'; button Disconnect; b wait --text 'Connect YouTube'; row 'select count(*) from youtube_accounts' 0; bsnap web-disconnected ;;
 direct)
-  settings; osnap direct-before; o Disconnect; waitfor jq -e '.youtube_upload_token==""' "$cfg"; osnap hosted-unpaired; o 'Directly to YouTube'; o 'Sign in with YouTube'; waitfor pair 1; osnap direct-paired
-  o 'Review each clip before uploading'; o Save --role button; sleep 1; hotkey; w=$(timeout 20 xdotool search --sync --onlyvisible --name '^Upload this clip to YouTube\?' | tail -1); xdotool windowactivate --sync "$w"; osnap review; o Upload --role button
+  settings; osnap direct-before; o 'Unpair this OBS'; waitfor jq -e '.youtube_upload_token==""' "$cfg"; osnap hosted-unpaired; o 'Directly to YouTube'; o 'Sign in with YouTube'; waitfor pair 1; waitfor o --has 'Connected. Click Save to upload clips to this channel.'; osnap direct-paired
+  o 'Review each clip before uploading'; o Save --role button; waitfor o --has 'Save Replay to YouTube'; hotkey; w=$(timeout 20 xdotool search --sync --onlyvisible --name '^Upload this clip to YouTube\?' | tail -1); xdotool windowactivate --sync "$w"; osnap review; o Upload --role button
   waitfor copied https://youtu.be/test "$(cat "$E/host-link.txt")"; clip >"$E/direct-link.txt"; row 'select count(*) from youtube_clips' 0; waitfor o --has 'is ready to play'; osnap direct-uploaded
   settings; o Disconnect; waitfor jq -e '.youtube_refresh_token=="" and .youtube_channel_title==""' "$cfg"; osnap direct-disconnected; o Cancel --role button
   log | grep -E '(plugin loaded|In-memory replay buffer|Saved replay|Built |Uploaded |YouTube upload failed)' >"$E/plugin.log" ;;
