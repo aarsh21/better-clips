@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -16,6 +17,7 @@
 namespace {
 using namespace youtube_http;
 std::unique_ptr<QObject> pairing;
+QPointer<QTcpServer> sign_in_listener;
 const QString direct_scopes = QStringLiteral(
 	"openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly");
 
@@ -88,9 +90,15 @@ bool youtube_direct_available()
 	return sizeof(YOUTUBE_CLIENT_ID) > 1;
 }
 
+void cancel_youtube_sign_in()
+{
+	delete sign_in_listener.data(); // also cancels pending exchanges owned by the listener
+}
+
 void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 			   std::function<void(bool, const std::string &)> done)
 {
+	cancel_youtube_sign_in();
 	const bool direct = route == YouTubeRoute::Direct;
 	if (direct && !youtube_direct_available()) {
 		sign_in_failed(done, "This build is not configured for direct YouTube uploads.");
@@ -106,6 +114,7 @@ void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 	if (!pairing)
 		pairing = std::make_unique<QObject>();
 	auto *server = new QTcpServer(pairing.get());
+	sign_in_listener = server;
 	if (!server->listen(QHostAddress::LocalHost, 0)) {
 		server->deleteLater();
 		sign_in_failed(done, "Could not listen for sign-in on this computer.");
@@ -151,10 +160,15 @@ void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 			timeout->stop();
 			s->write(
 				"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\nReturn to OBS to finish connecting YouTube.");
+			s->flush();
 			s->disconnectFromHost();
-			if (code.isEmpty()) {
+			if (query.hasQueryItem("error")) {
 				server->deleteLater();
-				sign_in_failed(done, "YouTube sign-in was cancelled.");
+				auto encoded = query.queryItemValue("error_description", QUrl::FullyEncoded).toUtf8();
+				auto reason =
+					QUrl::fromPercentEncoding(encoded.replace('+', ' ')).simplified().left(500);
+				done(false, reason.isEmpty() ? query.queryItemValue("error").left(100).toStdString()
+							     : reason.toStdString());
 				return;
 			}
 			if (direct) {

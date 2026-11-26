@@ -34,6 +34,7 @@ bool youtube_direct_available(); /* false when the build has no Google client ID
  * loopback port. done runs on the UI thread with a user-facing error when !ok. */
 void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 			   std::function<void(bool ok, const std::string &error)> done);
+void cancel_youtube_sign_in();
 
 /* Hosted defaults to unpairing only this device. Direct always revokes its own token. */
 enum class DisconnectResult { Revoked, Unpaired, Failed };

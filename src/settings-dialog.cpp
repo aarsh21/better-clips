@@ -176,6 +176,12 @@ public:
 		channel = new QLabel();
 		channel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		sign_in = new QPushButton("Sign in with YouTube");
+		cancel_sign_in = new QPushButton("Cancel sign-in");
+		connect(cancel_sign_in, &QPushButton::clicked, this, [this] {
+			cancel_youtube_sign_in();
+			show_account(get_youtube_settings());
+			show_status("Sign-in cancelled. You can close the browser tab.");
+		});
 		disconnect_button = new QPushButton("Disconnect");
 		remove_channel = new QPushButton("Remove channel from app…");
 		connect(sign_in, &QPushButton::clicked, this, [this]() { start_sign_in(); });
@@ -206,9 +212,11 @@ public:
 		auto *account = new QHBoxLayout();
 		account->addWidget(channel, 1);
 		account->addWidget(sign_in);
+		account->addWidget(cancel_sign_in);
 		account->addWidget(disconnect_button);
 
 		status = hint_label();
+		status->setTextFormat(Qt::PlainText);
 		status->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		status->hide();
 
@@ -275,6 +283,12 @@ public:
 		}
 	}
 
+	~YouTubePage() override
+	{
+		if (!cancel_sign_in->isHidden())
+			cancel_youtube_sign_in();
+	}
+
 	/* The settings with this page's route and upload defaults. The
 	 * connection itself is saved by youtube_connect_async and
 	 * youtube_disconnect. */
@@ -301,7 +315,7 @@ private:
 	QRadioButton *via_app, *direct;
 	QLineEdit *app_url, *title_template;
 	QLabel *route_hint, *channel, *status, *title_preview, *access;
-	QPushButton *sign_in, *disconnect_button, *remove_channel;
+	QPushButton *sign_in, *disconnect_button, *remove_channel, *cancel_sign_in;
 	QComboBox *privacy, *audio_track;
 	QPlainTextEdit *description;
 	QCheckBox *review;
@@ -340,6 +354,7 @@ private:
 			app_url->setText(HOSTED_APP);
 		app_url->setReadOnly(connected);
 		sign_in->setVisible(!connected);
+		cancel_sign_in->hide();
 		sign_in->setEnabled(true);
 		sign_in->setText(settings.previously_connected ? "Reconnect YouTube" : "Sign in with YouTube");
 		disconnect_button->setVisible(connected);
@@ -404,20 +419,16 @@ private:
 			}
 		}
 
-		sign_in->setEnabled(false);
-		sign_in->setText("Waiting for your browser...");
+		sign_in->setText("Retry sign-in");
+		cancel_sign_in->show();
+		app_url->setReadOnly(true);
 		via_app->setEnabled(false);
 		direct->setEnabled(false);
 		show_status("Finish signing in to Google in your browser. This updates when you're done.");
 
 		QPointer<YouTubePage> self(this);
-		youtube_connect_async(chosen, url, [self, chosen](bool ok, const std::string &error) {
+		youtube_connect_async(chosen, url, [self](bool ok, const std::string &error) {
 			auto settings = get_youtube_settings();
-			/* Uploads take the route you signed in with, even before Save. */
-			if (ok && settings.route != chosen) {
-				settings.route = chosen;
-				set_youtube_settings(settings);
-			}
 			if (!self)
 				return;
 			self->show_account(settings);
