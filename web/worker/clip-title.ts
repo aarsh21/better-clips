@@ -8,13 +8,11 @@ export function labelParts(label: string) {
   const trim = label.match(/(?:-trim)+(?:-(\d+))?$/)
   const base = label.slice(0, trim?.index ?? label.length)
   const sep = base.indexOf("__")
+  const categoryKey = sep < 0 ? base : base.slice(0, sep)
 
   return {
-    /* Without the plugin's old random link code. */
-    category: (sep < 0 ? base : base.slice(0, sep)).replace(
-      /_[a-z2-9]{6,8}$/,
-      ""
-    ),
+    categoryKey,
+    category: categoryKey.replace(/_(?:[0-9a-f]{32}|[a-z2-9]{6,8})$/, ""),
     name: sep < 0 ? "" : base.slice(sep + 2),
     /* The raw suffix, such as "-trim-2", kept when a trim is renamed. */
     trimSuffix: trim?.[0] ?? "",

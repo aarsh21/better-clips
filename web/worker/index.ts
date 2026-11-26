@@ -732,7 +732,7 @@ app.post("/api/move", async (c) => {
   if (name !== undefined) {
     const m = file.match(/^(\d{2}-\d{2}-\d{2})?_?(.*)\.mp4$/)
     const parts = labelParts(m?.[2] ?? "")
-    const label = [parts.category, slug(name)].filter(Boolean).join("__")
+    const label = [parts.categoryKey, slug(name)].filter(Boolean).join("__")
     file = [m?.[1], label].filter(Boolean).join("_") + parts.trimSuffix + ".mp4"
   }
 
