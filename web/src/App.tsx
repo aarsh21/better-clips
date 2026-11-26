@@ -17,7 +17,8 @@ import { toast } from "sonner"
 
 import { ClipGrid } from "@/components/clip-grid"
 import { ClipToolbar } from "@/components/clip-toolbar"
-import { AutoRequirements, ConnectStorage } from "@/components/connect-storage"
+import { Wordmark } from "@/components/brand"
+import { ConnectStorage } from "@/components/connect-storage"
 import type { SettingsTab } from "@/components/settings-dialog"
 import { ObsConnect } from "@/components/setup-steps"
 import { SignIn } from "@/components/sign-in"
@@ -38,13 +39,13 @@ import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { YOUTUBE_RED, YouTubeObsSteps } from "@/components/youtube"
 import { YouTubeAudience } from "@/components/youtube-audience"
+import { YouTubeConsent } from "@/components/youtube-consent"
 import {
   api,
   bucketBytes,
   formatBytes,
   NoStorageError,
   SignInError,
-  youtubeConnectUrl,
   type BucketClip,
   type Clip,
   type Settings,
@@ -131,6 +132,14 @@ const Privacy = React.lazy(() =>
   loadPages().then((m) => ({ default: m.Privacy }))
 )
 
+const Terms = React.lazy(() => loadPages().then((m) => ({ default: m.Terms })))
+
+const Home = React.lazy(() =>
+  import("@/components/home").then((m) => ({ default: m.Home }))
+)
+
+const PAGES = { home: Home, faq: Faq, privacy: Privacy, terms: Terms }
+
 function usePreload() {
   React.useEffect(() => {
     const preload = () => {
@@ -191,15 +200,20 @@ function useAuthFlash() {
   }, [])
 }
 
-/* The FAQ and the privacy policy open without signing in, and without
- * loading any clips. */
+/* The homepage, the FAQ, the privacy policy and the terms open without
+ * signing in, and without loading any clips. */
 export default function App() {
   const page = usePage()
 
-  if (page)
+  if (page) {
+    const Page = PAGES[page]
+
     return (
-      <React.Suspense>{page === "faq" ? <Faq /> : <Privacy />}</React.Suspense>
+      <React.Suspense>
+        <Page />
+      </React.Suspense>
     )
+  }
 
   return <Library />
 }
@@ -267,13 +281,10 @@ function Library() {
         onSettings={openSettings}
       />
 
-      <main className="mx-auto max-w-[1600px] px-4 pt-4 pb-24 sm:px-6">
+      <main className="mx-auto max-w-[1600px] px-4 pt-6 pb-24 sm:px-8">
         <YouTubeAudience prompt />
         {notice && (
-          <p
-            role="status"
-            className="mb-4 border bg-muted/40 px-3 py-2 text-xs"
-          >
+          <p role="status" className="mb-6 border bg-card px-4 py-3 text-sm">
             {notice}
           </p>
         )}
@@ -356,16 +367,10 @@ function AppHeader({
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur-md supports-backdrop-filter:bg-background/65">
-      <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4 sm:px-6">
-        <div className="flex items-center gap-2 pr-2">
-          <span className="relative flex size-2.5">
-            <span className="absolute inline-flex size-full animate-ping bg-primary/60 [animation-duration:2.5s]" />
-            <span className="relative inline-flex size-2.5 bg-primary" />
-          </span>
-          <span className="text-sm font-semibold tracking-tight">
-            better clips
-          </span>
-        </div>
+      <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-2 px-4 sm:gap-4 sm:px-8">
+        <a href="/" aria-label="Better Clips home" className="pr-1 sm:pr-3">
+          <Wordmark className="[&>span:last-child]:hidden sm:[&>span:last-child]:inline" />
+        </a>
 
         <nav className="flex items-center">
           {views.map((tab) => (
@@ -399,9 +404,9 @@ function SearchButton({ onClick }: { onClick: () => void }) {
       <button
         type="button"
         onClick={onClick}
-        className="hidden h-8 w-56 items-center gap-2 border border-input bg-transparent px-2.5 text-xs text-muted-foreground transition-colors outline-none hover:border-foreground/20 hover:text-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 md:flex dark:bg-input/30"
+        className="hidden h-9 w-60 items-center gap-2 border border-input bg-transparent px-3 text-sm text-muted-foreground transition-colors outline-none hover:border-foreground/20 hover:text-foreground focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 md:flex dark:bg-input/30"
       >
-        <MagnifyingGlassIcon className="size-3.5" />
+        <MagnifyingGlassIcon className="size-4" />
         Search clips
         <Kbd className="ml-auto">/</Kbd>
       </button>
@@ -489,15 +494,17 @@ function TabButton({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "relative flex h-14 items-center gap-1.5 px-3 text-xs text-muted-foreground transition-colors hover:text-foreground",
+        "relative flex h-16 items-center gap-1.5 px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:px-3",
         active && "text-foreground"
       )}
     >
-      <Icon className="size-3.5" weight={active ? "fill" : "regular"} />
+      <Icon className="size-4" weight={active ? "fill" : "regular"} />
       <span className="hidden sm:inline">{label}</span>
-      <span className="text-[10px] tabular-nums opacity-60">{count || ""}</span>
+      <span className="font-mono text-[11px] tabular-nums opacity-60">
+        {count || ""}
+      </span>
       {active && (
-        <span className="absolute inset-x-3 -bottom-px h-px bg-primary" />
+        <span className="absolute inset-x-2.5 -bottom-px h-0.5 bg-primary sm:inset-x-3" />
       )}
     </button>
   )
@@ -607,8 +614,8 @@ function TrashBar({
   const size = formatBytes(bucketBytes(clips))
 
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border px-4 py-3">
-      <p className="text-xs text-muted-foreground">
+    <div className="mb-8 flex flex-wrap items-center justify-between gap-3 border bg-card px-5 py-4">
+      <p className="text-sm text-muted-foreground">
         {clips.length} {clips.length === 1 ? "clip" : "clips"} · {size}.
         They&apos;re deleted for good after{" "}
         {retentionText(settings?.trashDays ?? 7)}.
@@ -655,15 +662,34 @@ function TrashBar({
   )
 }
 
+/* The empty library's heading: big and condensed, like the homepage. */
+function FirstRunShell({
+  title = "No clips yet",
+  intro,
+  wide = false,
+  children,
+}: {
+  title?: string
+  intro: string
+  wide?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className={cn("mx-auto py-14 sm:py-20", wide ? "max-w-3xl" : "max-w-xl")}
+    >
+      <h1 className="font-display text-[clamp(2.75rem,9vw,4.5rem)]">{title}</h1>
+      <p className="mt-4 mb-10 text-lg text-muted-foreground">{intro}</p>
+      {children}
+    </div>
+  )
+}
+
 function FirstRun() {
   return (
-    <div className="mx-auto max-w-lg py-16">
-      <h1 className="mb-1 text-base font-semibold">No clips yet</h1>
-      <p className="mb-6 text-xs text-muted-foreground">
-        Connect OBS to your bucket. Replays appear here after they upload.
-      </p>
+    <FirstRunShell intro="Connect OBS. Replays show up here.">
       <ObsConnect />
-    </div>
+    </FirstRunShell>
   )
 }
 
@@ -671,13 +697,9 @@ function FirstRun() {
  * install command with a setup code. */
 function YouTubeFirstRun() {
   return (
-    <div className="mx-auto max-w-lg py-16">
-      <h1 className="mb-1 text-base font-semibold">No clips yet</h1>
-      <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
-        Clips you save in OBS go to your YouTube channel and show up here.
-      </p>
+    <FirstRunShell intro="Save a replay in OBS. It goes to your channel and shows up here.">
       <YouTubeObsSteps />
-    </div>
+    </FirstRunShell>
   )
 }
 
@@ -685,57 +707,55 @@ function YouTubeFirstRun() {
  * clips go before OBS can send any. */
 function ChooseDestination({ onOwnKey }: { onOwnKey: () => void }) {
   return (
-    <div className="mx-auto max-w-2xl py-16">
-      <h1 className="mb-1 text-base font-semibold">
-        Choose where your clips go
-      </h1>
-      <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
-        Keep them in a bucket in your own Cloudflare account, or upload them to
-        your YouTube channel. You can add the other one later.
-      </p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-3 border bg-muted/30 p-4">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <CloudIcon weight="fill" className="size-4 text-primary" />
-            Your own R2 bucket
-          </p>
-          <p className="flex-1 text-[11px] leading-relaxed text-muted-foreground">
-            Download clips, trim them losslessly and share them with expiring
-            links. Free up to 10 GB.
-          </p>
-          <AutoRequirements />
+    <FirstRunShell
+      wide
+      title="Where should clips go?"
+      intro="You can add the other one later."
+    >
+      <div className="grid gap-px border bg-border sm:grid-cols-2">
+        <div className="flex flex-col gap-4 bg-card p-6">
+          <CloudIcon weight="duotone" className="size-8 text-primary" />
+          <div className="flex-1">
+            <h2 className="text-xl font-bold [font-stretch:85%]">
+              Your R2 bucket
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Trim, keep and share. Free up to 10 GB.
+            </p>
+          </div>
           <a href="/api/auth/setup" className={buttonVariants()}>
             Set up automatically
           </a>
           <button
             type="button"
             onClick={onOwnKey}
-            className="self-start text-[11px] text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            className="self-start text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
-            Use another bucket, with your own key
+            Use your own key
           </button>
         </div>
-        <div className="flex flex-col gap-3 border bg-muted/30 p-4">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <YoutubeLogoIcon
-              weight="fill"
-              className={cn("size-4", YOUTUBE_RED)}
-            />
-            Your YouTube channel
-          </p>
-          <p className="flex-1 text-[11px] leading-relaxed text-muted-foreground">
-            OBS uploads each clip to your channel, and you watch, rename and cut
-            them here. They take no storage.
-          </p>
-          <a
-            href={youtubeConnectUrl("connect")}
+        <div className="flex flex-col gap-4 bg-card p-6">
+          <YoutubeLogoIcon
+            weight="fill"
+            className={cn("size-8", YOUTUBE_RED)}
+          />
+          <div className="flex-1">
+            <h2 className="text-xl font-bold [font-stretch:85%]">
+              Your YouTube channel
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Watch, rename and cut here. No storage.
+            </p>
+          </div>
+          <YouTubeConsent
+            purpose="connect"
             className={buttonVariants({ variant: "outline" })}
           >
             Connect YouTube
-          </a>
+          </YouTubeConsent>
         </div>
       </div>
-    </div>
+    </FirstRunShell>
   )
 }
 
@@ -756,7 +776,7 @@ function StorageMeter({
       title={`${formatBytes(used)} of the free 10 GB. Click for storage settings.`}
       aria-label={`Storage: ${formatBytes(used)} of 10 GB used`}
     >
-      <div className="flex w-full justify-between text-[10px] text-muted-foreground tabular-nums">
+      <div className="flex w-full justify-between font-mono text-[10px] text-muted-foreground tabular-nums">
         <span>{formatBytes(used)}</span>
         <span>10 GB</span>
       </div>
@@ -784,9 +804,9 @@ function Empty({
 }) {
   return (
     <div className="flex flex-col items-center py-32 text-center">
-      <Icon className="mb-4 size-6 text-muted-foreground/60" />
-      <p className="text-sm font-medium">{title}</p>
-      <p className="mt-1 max-w-xs text-xs text-muted-foreground">{body}</p>
+      <Icon weight="duotone" className="mb-5 size-9 text-primary" />
+      <p className="font-display text-4xl">{title}</p>
+      <p className="mt-3 max-w-sm text-muted-foreground">{body}</p>
     </div>
   )
 }
@@ -795,7 +815,7 @@ const SKELETONS = ["a", "b", "c", "d", "e", "f", "g", "h"]
 
 function GridSkeleton() {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-x-4 gap-y-6 pt-10">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-x-5 gap-y-8 pt-12">
       {SKELETONS.map((id) => (
         <div key={id} className="flex flex-col gap-2">
           <Skeleton className="aspect-video w-full" />

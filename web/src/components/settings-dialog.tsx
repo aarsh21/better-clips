@@ -1,3 +1,4 @@
+import { APP_PATH } from "@/lib/view"
 import * as React from "react"
 import {
   CaretDownIcon,
@@ -67,8 +68,8 @@ export function SettingsDialog({
       {/* Pinned near the top, so switching tabs or connecting OBS changes the
           height downwards instead of making the dialog jump. */}
       <DialogContent className="top-[10vh] max-h-[85vh] translate-y-0 gap-0 overflow-y-auto p-0 sm:max-w-lg">
-        <DialogHeader className="px-5 pt-5 pb-3">
-          <DialogTitle>Settings</DialogTitle>
+        <DialogHeader className="px-6 pt-6 pb-4">
+          <DialogTitle className="font-display text-4xl">Settings</DialogTitle>
           <DialogDescription className="sr-only">
             Connect OBS, choose how long clips are kept, connect YouTube, and
             pick a theme.
@@ -81,14 +82,14 @@ export function SettingsDialog({
         >
           <TabsList
             variant="line"
-            className="w-full justify-start border-b px-3"
+            className="w-full justify-start border-b px-4"
           >
             <TabsTrigger value="obs">OBS</TabsTrigger>
             <TabsTrigger value="storage">Storage</TabsTrigger>
             {hosted && <TabsTrigger value="youtube">YouTube</TabsTrigger>}
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
           </TabsList>
-          <div className="px-5 py-5">
+          <div className="px-6 py-6">
             <TabsContent value="obs">
               {hasBucket ? (
                 <ObsConnect />
@@ -111,7 +112,7 @@ export function SettingsDialog({
             </TabsContent>
           </div>
         </Tabs>
-        <InfoLinks newTab className="border-t px-5 py-3" />
+        <InfoLinks newTab className="border-t px-6 py-4" />
       </DialogContent>
     </Dialog>
   )
@@ -121,7 +122,7 @@ export function SettingsDialog({
 function ChooseFirst({ onTab }: { onTab: (tab: SettingsTab) => void }) {
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs leading-relaxed text-muted-foreground">
+      <p className="text-sm leading-relaxed text-muted-foreground">
         Choose where your clips go first: a bucket in your own Cloudflare
         account, or your YouTube channel. Then this tab shows how to connect
         OBS.
@@ -154,11 +155,9 @@ function StorageSettings() {
     return (
       <div className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {hasChannel
-              ? "Your clips are on YouTube, so they take no storage here. Want clips you can download, trim losslessly and share with expiring links? "
-              : "No bucket is connected yet. "}
-            Add an R2 bucket in your own Cloudflare account, free up to 10 GB.
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Add an R2 bucket in your own Cloudflare account to trim, keep and
+            share clips. Free up to 10 GB.
           </p>
           <AutoRequirements />
           <a
@@ -175,7 +174,7 @@ function StorageSettings() {
             type="button"
             aria-expanded={own}
             onClick={() => setOwn(!own)}
-            className="mt-1 flex items-center gap-1.5 self-start text-[11px] text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:text-foreground"
+            className="mt-1 flex items-center gap-1.5 self-start text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:text-foreground"
           >
             <CaretDownIcon
               className={cn(
@@ -222,7 +221,7 @@ function StorageSettings() {
       />
       {settings?.paused ? (
         <div className="flex flex-col gap-2 border border-primary/30 bg-primary/5 p-3">
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             Cleanup is off for this bucket, since it may hold files this app
             didn&apos;t make. Once it&apos;s on, only <b>.mp4</b> clips in{" "}
             <b>replays/</b> and <b>trash/</b> are ever deleted.
@@ -243,7 +242,7 @@ function StorageSettings() {
           </Button>
         </div>
       ) : (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           Cleanup runs once a day.
         </p>
       )}
@@ -262,7 +261,7 @@ function AccountSettings() {
     mutationFn: api.disconnectStorage,
     onSuccess: () => {
       announceAccountChange()
-      location.assign("/")
+      location.assign(APP_PATH)
     },
   })
 
@@ -284,10 +283,10 @@ function AccountSettings() {
     <div className="flex flex-col gap-3 border-t pt-5">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-xs font-medium">
+          <span className="text-sm font-medium">
             {me.storage ? `Bucket ${me.storage.bucket}` : "No bucket"}
           </span>
-          <span className="truncate text-[11px] text-muted-foreground">
+          <span className="truncate text-xs text-muted-foreground">
             {me.email}
             {me.storage &&
               (me.storage.keyOrigin === "app"
@@ -308,7 +307,7 @@ function AccountSettings() {
       </div>
       {me.storage && (
         <div className="flex items-start justify-between gap-3">
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             {resetObs.isSuccess
               ? "Done. The old command stops working; run the new one from the OBS tab."
               : "Shared your OBS install command by mistake? Make a new one and the old one stops working."}
@@ -325,7 +324,7 @@ function AccountSettings() {
       )}
       {!me.storage ? null : confirming ? (
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             Better Clips stops using this bucket right away, and OBS stops
             uploading. Existing share links stop working. Your clips stay in the
             bucket. To turn the key off for good, delete it in R2 → Manage API
@@ -353,7 +352,7 @@ function AccountSettings() {
         <button
           type="button"
           onClick={() => setConfirming(true)}
-          className="self-start text-[11px] text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
+          className="self-start text-xs text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
         >
           Disconnect storage
         </button>
@@ -378,9 +377,9 @@ function Usage({ clips }: { clips: Clip[] }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between text-xs">
+      <div className="flex items-baseline justify-between text-sm">
         <span className="font-medium tabular-nums">{formatBytes(used)}</span>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           of 10 GB free each month
         </span>
       </div>
@@ -393,7 +392,7 @@ function Usage({ clips }: { clips: Clip[] }) {
           />
         ))}
       </div>
-      <div className="flex gap-4 text-[11px] text-muted-foreground tabular-nums">
+      <div className="flex gap-4 text-xs text-muted-foreground tabular-nums">
         {parts.map((p) => (
           <span key={p.label} className="flex items-center gap-1.5">
             <span className={cn("size-1.5", p.className)} />
@@ -423,10 +422,10 @@ function OptionRow<T extends number | null>({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-0.5">
-        <span id={id} className="text-xs font-medium">
+        <span id={id} className="text-sm font-medium">
           {label}
         </span>
-        <span className="text-[11px] text-muted-foreground">{hint}</span>
+        <span className="text-xs text-muted-foreground">{hint}</span>
       </div>
       <Segmented
         labelledBy={id}
@@ -454,10 +453,10 @@ function AppearanceSettings() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
         <div className="flex flex-col gap-0.5">
-          <span id={id} className="text-xs font-medium">
+          <span id={id} className="text-sm font-medium">
             Theme
           </span>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             System follows your computer's light or dark mode.
           </span>
         </div>
@@ -470,10 +469,10 @@ function AppearanceSettings() {
       </div>
       <div className="flex flex-col gap-2">
         <div className="flex flex-col gap-0.5">
-          <span id={clockId} className="text-xs font-medium">
+          <span id={clockId} className="text-sm font-medium">
             Time format
           </span>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             How clip times are shown, such as 15:22 or 3:22 PM.
           </span>
         </div>

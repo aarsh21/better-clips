@@ -1,6 +1,9 @@
 import type * as React from "react"
-import { ArrowLeftIcon } from "@phosphor-icons/react"
 import { cn } from "cn"
+
+import { Wordmark } from "@/components/brand"
+import { buttonVariants } from "@/components/ui/button-variants"
+import { APP_PATH } from "@/lib/view"
 
 const REPO = "https://github.com/aarsh21/better-clips"
 const ISSUES = `${REPO}/issues`
@@ -34,7 +37,7 @@ function InfoShell({
   intro,
   children,
 }: {
-  current: "/faq" | "/privacy"
+  current: "/faq" | "/privacy" | "/terms"
   title: string
   intro: React.ReactNode
   children: React.ReactNode
@@ -42,26 +45,27 @@ function InfoShell({
   const pages = [
     { href: "/faq", label: "FAQ" },
     { href: "/privacy", label: "Privacy" },
+    { href: "/terms", label: "Terms" },
   ]
 
   return (
     <div className="min-h-svh">
-      <header className="border-b">
-        <div className="mx-auto flex h-14 max-w-2xl items-center gap-4 px-4 sm:px-6">
-          <a href="/" className="flex items-center gap-2">
-            <span className="size-2.5 bg-primary" />
-            <span className="text-sm font-semibold tracking-tight">
-              better clips
-            </span>
+      <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur-md">
+        <div className="mx-auto flex h-16 max-w-[1320px] items-center gap-6 px-5 sm:px-8">
+          <a href="/" aria-label="Better Clips home">
+            <Wordmark />
           </a>
-          <nav className="flex items-center gap-3 text-xs">
+          <nav
+            aria-label="Pages"
+            className="flex items-center gap-4 text-sm sm:gap-5"
+          >
             {pages.map(({ href, label }) => (
               <a
                 key={href}
                 href={href}
                 aria-current={href === current ? "page" : undefined}
                 className={cn(
-                  "text-muted-foreground hover:text-foreground",
+                  "text-muted-foreground transition-colors hover:text-foreground",
                   href === current && "text-foreground"
                 )}
               >
@@ -70,20 +74,30 @@ function InfoShell({
             ))}
           </nav>
           <a
-            href="/"
-            className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            href={APP_PATH}
+            className={cn(
+              buttonVariants(),
+              "ml-auto hidden h-9 px-4 text-sm sm:inline-flex"
+            )}
           >
-            <ArrowLeftIcon className="size-3.5" />
-            Your clips
+            Open the app
           </a>
         </div>
       </header>
-      <main className="mx-auto max-w-2xl px-4 pt-10 pb-24 sm:px-6">
-        <h1 className="mb-2 text-base font-semibold">{title}</h1>
-        <div className="mb-10 text-xs leading-relaxed text-muted-foreground">
-          {intro}
+      <main className="mx-auto max-w-[1320px] px-5 pt-16 pb-28 sm:px-8 lg:pt-24">
+        <div className="grid gap-x-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,42rem)]">
+          <div>
+            <h1 className="font-display text-[clamp(3rem,9vw,5.5rem)] lg:sticky lg:top-28">
+              {title}
+            </h1>
+          </div>
+          <div>
+            <div className="mt-8 mb-14 text-lg leading-relaxed text-muted-foreground lg:mt-0 [&_p+p]:mt-2 [&_p+p]:text-sm">
+              {intro}
+            </div>
+            <div className="flex flex-col gap-16">{children}</div>
+          </div>
         </div>
-        <div className="flex flex-col gap-10">{children}</div>
       </main>
     </div>
   )
@@ -97,8 +111,8 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <section className="flex flex-col gap-6">
-      <h2 className="border-b pb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+    <section className="flex flex-col gap-8">
+      <h2 className="border-b pb-3 font-mono text-[11px] tracking-wider text-primary uppercase">
         {title}
       </h2>
       {children}
@@ -109,9 +123,11 @@ function Section({
 /* One question and its answer. */
 function Q({ q, children }: { q: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">{q}</h3>
-      <div className="flex flex-col gap-2 text-xs leading-relaxed text-muted-foreground [&_b]:font-medium [&_b]:text-foreground [&_li]:pl-1 [&_ul]:flex [&_ul]:list-disc [&_ul]:flex-col [&_ul]:gap-1.5 [&_ul]:pl-4">
+    <div className="flex flex-col gap-3">
+      <h3 className="text-xl font-bold tracking-[-0.01em] [font-stretch:85%]">
+        {q}
+      </h3>
+      <div className="flex flex-col gap-3 leading-relaxed text-muted-foreground [&_b]:font-medium [&_b]:text-foreground [&_li]:pl-1 [&_ul]:flex [&_ul]:list-disc [&_ul]:flex-col [&_ul]:gap-1.5 [&_ul]:pl-4">
         {children}
       </div>
     </div>
@@ -449,6 +465,134 @@ export function Privacy() {
             sign-in ID, email and hosted account records. This does not delete
             videos on YouTube or files in your own bucket. Use the same address
             for privacy questions. Do not send passwords or tokens.
+          </p>
+        </Q>
+      </Section>
+    </InfoShell>
+  )
+}
+
+export function Terms() {
+  return (
+    <InfoShell
+      current="/terms"
+      title="Terms of service"
+      intro={
+        <>
+          <p>
+            These terms cover the hosted Better Clips app at clips.zabimaru.me
+            and the Better Clips plugin for OBS. By using Better Clips you agree
+            to them. See also the <Link href="/privacy">privacy policy</Link>.
+          </p>
+          <p className="mt-2">Last updated 26 November 2026.</p>
+        </>
+      }
+    >
+      <Section title="The service">
+        <Q q="What Better Clips is">
+          <p>
+            Better Clips is a plugin for OBS and a web app. When you press its
+            hotkey, OBS uploads a replay to the destination you choose: your
+            YouTube channel, a bucket in your own Cloudflare account through
+            this app, or your own S3-compatible bucket. The app lets you watch,
+            trim, rename, keep, share and delete those clips.
+          </p>
+        </Q>
+        <Q q="Provided as is">
+          <p>
+            Better Clips is free, open-source software, provided as is, without
+            warranties of any kind. It may change, be unavailable or stop, and a
+            clip can fail to upload. Keep copies of clips that matter to you. To
+            the extent the law allows, we are not liable for lost clips, lost
+            data, or indirect or consequential damages from using Better Clips.
+          </p>
+        </Q>
+        <Q q="Fair use of the hosted app">
+          <p>
+            Don&apos;t use Better Clips to break the law, to infringe
+            others&apos; rights, or to attack or overload the service. We may
+            suspend an account that does.
+          </p>
+        </Q>
+      </Section>
+
+      <Section title="YouTube">
+        <Q q="YouTube Terms of Service">
+          <p>
+            Better Clips uses YouTube API Services. By using the YouTube
+            features of Better Clips, you agree to be bound by the{" "}
+            <Link href={YOUTUBE_TERMS}>YouTube Terms of Service</Link>. Google
+            handles your data as described in the{" "}
+            <Link href={GOOGLE_PRIVACY}>Google Privacy Policy</Link>.
+          </p>
+        </Q>
+        <Q q="What Better Clips does on your channel">
+          <p>
+            With your permission, Better Clips uploads the clips you save in
+            OBS, reads their processing status, and renames, changes the
+            visibility of, or deletes them when you ask. It only changes videos
+            uploaded through Better Clips. You can remove its access at any time
+            in <Link href={GOOGLE_PERMISSIONS}>your Google Account</Link>.
+          </p>
+        </Q>
+      </Section>
+
+      <Section title="Your content">
+        <Q q="Your clips are yours">
+          <p>
+            You keep all rights to your clips. They are stored in your own
+            bucket or on your own channel. You let Better Clips handle them only
+            as needed to upload, list, play, trim, rename, share and delete them
+            for you.
+          </p>
+        </Q>
+        <Q q="What you're responsible for">
+          <ul>
+            <li>
+              Having the right to record and share what you clip, and following
+              the rules of the games and platforms you use.
+            </li>
+            <li>
+              Share links: anyone with a link can watch that clip until the link
+              expires or you delete the clip.
+            </li>
+            <li>
+              Your storage: any Cloudflare or S3 costs beyond a provider&apos;s
+              free tier, and keeping your keys and setup codes private.
+            </li>
+          </ul>
+        </Q>
+      </Section>
+
+      <Section title="Ending">
+        <Q q="Disconnect or delete your account">
+          <p>
+            You can stop using Better Clips at any time. Disconnect YouTube or
+            your bucket in <b>Settings</b>. To delete your hosted account, email{" "}
+            <Link href="mailto:aarshpersonal@proton.me">
+              aarshpersonal@proton.me
+            </Link>{" "}
+            from your sign-in address with the subject “Delete my Better Clips
+            account”. This does not delete videos on YouTube or files in your
+            own bucket.
+          </p>
+        </Q>
+        <Q q="Open source and self-hosting">
+          <p>
+            The plugin and the app are licensed under the{" "}
+            <Link href={`${REPO}/blob/main/LICENSE`}>GPL-2.0</Link>. A copy you
+            host yourself runs in your own Cloudflare account; these terms cover
+            the hosted app.
+          </p>
+        </Q>
+        <Q q="Changes and contact">
+          <p>
+            We may update these terms and will change the date above when we do.
+            Questions? Email{" "}
+            <Link href="mailto:aarshpersonal@proton.me">
+              aarshpersonal@proton.me
+            </Link>{" "}
+            or open an issue on <Link href={ISSUES}>GitHub</Link>.
           </p>
         </Q>
       </Section>

@@ -1309,6 +1309,16 @@ hostedRoutes(app)
 
 youtubeRoutes(app)
 
+/* The hosted app's public homepage is at /, with the dashboard at /apps/.
+ * A self-hosted app is one person's private dashboard, so its / opens the
+ * dashboard. Browsers keep the #/clip/… part of old links across this. */
+app.get("/", (c) => {
+  if (isHosted(c.env)) return c.env.ASSETS.fetch(c.req.raw)
+  const url = new URL(c.req.url)
+
+  return c.redirect("/apps/" + url.search, 302)
+})
+
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404))
 
 /* JSON errors, so OBS and the app can show what went wrong. A bucket key

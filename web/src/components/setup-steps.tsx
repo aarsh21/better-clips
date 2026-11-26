@@ -41,7 +41,7 @@ export function ObsConnect() {
         <button
           type="button"
           onClick={() => setShowSteps(true)}
-          className="self-start text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          className="self-start text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
           Set up OBS on another PC
         </button>
@@ -83,14 +83,14 @@ function ObsStatus({
         />
       </span>
       <div className="flex min-w-0 flex-col">
-        <span className="text-xs font-medium">
+        <span className="text-sm font-medium">
           {connected
             ? "OBS checked in recently"
             : seen
               ? "No recent OBS check"
               : "Waiting for OBS"}
         </span>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {seen
             ? `Last seen ${timeAgo(seen)}. Use Test Upload in OBS to check again.`
             : "Run Test Upload or upload a clip from OBS to verify this bucket."}
@@ -151,7 +151,7 @@ export function SetupSteps() {
   const code = setup.data?.code
 
   return (
-    <div className="flex flex-col gap-4 text-xs">
+    <div className="flex flex-col gap-4 text-sm">
       <div className="flex flex-col gap-2">
         <span id={platformId} className="font-medium">
           Run this in a terminal
@@ -178,7 +178,7 @@ export function SetupSteps() {
             : "Paste it into Terminal. A Linux upgrade may need sudo to remove an old system plugin."}{" "}
           It waits for OBS to close, installs the plugin, then opens OBS with
           the Replay Buffer running. Press{" "}
-          <kbd className="border bg-muted px-1 font-mono text-[10px] text-foreground">
+          <kbd className="border bg-muted px-1 font-mono text-[11px] text-foreground">
             Ctrl+Alt+R
           </kbd>{" "}
           to save a clip. The command holds your setup code, so keep it private.
@@ -280,7 +280,7 @@ function CopyField({
 
   return (
     <div className="mt-1 flex items-stretch">
-      <div className="flex h-8 min-w-0 flex-1 items-center border bg-muted/40 px-2 font-mono text-[11px] text-muted-foreground">
+      <div className="flex h-8 min-w-0 flex-1 items-center border bg-muted/40 px-2 font-mono text-xs text-muted-foreground">
         {shown ? (
           <span className="truncate">{shown}</span>
         ) : error ? (
@@ -308,7 +308,7 @@ function Step({
 }) {
   return (
     <li className="flex gap-3">
-      <span className="flex size-5 shrink-0 items-center justify-center bg-primary/15 text-[10px] font-semibold text-primary">
+      <span className="flex size-5 shrink-0 items-center justify-center bg-primary/15 text-[11px] font-semibold text-primary">
         {n}
       </span>
       <div className="min-w-0 flex-1 leading-relaxed">

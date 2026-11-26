@@ -282,7 +282,7 @@ function ActionBar({
 }) {
   if (clip.folder === "trash") {
     return (
-      <div className="flex flex-wrap items-center gap-1 border-t px-2 py-2">
+      <div className="flex flex-wrap items-center gap-1 border-t px-3 py-2.5">
         <Action
           icon={ArrowCounterClockwiseIcon}
           label="Restore"
@@ -302,7 +302,7 @@ function ActionBar({
   const kept = clip.folder === "saved"
 
   return (
-    <div className="flex flex-wrap items-center gap-1 border-t px-2 py-2">
+    <div className="flex flex-wrap items-center gap-1 border-t px-3 py-2.5">
       <Action
         icon={BookmarkSimpleIcon}
         label={kept ? "Kept" : "Keep"}

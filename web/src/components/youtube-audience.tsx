@@ -17,13 +17,17 @@ export function YouTubeAudience({ prompt = false }: { prompt?: boolean }) {
   return (
     <fieldset
       disabled={save.isPending}
-      className={prompt ? "mb-5 max-w-xl border px-4 py-3 text-xs" : "text-xs"}
+      className={
+        prompt ? "mb-8 max-w-xl border bg-card px-5 py-4 text-sm" : "text-sm"
+      }
     >
-      <legend className="font-medium">Made for kids?</legend>
+      <legend className="float-left w-full font-semibold">
+        Made for kids?
+      </legend>
       <p className="mt-1 leading-relaxed text-muted-foreground">
         Choose Yes if your clips are directed at children.{" "}
         <a
-          className="underline"
+          className="text-foreground underline underline-offset-4 hover:text-primary"
           href="https://support.google.com/youtube/answer/9528076"
           target="_blank"
           rel="noreferrer"
@@ -34,14 +38,18 @@ export function YouTubeAudience({ prompt = false }: { prompt?: boolean }) {
       <p className="mb-2 text-muted-foreground">
         Used when OBS doesn’t send an audience choice.
       </p>
-      <div className="flex gap-4">
+      <div className="flex gap-6">
         {([true, false] as const).map((value) => (
-          <label key={String(value)} className="flex items-center gap-1.5">
+          <label
+            key={String(value)}
+            className="flex items-center gap-2 font-medium"
+          >
             <input
               type="radio"
               name={prompt ? "library-audience" : "settings-audience"}
               checked={channel.defaultMadeForKids === value}
               onChange={() => save.mutate(value)}
+              className="size-4 accent-primary"
             />
             {value ? "Yes" : "No"}
           </label>

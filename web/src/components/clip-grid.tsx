@@ -81,18 +81,20 @@ export function ClipGrid({
 
   return (
     <TooltipProvider delay={400}>
-      <div className="flex flex-col gap-10">
+      <div className="flex flex-col gap-12">
         {days.map(([day, list]) => (
           <section key={day || "all"}>
-            <div className="sticky top-14 z-20 -mx-1 mb-3 flex items-baseline gap-3 bg-background/80 px-1 py-2 backdrop-blur-md">
+            <div className="sticky top-16 z-20 -mx-1 mb-4 flex items-baseline gap-3 bg-background/85 px-1 py-3 backdrop-blur-md">
               {day && (
-                <h2 className="text-xs font-semibold">{dayLabel(day)}</h2>
+                <h2 className="text-lg font-bold tracking-[-0.01em] [font-stretch:85%]">
+                  {dayLabel(day)}
+                </h2>
               )}
-              <span className="text-[11px] text-muted-foreground tabular-nums">
+              <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
                 {groupSummary(list)}
               </span>
             </div>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-x-4 gap-y-6">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-x-5 gap-y-8">
               {list.map((clip) => (
                 <ClipCard
                   key={clip.key}
@@ -211,10 +213,10 @@ function ClipCard({
         </div>
         <div className="flex flex-col gap-0.5 px-0.5">
           <div className="flex items-baseline justify-between gap-3">
-            <span className="truncate text-xs font-medium">
+            <span className="truncate text-sm font-semibold">
               {displayTitle(clip)}
             </span>
-            <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+            <span className="shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums">
               {left !== null && left <= 5 ? (
                 <span className={cn(left <= 2 && "text-destructive")}>
                   {left}d left ·{" "}
@@ -225,7 +227,7 @@ function ClipCard({
                 : `${dayLabel(clip.day)} ${clipTime(clip.time)}`}
             </span>
           </div>
-          <span className="truncate text-[11px] text-muted-foreground">
+          <span className="truncate text-xs text-muted-foreground">
             {clip.category || "No category"}
           </span>
         </div>

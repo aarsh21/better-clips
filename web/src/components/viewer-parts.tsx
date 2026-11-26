@@ -39,7 +39,7 @@ export function ViewerHeader({
   onRenamed: (name: string | null) => void
 }) {
   return (
-    <div className="flex items-center gap-2 border-b px-3 py-2">
+    <div className="flex items-center gap-2 border-b px-4 py-3">
       <div className="flex min-w-0 flex-1 flex-col">
         {renaming ? (
           <RenameInput
@@ -51,13 +51,13 @@ export function ViewerHeader({
           <DialogTitle
             render={<button type="button" />}
             onClick={onStartRename}
-            className="w-fit max-w-full truncate text-left text-sm font-semibold outline-none hover:text-primary focus-visible:text-primary focus-visible:underline"
+            className="w-fit max-w-full truncate text-left text-lg font-bold tracking-[-0.01em] [font-stretch:85%] outline-none hover:text-primary focus-visible:text-primary focus-visible:underline"
             title="Rename (E)"
           >
             {displayTitle(clip)}
           </DialogTitle>
         )}
-        <span className="truncate text-[11px] text-muted-foreground tabular-nums">
+        <span className="truncate font-mono text-[11px] text-muted-foreground tabular-nums">
           {meta}
         </span>
       </div>
@@ -120,7 +120,7 @@ function RenameInput({
           onDone(null)
         }
       }}
-      className="h-5 w-full max-w-sm border-b border-primary bg-transparent text-sm font-semibold outline-none"
+      className="h-7 w-full max-w-sm border-b border-primary bg-transparent text-lg font-bold [font-stretch:85%] outline-none"
     />
   )
 }

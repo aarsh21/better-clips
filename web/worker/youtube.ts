@@ -528,7 +528,7 @@ export function youtubeRoutes(app: Hono<any>) {
       purpose = q.purpose
 
     if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET)
-      return c.redirect("/?auth_error=YouTube+sign-in+is+not+configured")
+      return c.redirect("/apps/?auth_error=YouTube+sign-in+is+not+configured")
 
     if (!["pair", "login", "connect"].includes(purpose))
       return c.json({ error: "Invalid purpose" }, 400)
@@ -700,7 +700,7 @@ export function youtubeRoutes(app: Hono<any>) {
 
       if (!f.user) await startSession(c, user)
 
-      if (!f.port) return c.redirect("/")
+      if (!f.port) return c.redirect("/apps/")
       const code = randomToken()
       await db
         .prepare(
@@ -729,7 +729,7 @@ export function youtubeRoutes(app: Hono<any>) {
             })
         )
 
-      return c.redirect("/?auth_error=" + encodeURIComponent(description))
+      return c.redirect("/apps/?auth_error=" + encodeURIComponent(description))
     }
   })
   app.post(path + "/obs/exchange", async (c) => {

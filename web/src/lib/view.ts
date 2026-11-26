@@ -33,9 +33,12 @@ function readHash() {
   }
 }
 
-/* Pages that open without signing in, at /faq and /privacy. The FAQ also
- * opens at #/faq. */
-export type Page = "faq" | "privacy"
+/* The dashboard lives under /apps/. Everything else at the top level is a
+ * page that opens without signing in: the homepage at /, the FAQ (also at
+ * #/faq), the privacy policy and the terms. */
+export const APP_PATH = "/apps/"
+
+export type Page = "home" | "faq" | "privacy" | "terms"
 
 function readPage(): Page | null {
   const path = location.pathname.replace(/\/+$/, "")
@@ -44,7 +47,28 @@ function readPage(): Page | null {
 
   if (path === "/privacy") return "privacy"
 
+  if (path === "/terms") return "terms"
+
+  if (path === "") return "home"
+
   return null
+}
+
+/* Before the move to /apps/, the dashboard was at /: clip links were
+ * /#/clip/…, and sign-in came back to /?auth_error=… or /?connected=…
+ * Sends those to the dashboard, keeping the rest of the address. */
+export function redirectOldDashboardUrl() {
+  if (location.pathname !== "/") return false
+  const params = new URLSearchParams(location.search)
+
+  const old =
+    location.hash.startsWith("#/clip/") ||
+    params.has("auth_error") ||
+    params.has("connected")
+
+  if (old) location.replace(APP_PATH + location.search + location.hash)
+
+  return old
 }
 
 /* The page this address shows instead of the library, or null. */

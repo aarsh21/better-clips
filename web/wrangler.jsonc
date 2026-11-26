@@ -4,8 +4,9 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-01",
   "assets": {
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/s/*"]
+    "run_worker_first": ["/", "/api/*", "/s/*"]
   },
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "clips" }],
   // Slows down password guessing: 10 sign-in tries per minute per IP.

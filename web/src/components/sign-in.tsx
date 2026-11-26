@@ -1,14 +1,16 @@
 import * as React from "react"
-import { CloudIcon, GoogleLogoIcon } from "@phosphor-icons/react"
+import { CloudIcon } from "@phosphor-icons/react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button-variants"
 import { Input } from "@/components/ui/input"
-import { api, youtubeConnectUrl, type SignInKind } from "@/lib/api"
+import { Wordmark } from "@/components/brand"
+import { YouTubeConsent } from "@/components/youtube-consent"
+import { api, type SignInKind } from "@/lib/api"
 
-/* The Better Clips wordmark and a narrow column, for screens shown before the app. */
+/* A narrow column with the wordmark, for screens shown before the app. */
 export function AuthShell({
   children,
   wide = false,
@@ -17,20 +19,23 @@ export function AuthShell({
   wide?: boolean
 }) {
   return (
-    <main className="flex min-h-svh items-center justify-center px-4 py-12">
-      <div className={wide ? "w-full max-w-md" : "w-full max-w-xs"}>
-        <div className="mb-6 flex items-center gap-2">
-          <span className="size-2.5 bg-primary" />
-          <h1 className="text-sm font-semibold tracking-tight">better clips</h1>
+    <div className="flex min-h-svh flex-col bg-stage">
+      <header className="mx-auto flex h-16 w-full max-w-[1320px] items-center px-5 sm:px-8">
+        <a href="/" aria-label="Better Clips home">
+          <Wordmark />
+        </a>
+      </header>
+      <main className="flex flex-1 items-center justify-center px-5 py-12">
+        <div className={wide ? "w-full max-w-md" : "w-full max-w-sm"}>
+          {children}
         </div>
-        {children}
-        <InfoLinks className="mt-8" />
-      </div>
-    </main>
+      </main>
+      <InfoLinks className="mx-auto w-full max-w-[1320px] px-5 pb-8 sm:px-8" />
+    </div>
   )
 }
 
-/* The FAQ and the privacy policy, which open without signing in. */
+/* The FAQ, the privacy policy and the terms, which open without signing in. */
 export function InfoLinks({
   className,
   newTab = false,
@@ -43,7 +48,7 @@ export function InfoLinks({
   return (
     <p
       className={cn(
-        "flex gap-3 text-[11px] text-muted-foreground [&_a]:underline-offset-4 [&_a]:hover:text-foreground [&_a]:hover:underline",
+        "flex gap-5 text-sm text-muted-foreground [&_a]:transition-colors [&_a:hover]:text-foreground",
         className
       )}
     >
@@ -51,9 +56,21 @@ export function InfoLinks({
         FAQ
       </a>
       <a href="/privacy" {...link}>
-        Privacy
+        Privacy policy
+      </a>
+      <a href="/terms" {...link}>
+        Terms
       </a>
     </p>
+  )
+}
+
+/* The big condensed heading these screens open with. */
+export function AuthTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h1 className="mb-8 font-display text-[clamp(2.75rem,10vw,3.75rem)]">
+      {children}
+    </h1>
   )
 }
 
@@ -63,6 +80,9 @@ export function SignIn({ kind }: { kind: SignInKind }) {
 
   return (
     <AuthShell>
+      <AuthTitle>
+        {kind === "password" ? "Sign in" : "Set a password"}
+      </AuthTitle>
       {kind === "password" ? <PasswordForm /> : <SetPassword />}
     </AuthShell>
   )
@@ -71,15 +91,8 @@ export function SignIn({ kind }: { kind: SignInKind }) {
 function CloudflareSignIn() {
   return (
     <AuthShell>
-      <p className="mb-1 text-sm font-medium">
-        Your replays, from OBS to the web
-      </p>
-      <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
-        Press your replay hotkey in OBS to upload a clip. Keep clips in your own
-        Cloudflare account, free up to 10 GB, or upload them to your YouTube
-        channel.
-      </p>
-      <div className="flex flex-col gap-2">
+      <AuthTitle>Sign in</AuthTitle>
+      <div className="flex flex-col gap-3">
         <a
           href="/api/auth/login"
           className={buttonVariants({ size: "lg", className: "w-full" })}
@@ -87,32 +100,18 @@ function CloudflareSignIn() {
           <CloudIcon weight="fill" />
           Sign in with Cloudflare
         </a>
-        <a
-          href={youtubeConnectUrl("login")}
-          className={buttonVariants({
-            size: "lg",
-            variant: "outline",
-            className: "w-full",
-          })}
-        >
-          <GoogleLogoIcon weight="bold" />
+        <YouTubeConsent purpose="login" google>
           Sign in with Google
-        </a>
+        </YouTubeConsent>
       </div>
-      <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-        For bucket storage only, sign in with Cloudflare. For YouTube, Google
-        asks for all permissions together: to upload to your channel, list those
-        videos, and rename them, change who can watch or delete them when you
-        ask, under{" "}
+      <p className="mt-5 text-sm text-muted-foreground">
+        Cloudflare for your own bucket, Google for YouTube.{" "}
         <a
-          href="https://www.youtube.com/t/terms"
-          target="_blank"
-          rel="noreferrer"
-          className="underline underline-offset-4 hover:text-foreground"
+          href="/faq"
+          className="text-foreground underline-offset-4 hover:underline"
         >
-          YouTube&apos;s Terms of Service
+          Which one?
         </a>
-        .
       </p>
     </AuthShell>
   )
@@ -129,7 +128,7 @@ function PasswordForm() {
 
   return (
     <form
-      className="flex flex-col gap-2"
+      className="flex flex-col gap-3"
       onSubmit={(e) => {
         e.preventDefault()
         login.mutate(password)
@@ -141,15 +140,16 @@ function PasswordForm() {
         aria-label="Password"
         autoComplete="current-password"
         placeholder="Password"
+        className="h-11"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         aria-invalid={login.isError || undefined}
         autoFocus
       />
-      <Button type="submit" disabled={!password || login.isPending}>
+      <Button type="submit" size="lg" disabled={!password || login.isPending}>
         {login.isPending ? "Signing in…" : "Sign in"}
       </Button>
-      <p role="alert" className="min-h-4 text-[11px] text-destructive">
+      <p role="alert" className="min-h-5 text-sm text-destructive">
         {login.error?.message}
       </p>
     </form>
@@ -158,8 +158,7 @@ function PasswordForm() {
 
 function SetPassword() {
   return (
-    <div className="flex flex-col gap-2 text-xs text-muted-foreground">
-      <p className="font-medium text-foreground">Set a password</p>
+    <div className="text-sm leading-relaxed text-muted-foreground">
       <p>
         In the Cloudflare dashboard, open this Worker, go to{" "}
         <b className="text-foreground">Settings → Variables and Secrets</b> and

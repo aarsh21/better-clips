@@ -1,25 +1,31 @@
+import { APP_PATH } from "@/lib/view"
 import * as React from "react"
 import { CaretDownIcon, LightningIcon } from "@phosphor-icons/react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
 
-import { AuthShell } from "@/components/sign-in"
+import { AuthShell, AuthTitle } from "@/components/sign-in"
 import { Button } from "@/components/ui/button"
 import { buttonVariants } from "@/components/ui/button-variants"
 import { Input } from "@/components/ui/input"
 import { announceAccountChange, api } from "@/lib/api"
 
-/* The hosted app's second step: pick where clips are stored. */
+/* What automatic setup needs from the Cloudflare account. */
 export function AutoRequirements() {
   return (
-    <p className="text-[11px] leading-relaxed text-muted-foreground">
-      Automatic setup needs one Cloudflare account with R2 enabled. You need
-      permission to manage buckets and create account API tokens (Super
-      Administrator or API Token Provisioning). Otherwise, use your own key.
+    <p className="text-sm text-muted-foreground">
+      Needs R2 turned on and permission to create buckets and API tokens.{" "}
+      <a
+        href="/faq"
+        className="text-foreground underline-offset-4 hover:underline"
+      >
+        Details
+      </a>
     </p>
   )
 }
 
+/* The hosted app's second step: pick where clips are stored. */
 export function ConnectStorage() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me })
   const [own, setOwn] = React.useState(false)
@@ -27,15 +33,8 @@ export function ConnectStorage() {
 
   return (
     <AuthShell wide>
-      <p className="mb-1 text-sm font-medium">Connect your storage</p>
-      <p className="mb-6 text-xs leading-relaxed text-muted-foreground">
-        Your clips live in an R2 bucket in your own Cloudflare account. Better
-        Clips only gets a key for that one bucket, never for the rest of your
-        account.
-      </p>
-
-      <div className="flex flex-col gap-3 border bg-muted/30 p-4">
-        <AutoRequirements />
+      <AuthTitle>Connect your bucket</AuthTitle>
+      <div className="flex flex-col gap-3">
         <a
           href="/api/auth/setup"
           className={buttonVariants({ size: "lg", className: "w-full" })}
@@ -43,32 +42,22 @@ export function ConnectStorage() {
           <LightningIcon weight="fill" />
           Set up automatically
         </a>
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Uses the <b>clips</b> bucket in your account, with the clips already
-          in it, or makes it if you don&apos;t have one. Cloudflare asks once to
-          let Better Clips do that and make a key for just that bucket. Better
-          Clips asks Cloudflare to cancel that permission as soon as it&apos;s
-          done.
-        </p>
+        <AutoRequirements />
       </div>
 
       <button
         type="button"
         aria-expanded={own}
         onClick={() => setOwn(!own)}
-        className="mt-5 flex items-center gap-1.5 text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:text-foreground"
+        className="mt-6 flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:text-foreground"
       >
         <CaretDownIcon
-          className={cn("size-3 transition-transform", !own && "-rotate-90")}
+          className={cn("size-3.5 transition-transform", !own && "-rotate-90")}
         />
         Use another bucket, with your own key
       </button>
       {own && <OwnKeyForm />}
 
-      <p className="mt-8 text-[11px] text-muted-foreground">
-        R2 has to be turned on in your Cloudflare account once (Storage &amp;
-        databases → R2). It&apos;s free up to 10 GB.
-      </p>
       {email && <SignedInAs email={email} />}
     </AuthShell>
   )
@@ -83,19 +72,19 @@ export function OwnKeyForm() {
     mutationFn: api.connectStorage,
     onSuccess: () => {
       announceAccountChange()
-      location.assign("/?connected=1")
+      location.assign(`${APP_PATH}?connected=1`)
     },
   })
 
   return (
     <form
-      className="mt-3 flex flex-col gap-3 border p-4"
+      className="mt-4 flex flex-col gap-4 border bg-card p-5"
       onSubmit={(e) => {
         e.preventDefault()
         connect.mutate({ s3Url, accessKeyId, secretAccessKey })
       }}
     >
-      <ol className="flex list-decimal flex-col gap-1 pl-4 text-[11px] leading-relaxed text-muted-foreground">
+      <ol className="flex list-decimal flex-col gap-1 pl-4 text-sm leading-relaxed text-muted-foreground">
         <li>
           In R2, create a new private bucket just for clips. Its settings show
           its <b className="text-foreground">S3 API</b> URL.
@@ -144,7 +133,7 @@ export function OwnKeyForm() {
       >
         {connect.isPending ? "Checking the key…" : "Connect bucket"}
       </Button>
-      <p role="alert" className="min-h-4 text-[11px] text-destructive">
+      <p role="alert" className="min-h-5 text-sm text-destructive">
         {connect.error?.message}
       </p>
     </form>
@@ -159,7 +148,7 @@ function Field({
   children: React.ReactNode
 }) {
   return (
-    <label className="flex flex-col gap-1 text-[11px] font-medium">
+    <label className="flex flex-col gap-1.5 text-sm font-medium">
       {label}
       {children}
     </label>
@@ -170,7 +159,7 @@ export function SignedInAs({ email }: { email: string }) {
   const signOut = useSignOut()
 
   return (
-    <p className="mt-3 flex items-center gap-1 text-[11px] text-muted-foreground">
+    <p className="mt-10 flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
       Signed in as <span className="text-foreground">{email}</span> ·
       <button
         type="button"
@@ -192,7 +181,7 @@ export function useSignOut() {
     onSuccess: () => {
       qc.clear()
       announceAccountChange()
-      location.assign("/")
+      location.assign(APP_PATH)
     },
   })
 }

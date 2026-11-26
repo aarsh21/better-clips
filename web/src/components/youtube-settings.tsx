@@ -8,7 +8,8 @@ import { buttonVariants } from "@/components/ui/button-variants"
 import { Skeleton } from "@/components/ui/skeleton"
 import { YOUTUBE_RED } from "@/components/youtube"
 import { YouTubeAudience } from "@/components/youtube-audience"
-import { api, youtubeConnectUrl } from "@/lib/api"
+import { YouTubeConsent } from "@/components/youtube-consent"
+import { api } from "@/lib/api"
 import { useAccount, useMe } from "@/lib/settings"
 
 const YOUTUBE_TERMS = "https://www.youtube.com/t/terms"
@@ -25,36 +26,29 @@ export function YouTubeSettings() {
   if (isPending) return <Skeleton className="h-16 w-full" />
 
   return (
-    <div className="flex flex-col gap-5 text-xs">
+    <div className="flex flex-col gap-5 text-sm">
       {youtube ? (
         <ConnectedChannel channel={youtube} />
       ) : (
         <div className="flex flex-col gap-3">
-          <p className="leading-relaxed text-muted-foreground">
-            Connect your YouTube channel to see the clips OBS uploads there in
-            this library, next to your other clips. To upload from OBS, pick{" "}
-            <b className="font-medium text-foreground">YouTube</b> as the
-            destination in{" "}
-            <b className="font-medium text-foreground">
-              Tools → Better Clips Settings
-            </b>
-            , upload{" "}
-            <b className="font-medium text-foreground">
-              Through the Better Clips app
-            </b>
-            , sign in, then click{" "}
-            <b className="font-medium text-foreground">Save</b>.
+          <p className="text-sm text-muted-foreground">
+            See the clips OBS uploads to your channel here.{" "}
+            <a
+              href="/faq"
+              className="text-foreground underline-offset-4 hover:underline"
+            >
+              How
+            </a>
           </p>
-          <a
-            href={youtubeConnectUrl("connect")}
+          <YouTubeConsent
+            purpose="connect"
             className={buttonVariants({ className: "self-start" })}
           >
-            <YoutubeLogoIcon weight="fill" />
             Connect YouTube
-          </a>
+          </YouTubeConsent>
         </div>
       )}
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         Uploads follow{" "}
         <a
           href={YOUTUBE_TERMS}
@@ -133,7 +127,7 @@ function ConnectedChannel({
         />
         <div className="flex min-w-0 flex-col">
           <span className="truncate font-medium">{title}</span>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             Better Clips can upload, list, rename, change visibility of and
             delete your clips&apos; videos.
           </span>
@@ -153,7 +147,7 @@ function ConnectedChannel({
           >
             <div>
               OBS · {id.slice(0, 8)}
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {lastSeen
                   ? `Last seen ${new Date(lastSeen).toLocaleString()}`
                   : "Last seen unknown"}
@@ -178,7 +172,7 @@ function ConnectedChannel({
       </section>
       {confirming ? (
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             Better Clips loses access to {title}.
             {removed && ` This removes ${removed} from Better Clips.`}
             {devices.length > 0 &&
@@ -202,7 +196,7 @@ function ConnectedChannel({
               Cancel
             </Button>
           </div>
-          <p role="alert" className="text-[11px] text-destructive">
+          <p role="alert" className="text-xs text-destructive">
             {disconnect.error?.message}
           </p>
         </div>
@@ -210,7 +204,7 @@ function ConnectedChannel({
         <button
           type="button"
           onClick={() => setConfirming(true)}
-          className="self-start text-[11px] text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
+          className="self-start text-xs text-muted-foreground underline-offset-4 hover:text-destructive hover:underline"
         >
           Disconnect YouTube
         </button>

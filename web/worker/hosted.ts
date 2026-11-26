@@ -1005,9 +1005,9 @@ export function hostedRoutes(app: Hono<any>) {
   app.get("/api/auth/setup", async (c) => {
     const who = await signedIn(c)
 
-    if (!who) return c.redirect("/")
+    if (!who) return c.redirect("/apps/")
 
-    if (who.tenantId) return c.redirect("/")
+    if (who.tenantId) return c.redirect("/apps/")
 
     return startOAuth(c, "setup", who.userId)
   })
@@ -1036,7 +1036,7 @@ export function hostedRoutes(app: Hono<any>) {
           .run()
         await startSession(c, id)
 
-        return c.redirect("/")
+        return c.redirect("/apps/")
       }
 
       /* Setup must finish as the person who started it. */
@@ -1045,7 +1045,7 @@ export function hostedRoutes(app: Hono<any>) {
       if (!who || who.userId !== done.userId)
         throw new UserError("Sign in again, then set up storage.")
 
-      if (who.tenantId) return c.redirect("/")
+      if (who.tenantId) return c.redirect("/apps/")
 
       const missing = SETUP_SCOPES.filter((s) => !done.scopes.includes(s))
 
@@ -1070,7 +1070,7 @@ export function hostedRoutes(app: Hono<any>) {
         await unlockSetup(env, who.userId)
       }
 
-      return c.redirect("/?connected=1")
+      return c.redirect("/apps/?connected=1")
     } catch (err) {
       const message =
         err instanceof UserError || err instanceof StorageError
@@ -1079,7 +1079,7 @@ export function hostedRoutes(app: Hono<any>) {
 
       if (!(err instanceof UserError)) console.error("oauth callback", err)
 
-      return c.redirect(`/?auth_error=${encodeURIComponent(message)}`)
+      return c.redirect(`/apps/?auth_error=${encodeURIComponent(message)}`)
     } finally {
       if (token) c.executionCtx.waitUntil(revoke(env, token))
     }
