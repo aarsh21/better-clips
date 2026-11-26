@@ -21,6 +21,12 @@ noobs() { ! pgrep -x obs >/dev/null || die 'Quit OBS first. Never edit its live 
 if [[ $action != start ]]; then [[ -f $R/owner && $(cat "$R/owner") == "$PWD" ]] || die 'No matching run in this checkout'; fi
 case "$action" in
 start)
+  for cmd in amp pnpm node moto_server agent-browser obs Xvfb xdotool openbox xclip xdpyinfo xrandr import ffmpeg ffprobe sqlite3 jq ss openssl curl-config gh cmake cpack clang-format gersemi dpkg-deb qmake6; do
+    command -v "$cmd" >/dev/null || die "Missing prerequisite: $cmd. Run the SKILL.md install block before lab start."
+  done
+  /usr/bin/python3 -c 'import pyatspi' || die 'Install python3-pyatspi (see SKILL.md).'
+  sudo -n iptables --version >/dev/null || die 'Install iptables with passwordless sudo (see SKILL.md).'
+  test -s "$(qmake6 -query QT_INSTALL_PLUGINS)/imageformats/libqsvg.so" || die 'Install qt6-svg-plugins so Yami can draw checkbox indicators.'
   noobs
   for path in "$R" "$E" web/.dev.vars web/.wrangler/state /tmp/.X97-lock; do [[ ! -e $path && ! -L $path ]] || die "Already exists: $path. Use a fresh checkout/orb or stop its owner."; done
   for port in ${ports//,/ }; do [[ -z $(ss -Hlt "sport = :$port") ]] || die "Busy port $port"; done
@@ -63,12 +69,13 @@ protocol)
   "$0" doctor "$id" >"$E/before-protocol.log"; curl -sS http://localhost:8787/api/me >>"$E/before-protocol.log"
   python3 web/worker/tests/youtube_local.py >"$E/protocol.log" 2>&1
   "$S/no-qt-tls.sh" >"$E/no-qt-tls.log" 2>&1
-  svc google 'exec python3 web/worker/tests/youtube_local.py --serve'; waiturl http://127.0.0.1:9393/ ;;
+  svc google "exec python3 -B '$S/interactive-google.py'"; waiturl http://127.0.0.1:9393/ ;;
 legacy)
   noobs; mkdir "$R/old"; gh release download 0.2.0 --repo aarsh21/better-clips -p '*-x86_64-linux-gnu.deb' -D "$R/old"
   dpkg-deb -x "$R/old/"*.deb "$R/old/tree"; o=$C/plugins/obs-replay-r2; mkdir -p "$o/bin/64bit" "$C/basic/profiles/Untitled"
   cp "$R/old/tree"/usr/lib/*/obs-plugins/obs-replay-r2.so "$o/bin/64bit/"; cp -R "$R/old/tree/usr/share/obs/obs-plugins/obs-replay-r2" "$o/data"
-  printf '[SimpleOutput]\nRecRB=true\nRecRBTime=8\nRecEncoder=x264\n[Video]\nBaseCX=640\nBaseCY=360\nOutputCX=640\nOutputCY=360\n' >"$C/basic/profiles/Untitled/basic.ini"
+  printf '[SimpleOutput]\nFilePath=%s/recordings\nRecRB=true\nRecRBTime=8\nRecEncoder=x264\n[Video]\nBaseCX=640\nBaseCY=360\nOutputCX=640\nOutputCY=360\n' "$R" >"$C/basic/profiles/Untitled/basic.ini"
+  mkdir -p "$R/recordings"
   "$0" obs "$id" ;;
 obs)
   noobs
@@ -92,13 +99,27 @@ upgrade)
   cmake --build build_x86_64 --parallel 2 >>"$E/plugin-build.log"
   cpack --config build_x86_64/CPackConfig.cmake -G DEB >>"$E/plugin-build.log"
   pkg=$(ls -t release/better-clips-*-x86_64-linux-gnu.deb | head -1)
+  broken="$R/bad-install/obs-studio/plugins"; mkdir -p "$broken"; cp -a "$C/plugins/obs-replay-r2" "$broken/"
   env -u DISPLAY -u WAYLAND_DISPLAY -u CLIPS_SETUP_CODE XDG_CONFIG_HOME="$R/config" OBS_R2_PACKAGE="$PWD/$pkg" sh install.sh >"$E/install.log"
-  test ! -e "$C/plugins/obs-replay-r2"; test -s "$C/plugins/better-clips/bin/64bit/better-clips.so"; "$0" obs "$id" ;;
+  test ! -e "$C/plugins/obs-replay-r2"; test -s "$C/plugins/better-clips/bin/64bit/better-clips.so"
+  # A failed replacement must preserve both trees, including resources.
+  cp -a "$C/plugins/better-clips" "$broken/"
+  cp -a "$broken" "$R/before-corrupt"; printf 'not a deb\n' >"$R/corrupt.deb"
+  if env -u DISPLAY -u WAYLAND_DISPLAY -u CLIPS_SETUP_CODE XDG_CONFIG_HOME="$R/bad-install" OBS_R2_PACKAGE="$R/corrupt.deb" sh install.sh >"$E/corrupt-install.log" 2>&1; then die 'Corrupt package accepted'; fi
+  diff -qr "$R/before-corrupt" "$broken"; echo 'Both installed trees unchanged' >>"$E/corrupt-install.log"
+  "$0" obs "$id" ;;
 gates)
   rc=0
   gate() { local name=$1; shift; if "$@" >"$E/$name.log" 2>&1; then echo "PASS $name"; else echo "FAIL $name (see $E/$name.log)"; rc=1; fi; }
   gate clang19 bash -c 'clang-format --version | grep "version 19\." && build-aux/run-clang-format --fail-error --check'
-  gate gersemi build-aux/run-gersemi --fail-error --check
+  cmake_changes() {
+    local files
+    files=$(git diff --name-only --diff-filter=ACM "${BC_FORMAT_BASE:-origin/main}" HEAD -- '*.cmake' '*CMakeLists.txt') || return 1
+    if [[ -z $files ]]; then echo 'No changed CMake files in CI scope'; else mapfile -t paths <<<"$files"; build-aux/run-gersemi --fail-error --check "${paths[@]}"; fi
+  }
+  gate gersemi cmake_changes
+  gate clip-title node --test web/worker/tests/clip-title.test.mjs
+  gate r2-local python3 web/worker/tests/r2_local.py
   gate web-check pnpm --dir web check; gate web-build pnpm --dir web build; exit "$rc" ;;
 stop)
   for session in "r2-$id" "$BC_BROWSER"; do agent-browser --session "$session" close >/dev/null 2>&1 || :; done

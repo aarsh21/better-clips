@@ -10,6 +10,9 @@ p.add_argument('name', nargs='?', help='exact accessible name; omit to list visi
 p.add_argument('--role', help='e.g. push button or text')
 p.add_argument('--last', action='store_true', help='choose the last matching visible widget')
 p.add_argument('--has', help='check for visible text without activating a control')
+p.add_argument('--bounds', action='store_true', help='assert the entire named widget is on-screen; do not click')
+p.add_argument('--indicator', action='store_true', help='toggle the checkbox and verify its indicator pixels change')
+p.add_argument('--scroll-form', action='store_true', help='wheel the settings form down and back; assert the scrollbar moved')
 args = p.parse_args()
 assert os.environ.get('DISPLAY') == ':97', 'Use only the private lab display'
 matches = []
@@ -18,26 +21,64 @@ def walk(obj):
     if obj is None:
         return
     role, name = obj.getRoleName(), obj.name
-    if args.has and obj.getState().contains(a.STATE_SHOWING) and args.has in (name or ''):
+    if args.scroll_form and role == 'scroll bar' and obj.getState().contains(a.STATE_SHOWING):
+        if any(x.getRoleName() == 'dialog' for x in ancestors(obj)) and obj.queryValue().maximumValue > 0:
+            matches.append(obj)
+    elif args.has and obj.getState().contains(a.STATE_SHOWING) and args.has in (name or ''):
         matches.append(name)
     elif not args.has and 'Component' in obj.get_interfaces() and obj.getState().contains(a.STATE_SHOWING) and role not in ('application', 'label'):
         r = obj.queryComponent().getExtents(a.DESKTOP_COORDS)
         if r.width > 0 and r.height > 0:
-            if args.name is None:
+            if args.name is None and not args.scroll_form:
                 if role not in ('menu item', 'filler', 'panel', 'scroll pane'):
                     print(role, repr(name), (r.x, r.y, r.width, r.height))
             elif name == args.name and (not args.role or role == args.role):
-                matches.append((r.x + r.width // 2, r.y + r.height // 2))
+                matches.append((r.x, r.y, r.width, r.height))
     for child in obj:
         walk(child)
+
+def ancestors(obj):
+    while obj.parent:
+        obj = obj.parent
+        yield obj
 
 for app in a.Registry.getDesktop(0):
     if app.name.lower() in ('obs', 'obs studio'):
         walk(app)
 if args.has:
     raise SystemExit(0 if matches else 1)
+if args.scroll_form:
+    for bar in matches:
+        r = bar.queryComponent().getExtents(a.DESKTOP_COORDS)
+        if r.height <= r.width:
+            continue
+        def wheel(button):
+            subprocess.run(['xdotool', 'mousemove', str(r.x+r.width//2), str(r.y+r.height//2), 'click', '--repeat', '8', button, 'sleep', '.2'], check=True)
+        wheel('4'); top = bar.queryValue().currentValue
+        wheel('5'); bottom = bar.queryValue().currentValue
+        wheel('4')
+        if bottom > top:
+            print(f'Wheel moved form: {top:g} → {bottom:g}')
+            raise SystemExit(0)
+    raise SystemExit('Settings form did not scroll')
 if args.name is not None:
     if not matches or (len(matches) != 1 and not args.last):
         raise SystemExit(f'{len(matches)} visible matches for {args.name!r}; list controls or use --role/--last')
-    x, y = matches[-1]
-    subprocess.run(['xdotool', 'mousemove', str(x), str(y), 'click', '1'], check=True)
+    x, y, w, h = matches[-1]
+    if args.bounds:
+        sw, sh = map(int, subprocess.check_output(['xdotool', 'getdisplaygeometry']).split())
+        assert 0 <= x < x+w <= sw and 0 <= y < y+h <= sh, (args.name, x,y,w,h,sw,sh)
+        print(f'{args.name}: {x},{y} {w}×{h} inside {sw}×{sh}')
+    else:
+        def indicator():
+            # Only the indicator, left of the text, with the mouse off the widget.
+            subprocess.run(['xdotool', 'mousemove', '12', '12', 'sleep', '.2'], check=True)
+            return subprocess.check_output(['import', '-window', 'root', '-crop', f'18x18+{x}+{y+h//2-9}', '-depth', '8', 'rgb:-'])
+        if args.indicator:
+            before = indicator()
+        subprocess.run(['xdotool', 'mousemove', str(x+w//2), str(y+h//2), 'click', '1'], check=True)
+        if args.indicator:
+            after = indicator()
+            changed = sum(before[i:i+3] != after[i:i+3] for i in range(0,len(before),3))
+            assert len(before) == len(after) == 18*18*3 and changed > 8, f'Invisible checkbox: {changed} pixels changed'
+            print(f'Checkbox indicator changed {changed} of 324 pixels')

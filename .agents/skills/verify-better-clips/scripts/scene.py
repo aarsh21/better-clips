@@ -18,4 +18,19 @@ name = "Calibration reel"
 uid = str(uuid.uuid4())
 data["sources"].insert(0, {"name": name, "uuid": uid, "id": "ffmpeg_source", "versioned_id": "ffmpeg_source", "settings": {"is_local_file": True, "local_file": str(media), "looping": True}})
 data["sources"][1]["settings"].update(id_counter=1, items=[{"name": name, "source_uuid": uid, "id": 1, "visible": True, "scale": {"x": 1, "y": 1}, "align": 5}])
+# Fault fixture: stop only the plugin output; OBS's own replay buffer stays armed.
+# Recovery itself must use the dock button, never this script.
+lua = root / "stop-output.lua"
+lua.write_text('''function trip()
+  local marker = script_path() .. "stop-output"
+  local f = io.open(marker, "r")
+  if not f then return end
+  f:close()
+  os.remove(marker)
+  local out = obslua.obs_get_output_by_name("Better Clips")
+  if out then obslua.obs_output_force_stop(out); obslua.obs_output_release(out) end
+end
+function script_load(settings) obslua.timer_add(trip, 200) end
+''')
+data["modules"]["scripts-tool"].append({"path": str(lua), "settings": {}})
 scene.write_text(json.dumps(data))

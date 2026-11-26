@@ -15,9 +15,32 @@ c++ -std=c++17 -fPIC -I"$root/src" -x c++ - "$root/src/youtube-http.cpp" $(pkg-c
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     bool ssl = QSslSocket::supportsSsl();
-    auto response = youtube_http::perform({QUrl("https://www.googleapis.com/oauth2/v3/userinfo")}, false);
+    auto response = youtube_http::perform({QUrl(argv[1])}, false);
     std::printf("Qt supports TLS: %d; plugin HTTPS: %s\n", ssl, response.diagnostic().c_str());
     return ssl || response.code != CURLE_OK || response.status != 401;
 }
 CPP
-env -u QT_PLUGIN_PATH "$d/check"
+# Trust a disposable loopback certificate only in the probe's mount namespace.
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost -addext subjectAltName=IP:127.0.0.1 \
+  -keyout "$d/key" -out "$d/cert" 2>/dev/null
+python3 - "$d" <<'PY'
+import os, ssl, subprocess, sys, threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+d = sys.argv[1]
+class Fake(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(401)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+with HTTPServer(('127.0.0.1', 0), Fake) as server:
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(d+'/cert', d+'/key')
+    server.socket = tls.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    subprocess.run(['sudo', '-n', 'unshare', '-m', '--propagation', 'private', 'sh', '-ec',
+        'mount --bind "$1/cert" "$2"; exec runuser -u "$3" -- env -u QT_PLUGIN_PATH "$1/check" "$4"',
+        'sh', d, subprocess.check_output(['curl-config', '--ca'], text=True).strip(),
+        os.environ['USER'], f'https://127.0.0.1:{server.server_port}/userinfo'], check=True)
+PY

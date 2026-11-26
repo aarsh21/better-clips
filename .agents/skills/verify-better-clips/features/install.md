@@ -4,6 +4,8 @@
 
 Password sign-in; Connect OBS; local .deb install; carry forward destination, token, folder and a non-default hotkey after the plugin rename.
 
+`upgrade` also runs `install.sh` with `OBS_R2_PACKAGE` set to a corrupt `.deb` in an isolated install containing both plugin versions. Require nonzero exit and a byte-for-byte directory comparison against both before-images; see `$E/corrupt-install.log`.
+
 ## How to get to it (user POV)
 
 Open the empty Better Clips library, sign in and copy its install command. Quit OBS before upgrading. Reopen OBS and check the Better Clips dock and its Settings button.

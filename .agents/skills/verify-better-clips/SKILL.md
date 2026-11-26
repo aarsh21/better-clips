@@ -15,7 +15,7 @@ Use a disposable checkout with no OBS process, existing `web/.dev.vars` or `web/
 .agents/setup
 sudo -n apt-get update -qq
 sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  obs-studio xvfb xdotool openbox xclip x11-utils libgl1-mesa-dri sqlite3 \
+  obs-studio qt6-svg-plugins xvfb xdotool openbox xclip x11-utils x11-xserver-utils libgl1-mesa-dri sqlite3 \
   python3-pyatspi at-spi2-core dbus-x11 ffmpeg imagemagick iptables jq
 uv tool install 'moto[server]'
 agent-browser skills get core --full >/dev/null
@@ -39,7 +39,7 @@ export NO_PROXY=localhost,127.0.0.1,::1
 set -e
 "$S/lab" doctor "$id"
 "$S/lab" protocol "$id"
-for chapter in upgrade stores library channel edit direct; do
+for chapter in upgrade stores length library channel edit direct; do
   "$S/drive" "$chapter" "$id"
 done
 "$S/lab" gates "$id"
@@ -47,9 +47,9 @@ done
 
 Run chapters in order against the same instance. [Feature map](features/README.md) lists each chapter's preconditions, controls and proof. A failure leaves the instance and screenshots in place: use doctor, the named service logs (`amp orb service logs bc-$id-host`) and a fresh UI snapshot. Record the failure; do not seed the expected result to get past it. Use a new ID for a clean rerun. `gates` runs all checks even when one fails; it deliberately returns nonzero if any failed.
 
-- `protocol` runs the repo's full `python3 web/worker/tests/youtube_local.py` exercise, then `scripts/no-qt-tls.sh` (also runnable alone with `R=/dev/shm/better-clips-$UID-$id`), then starts the interactive `--serve` fake. Both fake modes own 9393: never run them simultaneously. The probe tests partial receipts, retries, byte identity, scope handling, failed processing, sync and revocation independently of the UI run. It seeds a disposable session; it is **not** proof a user signed in.
+- `protocol` runs `python3 web/worker/tests/youtube_local.py`, `scripts/no-qt-tls.sh`, then `scripts/interactive-google.py`. Both fake modes own 9393: never run them simultaneously. The protocol probe tests partial receipts, retries, byte identity, scope handling, failed processing, sync and revocation independently of UI sign-in. The interactive fake serves the real test handler with pre-edit metadata stale for two seconds instead of two reads. That lets the real dashboard poll and observe the fake's accepted write before the Worker's edit grace period expires. Never advance D1 clocks to make the UI pass.
 - `upgrade` downloads the published 0.2.0 Linux .deb. It builds the candidate with `cmake --preset ubuntu-x86_64 -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DYOUTUBE_CLIENT_ID=test-client -DYOUTUBE_CLIENT_SECRET=test-secret` and `cmake --build build_x86_64 --parallel 2`. Without the two definitions, **Directly to YouTube** is unavailable. It packages with CPack and runs the real `install.sh` with `OBS_R2_PACKAGE` and the display unset, so only the harness opens OBS. Distro OBS and `libobs-dev` must match; don't use Flatpak. The installer can remove a system-wide old plugin; the harness refuses to run over one.
-- `gates` checks clang-format **19** via `build-aux/run-clang-format --fail-error --check`, the full-tree `build-aux/run-gersemi --fail-error --check`, and `pnpm check` and `pnpm build` in `web/`. Keep them separate from the flow verdicts. The stock OBS frontend may warn about missing capture hardware in Xvfb; check for a loaded plugin and a working software encoder instead.
+- `gates` runs clang-format 19, gersemi on added/copied/modified `*.cmake` and `*CMakeLists.txt` since `${BC_FORMAT_BASE:-origin/main}` (the CI filter), `node --test web/worker/tests/clip-title.test.mjs`, `python3 web/worker/tests/r2_local.py`, and the web type-check and build. Run it **after** the UI chapters: the multipart test leaves a real clip on 8788, so the empty-library onboarding would no longer appear.
 
 ### Drive by hand at a failure
 

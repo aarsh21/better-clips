@@ -14,4 +14,4 @@ Before starting the interactive fake, capture `"$S/lab" doctor "$id"` and the si
 
 ## Gotchas
 
-The protocol exercise compiles a test client; it does not drive OBS or the real Google player. HTTP loopback fakes alone can't exercise missing TLS. Never rename system Qt libraries: the private plugin tree excludes `tls/` for this probe only. If HTTPS egress to Google's unauthenticated userinfo endpoint is blocked, report the transport check blocked, not passed via HTTP. A Linux check is not native macOS verification.
+The protocol exercise compiles a test client; it does not drive OBS or the real Google player. The TLS probe uses a loopback HTTPS server and a disposable certificate trusted only inside the probe's private mount namespace. Neither Google's endpoint nor a global trust-store change is needed. A Linux check is not native macOS verification.
