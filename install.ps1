@@ -156,7 +156,7 @@ if ($Code) {
     Say 'When OBS opens, it connects to your clips app and starts the Replay Buffer.'
     Say 'Press Ctrl+Alt+R to save a replay (change it in Settings > Hotkeys).'
 } else {
-    Say 'In OBS, open Tools > Better Clips Settings and paste the setup code from your clips app.'
+    Say 'In OBS, open Tools > Better Clips Settings and choose YouTube, an S3 bucket, or your Better Clips app.'
 }
 
 # Open OBS. It must start from its own folder to find its files.

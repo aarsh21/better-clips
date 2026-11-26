@@ -159,7 +159,7 @@ if [ -n "$CODE" ]; then
 	say "When OBS opens, it connects to your clips app and starts the Replay Buffer."
 	say "Press Ctrl+Alt+R to save a replay (change it in Settings > Hotkeys)."
 else
-	say "In OBS, open Tools > Better Clips Settings and paste the setup code from your clips app."
+	say "In OBS, open Tools > Better Clips Settings and choose YouTube, an S3 bucket, or your Better Clips app."
 fi
 
 # Open OBS, if this is a desktop session.
