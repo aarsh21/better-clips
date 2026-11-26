@@ -54,6 +54,7 @@ const STATUS_TEXT = {
   uploading: "Uploading from OBS…",
   processing: "Processing on YouTube…",
   failed: "YouTube couldn't process it",
+  missing: "Not found on YouTube",
 } satisfies Record<Exclude<YouTubeClip["status"], "ready">, string>
 
 /* Over a thumbnail or the player while YouTube isn't ready to play it. */
@@ -65,7 +66,7 @@ export function YouTubeStatus({
   large?: boolean
 }) {
   if (clip.status === "ready") return null
-  const failed = clip.status === "failed"
+  const failed = clip.status === "failed" || clip.status === "missing"
   const Icon = failed ? WarningIcon : CircleNotchIcon
 
   return (
@@ -87,7 +88,7 @@ export function YouTubeStatus({
       </span>
       {large && (
         <span className="max-w-sm text-xs text-white/70">
-          {failed ? (
+          {clip.status === "missing" ? "Your cut points are saved while Better Clips checks again." : failed ? (
             <>
               Open it in{" "}
               <a

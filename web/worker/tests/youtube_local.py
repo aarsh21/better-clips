@@ -720,12 +720,23 @@ def exercise():
     check(title == "Latest Studio title",
           f"description-only PATCH preserved Studio title: {title}")
     sync_due()  # Finish the post-edit refresh before making the video disappear.
-    del videos[vid]
+    call(endpoint + "/cut", "PUT", {"start": 2, "end": 7})
+    omitted = videos.pop(vid)
     sql("UPDATE youtube_clips SET uploaded='2020-01-01' WHERE videoId=?", (vid,))
     sync_due()
-    assert call("/api/clips")["youtube"]
+    missing = call("/api/clips")["youtube"][0]
+    assert missing["status"] == "missing" and missing["cut"] == {"start":2,"end":7}
+    assert sql("SELECT nextSync-missing_since FROM youtube_clips WHERE videoId=?", (vid,))[0][0] >= 86400000
+    sync_due()
+    videos[vid] = omitted
+    sync_due()
+    check(call("/api/clips")["youtube"][0]["cut"] == missing["cut"], "missing video reappeared with original cuts")
+    del videos[vid]
+    sync_due()
+    sql("UPDATE youtube_clips SET missing_since=1 WHERE videoId=?", (vid,))
     sync_due()
     assert call("/api/clips")["youtube"] == []
+    call(endpoint + "/cut", "PUT", None, 404)
     processing_result = "failed"
     vid = upload()
     clip = call("/api/clips")["youtube"][0]

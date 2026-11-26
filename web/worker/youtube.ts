@@ -303,14 +303,14 @@ async function sync(
         return [
           env
             .DB!.prepare(
-              `DELETE FROM youtube_clips WHERE videoId=? AND editedAt=? AND nextSync=? AND editLease=0 AND misses>=1 AND uploaded<?`
+              `DELETE FROM youtube_clips WHERE videoId=? AND editedAt=? AND nextSync=? AND editLease=0 AND missing_since<=?`
             )
-            .bind(id, editedAt, lease, new Date(now - 60000).toISOString()),
+            .bind(id, editedAt, lease, now - 7 * day),
           env
             .DB!.prepare(
-              `UPDATE youtube_clips SET misses=misses+1,nextSync=? WHERE videoId=? AND editedAt=? AND nextSync=? AND editLease=0`
+              `UPDATE youtube_clips SET misses=misses+1,missing_since=coalesce(missing_since,?),nextSync=? WHERE videoId=? AND editedAt=? AND nextSync=? AND editLease=0`
             )
-            .bind(now + 5000, id, editedAt, lease),
+            .bind(now, now + day, id, editedAt, lease),
         ]
       const thumbs = v.snippet.thumbnails
       const status = v.status.uploadStatus
@@ -322,7 +322,7 @@ async function sync(
                 title=?2,pendingTitle=CASE WHEN ?11 THEN nullif(pendingTitle,?2) END,
                 description=?3,pendingDescription=CASE WHEN ?11 THEN nullif(pendingDescription,?3) END,
                 privacy=?4,pendingPrivacy=CASE WHEN ?11 THEN nullif(pendingPrivacy,?4) END,
-                durationSeconds=?5,thumbnail=?6,status=?7,misses=0,nextSync=?1
+                durationSeconds=?5,thumbnail=?6,status=?7,misses=0,missing_since=NULL,nextSync=?1
                 WHERE videoId=?8 AND editedAt=?9 AND nextSync=?10 AND editLease=0`
         )
         .bind(
@@ -372,7 +372,7 @@ export async function youtubeClips(
     .prepare(
       `SELECT id,videoId,coalesce(pendingTitle,title) AS title,pendingTitle,
        coalesce(pendingDescription,description) AS description,pendingDescription,category,
-       coalesce(pendingPrivacy,privacy) AS privacy,pendingPrivacy,recordedAt,uploaded,durationSeconds,thumbnail,status,start,end
+       coalesce(pendingPrivacy,privacy) AS privacy,pendingPrivacy,recordedAt,uploaded,durationSeconds,thumbnail,CASE WHEN missing_since IS NULL THEN status ELSE 'missing' END AS status,start,end
        FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL ORDER BY recordedAt DESC`
     )
     .bind(user)
@@ -951,12 +951,13 @@ export function youtubeRoutes(app: Hono<any>) {
               cut.end > Math.ceil(clip.durationSeconds)))
         )
           return c.json({ error: "Invalid whole-second cut" }, 400)
-        await db
+        const saved = await db
           .prepare(
             "UPDATE youtube_clips SET start=?,end=? WHERE id=? AND user_id=?"
           )
           .bind(cut?.start ?? null, cut?.end ?? null, id, user)
           .run()
+        if (!saved.meta.changes) return c.json({ error: "This clip is gone." }, 404)
       } else if (c.req.method === "DELETE") {
         await google(
           env,

@@ -51,7 +51,7 @@ type ApiYouTubeClip = {
   uploaded: string
   durationSeconds: number | null
   thumbnail: string | null
-  status: "uploading" | "processing" | "ready" | "failed"
+  status: "uploading" | "processing" | "ready" | "failed" | "missing"
   cut: Cut | null
   /** https://youtu.be/<videoId> */
   url: string
