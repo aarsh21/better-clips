@@ -49,6 +49,31 @@ the web app ships from `main`.
 - Titles hide the unique ID in new clip names. Setup explains the Cloudflare
   permissions it needs, and an empty library no longer looks like first-run
   setup.
+- A new homepage at `/`. The dashboard moved to `/apps/`; old links and
+  sign-in redirects forward there. Self-hosted installs open the app directly.
+- A new, quieter look across the whole app, in light and dark, on desktop and
+  phone. New **Terms** page.
+- Before connecting YouTube, the app lists what it will do on your channel and
+  asks you to agree to the Terms, Privacy policy and YouTube Terms.
+- Google sign-in asks for fewer permissions: your account ID, email, and
+  YouTube management.
+- Set **Made for kids?** once in Settings → YouTube. Uploads from older OBS
+  versions use it.
+- Videos that are made for kids, or whose audience isn't confirmed yet, open on
+  YouTube instead of playing in the app.
+
+## [0.5.0] - 2026-11-26
+
+### Plugin
+
+- **Direct YouTube sign-in is kept in your system's secure storage**: Keychain
+  on macOS, Credential Manager on Windows, and the keyring on Linux. Upgrading
+  moves an existing sign-in there and removes it from the settings file. With
+  no keyring, OBS keeps it for the current session only and tells you once.
+- Direct YouTube sign-in asks only to upload videos and view your channel.
+- Choose **Made for kids?** in the YouTube settings. Until you do, clips are
+  saved to disk instead of uploaded.
+- YouTube's upload terms are shown in the settings and next to **Upload**.
 
 ## [0.4.0] - 2026-11-26
 
@@ -183,6 +208,7 @@ the web app ships from `main`.
   clips to Cloudflare R2 without writing them to disk.
 - The clips web app to browse, preview, trim, keep, delete and share clips.
 
+[0.5.0]: https://github.com/aarsh21/better-clips/releases/tag/0.5.0
 [0.4.0]: https://github.com/aarsh21/better-clips/releases/tag/0.4.0
 [0.3.1]: https://github.com/aarsh21/better-clips/releases/tag/0.3.1
 [0.3.0]: https://github.com/aarsh21/better-clips/releases/tag/0.3.0
