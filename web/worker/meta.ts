@@ -68,6 +68,9 @@ export interface Meta {
   /* A clip moved: its thumbnail and the share links of that recording
    * follow it, except into the trash, which turns its links off. */
   moved(move: Moved): Promise<void>
+  claimMove(move: Moved): Promise<boolean>
+  pendingMoves(): Promise<Moved[]>
+  endMove(from: string): Promise<void>
   /* Clips that were deleted for good. */
   forget(keys: string[]): Promise<void>
   createShare(id: string, share: Share): Promise<void>
@@ -161,6 +164,15 @@ export function bucketMeta(bucket: R2Bucket): Meta {
 
     putThumb: async () => {},
 
+    async claimMove(move) {
+      return Boolean(await bucket.put(`config/moves/${encodeURIComponent(move.from)}`,JSON.stringify(move),{onlyIf:{etagDoesNotMatch:"*"}}))
+    },
+    async pendingMoves() {
+      const rows = await listAll(bucket,"config/moves/")
+      const moves = await Promise.all(rows.filter(r=>r.uploaded.getTime()<Date.now()-60000).slice(0,20).map(async r => (await bucket.get(r.key))?.json<Moved>()))
+      return moves.filter(m=>!!m)
+    },
+    async endMove(from) { await bucket.delete(`config/moves/${encodeURIComponent(from)}`) },
     async moved({ from, to, etag }) {
       const shares = await listAll(bucket, "shares/")
 
@@ -290,6 +302,14 @@ export function d1Meta(db: D1Database, tenant: string): Meta {
         .run()
     },
 
+    async claimMove(move) {
+      return Boolean((await db.prepare("INSERT INTO bucket_moves(tenant_id,source,move,created) VALUES(?,?,?,?) ON CONFLICT DO NOTHING").bind(tenant,move.from,JSON.stringify(move),Date.now()).run()).meta.changes)
+    },
+    async pendingMoves() {
+      const rows = await db.prepare("SELECT move FROM bucket_moves WHERE tenant_id=? AND created<? ORDER BY created LIMIT 20").bind(tenant,Date.now()-60000).all<{move:string}>()
+      return rows.results.map(({move}):Moved=>JSON.parse(move))
+    },
+    async endMove(from) { await db.prepare("DELETE FROM bucket_moves WHERE tenant_id=? AND source=?").bind(tenant,from).run() },
     async moved({ from, to, etag, thumb }) {
       /* Only links to the recording that was moved follow it. A link pinned
        * to an earlier recording at this name stays off. */

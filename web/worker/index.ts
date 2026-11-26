@@ -45,6 +45,7 @@ import {
 import {
   bucketMeta,
   bucketShare,
+  type Moved,
   d1Share,
   REPLAY_DAYS,
   TRASH_DAYS,
@@ -440,34 +441,11 @@ function slug(text: string) {
     .slice(0, 40)
 }
 
-/* wanted, or wanted-2, -3 and so on: the first name not in the bucket and
- * not in skip. */
-async function uniqueKey(store: Store, key: string, skip = new Set<string>()) {
-  const base = key.replace(/\.mp4$/, "")
-
-  for (let i = 0; ; i++) {
-    const candidate = i === 0 ? key : `${base}-${i + 1}.mp4`
-
-    if (!skip.has(candidate) && !(await store.head(candidate))) return candidate
-  }
-}
-
-/* Copies to wanted, or wanted-2, -3…; another move can take a name between
- * the check and the copy, so a refused copy tries the next name. */
-async function copyToFreeKey(
-  store: Store,
-  from: { key: string; etag: string },
-  wanted: string,
-  taken: Set<string>,
-  tries: number
-): Promise<{ key: string; etag: string }> {
-  if (!tries) throw new Error("Could not find a free name for this clip")
-  const candidate = await uniqueKey(store, wanted, taken)
-  const etag = await store.copy(from.key, candidate, true, from.etag)
-
-  if (etag !== null) return { key: candidate, etag }
-
-  return copyToFreeKey(store, from, wanted, taken.add(candidate), tries - 1)
+/* The last component is the download name; the directory identifies this
+ * particular object, even on a restore or rename back to an old label. */
+const logicalKey = (key: string) => key.replace(/\/v-[a-f0-9-]{36}\/(?=[^/]+$)/,"/")
+function freshKey(key: string) {
+  return logicalKey(key).replace(/[^/]+$/,file=>`v-${crypto.randomUUID()}/${file}`)
 }
 
 /* Deletes clips and their thumbnails, thumbnail first, so a failure never
@@ -494,40 +472,59 @@ async function move(t: Tenant, from: string, wanted: string) {
 
   if (!clip?.etag) throw new Error("Clip not found")
 
-  const to = await copyToFreeKey(
-    t.store,
-    { key: from, etag: clip.etag },
-    wanted,
-    new Set(),
-    5
-  )
+  const key = freshKey(wanted)
+  const etag = await t.store.copy(from,key,true,clip.etag)
+  if (!etag) throw new ClipChanged()
 
   /* A thumbnail that changed meanwhile isn't copied; the app makes a new
    * one. */
   const thumbEtag = thumb
     ? await t.store
-        .copy(`thumbs/${from}.jpg`, `thumbs/${to.key}.jpg`, false, thumb.etag)
+        .copy(`thumbs/${from}.jpg`, `thumbs/${key}.jpg`, true, thumb.etag)
         .catch((err) => {
-          if (err instanceof ClipChanged) return null
-          throw err
+          console.warn("Thumbnail not copied; it will be regenerated",err instanceof ClipChanged)
+          return null
         })
     : null
 
   /* R2 can't delete a file only if it's unchanged, so check right before
    * deleting: if the clip was replaced since the copy, keep both files. */
-  if ((await t.store.head(from))?.etag !== clip.etag) throw new ClipChanged()
+  const record: Moved = {from,to:key,etag:[clip.etag,etag],thumb:thumb && thumbEtag ? [thumb.etag,thumbEtag] : null}
+  if (!await t.meta.claimMove(record)) {
+    await deleteClips(t.store,[key])
+    throw new HTTPException(409,{message:"A move for this clip is already in progress. Refresh the library."})
+  }
+  if ((await t.store.head(from))?.etag !== clip.etag) {
+    await deleteClips(t.store,[key])
+    await t.meta.endMove(from)
+    throw new ClipChanged()
+  }
+  try {
+    await finishMove(t, record)
+  } catch (err) {
+    if (err instanceof ClipChanged) throw err
+    throw new HTTPException(409,{message:"The clip was copied, but its move did not finish. Keep both copies; Better Clips will check again."})
+  }
+  return key
+}
 
-  await t.meta.moved({
-    from,
-    to: to.key,
-    etag: [clip.etag, to.etag],
-    thumb: thumb && thumbEtag ? [thumb.etag, thumbEtag] : null,
-  })
+async function finishMove(t:Tenant, move:Moved) {
+  const [src,dest] = await Promise.all([t.store.head(move.from),t.store.head(move.to)])
+  if (dest?.etag !== move.etag[1] || (src && src.etag !== move.etag[0])) {
+    // Another writer changed a file. Keep its bytes and do not retarget shares.
+    await t.meta.endMove(move.from)
+    throw new ClipChanged()
+  }
+  if (src && !(await deleteClips(t.store,[move.from])).length) throw new Error("Original still present")
+  await t.meta.moved(move)
+  await t.meta.endMove(move.from)
+}
 
-  if (!(await deleteClips(t.store, [from])).length)
-    console.error("moved a clip but couldn't delete the original")
-
-  return to.key
+async function reconcileMoves(t:Tenant) {
+  for (const move of await t.meta.pendingMoves()) {
+    if (!clipKey(move.from) || !clipKey(move.to) || move.from === move.to) continue
+    await finishMove(t,move).catch(()=>console.warn("A copied clip still needs reconciliation"))
+  }
 }
 
 /* Sends an object. A <video>, <img> or download loads straight from the
@@ -612,6 +609,7 @@ app.get("/api/clips", async (c) => {
 })
 
 async function bucketClips(t: Tenant) {
+  await reconcileMoves(t)
   const [objects, thumbs] = await Promise.all([
     t.store.list(""),
     t.meta.thumbs(),
@@ -1040,18 +1038,16 @@ async function uploadKey(c: Context<App>) {
 async function trimKey(store: Store, from: { key: string; folder: Folder }) {
   const folder = from.folder === "trash" ? "replays" : from.folder
 
-  const path = from.key
+  const path = logicalKey(from.key)
     .slice(from.folder.length + 1)
     .replace(/(?:-trim)+(?:-\d+)?\.mp4$|\.mp4$/, "")
 
+  const day = path.slice(0,path.lastIndexOf("/")+1)
+  const objects = await Promise.all(FOLDERS.map(f=>store.list(`${f}/${day}`)))
+  const seen = new Set(objects.flat().map(o=>logicalKey(o.key).replace(/^[^/]+\//,"")))
   for (let n = 1; ; n++) {
     const file = `${path}-trim-${n}.mp4`
-
-    const taken = await Promise.all(
-      FOLDERS.map((f) => store.head(`${f}/${file}`))
-    )
-
-    if (!taken.some(Boolean)) return `${folder}/${file}`
+    if (!seen.has(file)) return `${folder}/${file}`
   }
 }
 
@@ -1080,16 +1076,14 @@ app.post("/api/upload/start", async (c) => {
 
   if (!wanted) return c.json({ error: "Bad clip name" }, 400)
   const t = c.get("tenant")
-  const taken = new Set<string>()
 
   for (let tries = 0; tries < 5; tries++) {
-    const key = await uniqueKey(t.store, wanted, taken)
+    const key = freshKey(wanted)
     const uploadId = await t.store.createUpload(key)
 
     if (await t.meta.startUpload(uploadId, key))
       return c.json({ key, uploadId })
     await t.store.abortUpload(key, uploadId)
-    taken.add(key)
   }
 
   return c.json({ error: "Could not find a free name for this clip" }, 409)
@@ -1255,6 +1249,7 @@ const CLEANUP_BATCH = 2000
 
 /* Clears old clips. Returns "more" when there's more to clear. */
 async function cleanup(t: Tenant) {
+  await reconcileMoves(t)
   const now = Date.now()
   const settings = await t.meta.settings()
 
