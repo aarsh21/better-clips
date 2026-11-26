@@ -111,11 +111,13 @@ void load_config()
 	obs_data_release(data);
 }
 
-void save_config()
+/* config_mutex serializes the file transaction and the settings it publishes. */
+bool write_config(const R2Config &next, const YouTubeSettings &account)
 {
 	obs_data_t *data = obs_data_create();
 	{
-		std::lock_guard<std::mutex> lock(config_mutex);
+		const auto &config = next;
+		const auto &youtube = account;
 		obs_data_set_string(data, "app_url", config.app_url.c_str());
 		obs_data_set_string(data, "upload_token", config.upload_token.c_str());
 		obs_data_set_string(data, "s3_url", config.s3_url.c_str());
@@ -145,9 +147,17 @@ void save_config()
 	char *dir = obs_module_config_path("");
 	os_mkdirs(dir);
 	bfree(dir);
-	if (!obs_data_save_json_safe(data, config_path().c_str(), "tmp", "bak"))
+	bool saved = obs_data_save_json_safe(data, config_path().c_str(), "tmp", "bak");
+	if (!saved)
 		obs_log(LOG_WARNING, "Could not save %s", config_path().c_str());
 	obs_data_release(data);
+	return saved;
+}
+
+void save_config()
+{
+	std::lock_guard<std::mutex> lock(config_mutex);
+	write_config(config, youtube);
 }
 
 /* Starts our replay buffer on the encoders of OBS's replay buffer. OBS's
@@ -415,20 +425,26 @@ YouTubeSettings get_youtube_settings()
 
 void set_youtube_settings(const YouTubeSettings &settings)
 {
-	{
-		std::lock_guard<std::mutex> lock(config_mutex);
-		youtube = settings;
-	}
-	save_config();
+	std::lock_guard<std::mutex> lock(config_mutex);
+	youtube = settings;
+	if (!write_config(config, youtube))
+		notify_user(
+			"Better Clips: could not save the YouTube connection. Check your settings folder permissions.");
 }
 
 void set_config(const R2Config &new_config)
 {
-	{
-		std::lock_guard<std::mutex> lock(config_mutex);
-		config = new_config;
-	}
-	save_config();
+	save_settings(new_config, get_youtube_settings());
+}
+
+bool save_settings(const R2Config &next, const YouTubeSettings &account)
+{
+	std::lock_guard<std::mutex> lock(config_mutex);
+	if (!write_config(next, account))
+		return false;
+	config = next;
+	youtube = account;
+	return true;
 }
 
 void notify_user(const std::string &message, const std::string &link)

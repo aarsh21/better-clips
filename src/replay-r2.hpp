@@ -177,3 +177,5 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 /* Reserve before accepting a press; enqueue or cancel exactly once. */
 bool uploader_reserve();
 void uploader_cancel_reservation();
+
+bool save_settings(const R2Config &next, const YouTubeSettings &account);

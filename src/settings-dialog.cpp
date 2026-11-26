@@ -411,11 +411,7 @@ public:
 		destination->addItem("Better Clips app (R2)", int(Destination::ClipsApp));
 		destination->addItem("S3 bucket", int(Destination::S3));
 		destination->addItem("YouTube", int(Destination::YouTube));
-		/* Before there was a choice, an empty Better Clips app meant the S3 bucket. */
-		Destination to = youtube.destination;
-		if (to == Destination::ClipsApp && config.app_url.empty() && !config.s3_url.empty())
-			to = Destination::S3;
-		destination->setCurrentIndex(destination->findData(int(to)));
+		destination->setCurrentIndex(destination->findData(int(youtube.destination)));
 
 		app_url = new QLineEdit(QString::fromStdString(config.app_url));
 		app_url->setPlaceholderText("https://clips.<you>.workers.dev");
@@ -470,10 +466,13 @@ public:
 		test = buttons->addButton("Test Upload", QDialogButtonBox::ActionRole);
 		connect(paste, &QPushButton::clicked, this, [this]() { paste_setup_code(); });
 		connect(buttons, &QDialogButtonBox::accepted, this, [this]() {
-			set_config(current());
 			YouTubeSettings settings = youtube_page->current();
 			settings.destination = chosen();
-			set_youtube_settings(settings);
+			if (!save_settings(current(), settings)) {
+				status->setText(
+					"Settings weren't saved. Check the permissions on the Better Clips settings folder, then try again.");
+				return;
+			}
 			accept();
 		});
 		connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -557,8 +556,7 @@ private:
 		config.access_key = access_key->text().trimmed().toStdString();
 		config.secret_key = secret_key->text().trimmed().toStdString();
 		config.folder = folder->text().trimmed().toStdString();
-		if (chosen() == Destination::S3)
-			config.public_url = public_url->text().trimmed().toStdString();
+		config.public_url = public_url->text().trimmed().toStdString();
 		config.start_replay_buffer = start_replay->isChecked();
 		return config;
 	}
@@ -739,8 +737,16 @@ void wait_for_tests()
 
 void show_settings_dialog()
 {
+	static QPointer<SettingsDialog> current;
+	if (current) {
+		current->showNormal();
+		current->raise();
+		current->activateWindow();
+		return;
+	}
 	auto *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
 	auto *dialog = new SettingsDialog(parent);
+	current = dialog;
 	dialog->setAttribute(Qt::WA_DeleteOnClose);
 	dialog->show();
 }
