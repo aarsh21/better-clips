@@ -2,7 +2,7 @@
 # Run one chapter against the local stack. No HTTP mutation substitutes for a UI action.
 set -euo pipefail
 phase=${1:-help}; id=${2:-}; S=$(dirname "$(realpath "$0")")
-if [[ ! $id =~ ^[a-z0-9]{1,8}$ ]]; then echo 'drive {upgrade|stores|length|library|channel|player|edit|direct|credentials} RUN_ID'; exit 2; fi
+if [[ ! $id =~ ^[a-z0-9]{1,8}$ ]]; then echo 'drive {upgrade|rollout|stores|length|library|channel|player|edit|direct|credentials} RUN_ID'; exit 2; fi
 cd "$(git rev-parse --show-toplevel)"; export DISPLAY=:97 R=/dev/shm/better-clips-$UID-$id E=$PWD/.amp/in/artifacts/bc-$id
 [[ -f $R/owner && $(cat "$R/owner") == "$PWD" ]] || { echo 'Start this run with lab start first'; exit 1; }
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
@@ -67,6 +67,46 @@ upgrade)
   "$S/lab" upgrade "$id"; waitfor test -f "$cfg"; cmp <(jq -Sc '{app_url,upload_token,save_hotkey,folder}' "$old") <(jq -Sc '{app_url,upload_token,save_hotkey,folder}' "$cfg")
   jq -e '.save_hotkey==[{key:"OBS_KEY_F8",shift:true}]' "$cfg" >/dev/null
   log | grep 'plugin loaded successfully' >>"$E/upgrade.log"; test ! -e "$C/plugins/obs-replay-r2"; osnap upgraded ;;
+rollout)
+  # Independent run immediately after upgrade, starting with a never-paired hosted account.
+  session=yt-$id; b open about:blank; b network route 'https://**' --abort; b open http://localhost:8787; b set viewport 1100 740 2
+  b wait --text 'Sign in with Google'; b find role link click --name 'Sign in with Google'; b wait --text 'No clips yet'
+  settings; dest 'Better Clips app (R2)' y; field 'Better Clips app' http://localhost:8787; connect 'Sign in with YouTube' 0; o Save --role button
+  "$S/lab" quit "$id"; mkdir "$R/rel040" "$R/obs31"
+  gh release download 0.4.0 -R aarsh21/better-clips -p '*-x86_64-linux-gnu.deb' -D "$R/rel040"
+  published=$(ls "$R/rel040/"*.deb); echo "276a6bfd296dc233f011a0f66fabbcc46a44ed24c0a280e37884e2b0ce06cde6  $published" | sha256sum -c -
+  install_deb(){ env -u DISPLAY -u WAYLAND_DISPLAY -u CLIPS_SETUP_CODE XDG_CONFIG_HOME="$R/config" OBS_R2_PACKAGE="$1" sh install.sh; }
+  install_deb "$published"; dpkg-deb -x "$published" "$R/rel040/tree"
+  cmp "$R"/rel040/tree/usr/lib/*/obs-plugins/better-clips.so "$C/plugins/better-clips/bin/64bit/better-clips.so"
+  # On Debian 13 the distro OBS 30 loads the release but lacks a symbol used on Save.
+  gh release download 31.1.1 -R obsproject/obs-studio -p '*plucky_amd64.deb' -D "$R/obs31"
+  dpkg-deb -x "$R/obs31/"*.deb "$R/obs31/root"; mkdir "$R/obs31/unused"
+  for p in "$R/obs31/root/usr/lib/x86_64-linux-gnu/obs-plugins/"*.so; do
+    case ${p##*/} in obs-outputs.so|obs-ffmpeg.so|obs-x264.so|obs-transitions.so|image-source.so|linux-pulseaudio.so|frontend-tools.so|rtmp-services.so) ;; *) mv "$p" "$R/obs31/unused/";; esac
+  done
+  "$S/lab" obs "$id"; waitfor o --has 'Save Replay to YouTube'; sleep 3; o 'Save Replay to YouTube'
+  waitfor o --has 'Settings → YouTube, or update Better Clips'; osnap legacy-no-choice
+  kept=$(find "$R/recordings" -name "*$(last_uuid).mp4"); ffprobe -v error -show_entries format=duration,size -of compact "$kept"
+  sleep 4; [[ $(log | grep -c 'YouTube upload failed (HTTP 422)') == 1 ]]; row 'select count(*) from youtube_clips' 0
+  b open http://localhost:8787; b wait --text 'Made for kids?'; bsnap library-audience
+  b record start "$E/save-choice.mp4" --fps 12 --cursor; sleep 1.3
+  b hover 'label:has(input[type=radio]):last-child'; sleep .7; b hover 'label:has(input[type=radio]):first-child'; sleep .7
+  b find role radio click --name Yes; b wait --fn '!document.querySelector("input[name=library-audience]")'; sleep 1; b record stop
+  b reload; b wait --text 'No clips yet'; [[ $(b eval 'document.querySelectorAll("input[name=library-audience]").length') == 0 ]]
+  account; b wait --fn 'document.querySelector("input[name=settings-audience]").checked'; bsnap settings-choice
+  o 'Save Replay to YouTube'; waitfor copied https://youtu.be/test; ready_copy "$(last_uuid)"; osnap legacy-ready
+  row "select madeForKids from youtube_clips where videoId='$(basename "$(clip)")' and status='ready'" 1
+  "$S/lab" quit "$id"; mv "$R/obs31/root" "$R/obs31/used"; install_deb "$(realpath "$(ls -t release/*-x86_64-linux-gnu.deb | head -1)")"
+  "$S/lab" obs "$id"; settings
+  for size in 1440x900 1366x768; do
+    if [[ $size == 1366x768 ]]; then xrandr --newmode "$size" 85.5 1366 1436 1579 1792 768 771 774 798; xrandr --addmode screen "$size"; xrandr --output screen --mode "$size"; sleep .6; fi
+    o 'Choose an audience' --role 'combo box'; sleep .3; o --has Yes; o --has No; osnap "dropdown-$size"; xdotool key Escape
+    o --scroll-end; osnap "bottom-$size"; o Cancel --role button; settings
+  done
+  xrandr --output screen --mode 1440x900; sleep .5; dest 'Choose an audience' n; o Save --role button
+  jq -e '.youtube_made_for_kids==false' "$cfg"; o 'Save Replay to YouTube'
+  waitfor row "select count(*) from youtube_clips where madeForKids=0 and status='ready'" 1
+  row 'select default_made_for_kids from youtube_accounts' 1; test -s "$kept"; osnap override-ready ;;
 stores)
   waitfor o --has 'OBS buffer: running · Better Clips: running'; osnap r2-before; sleep 10
   ffmpeg -loglevel error -f x11grab -draw_mouse 1 -video_size 1440x900 -framerate 12 -i :97 -t 9 -vf scale=1008:-2 -threads 2 -c:v libx264 -pix_fmt yuv420p -crf 27 -y "$E/obs.mp4" & recorder=$!

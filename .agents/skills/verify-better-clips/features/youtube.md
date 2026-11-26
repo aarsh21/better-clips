@@ -18,6 +18,8 @@ After `edit` revokes via the web, `direct` opens OBS Settings **without saving a
 
 `channel` first saves with no audience selected: require a recovery MP4 and no library insert. Check the notice in both settings and review. The protocol test checks the actual insert field for both routes. Before `edit`, run `player` to switch fake `status.madeForKids` between true, absent and false. It expires the local sync timer but never writes the classification. Require the external watch link and zero iframe/API script for true and absent; require the embed for false. The fake cannot play it.
 
+Label the gray frame in `player-adult.png`: Chromium created the eligible iframe, but the fake ID is not a playable YouTube video and external requests are blocked. It does not test playback.
+
 After `direct`, run `credentials`. The lab uses its own Secret Service and D-Bus in tmpfs. Require the active legacy token in that keyring, neither token in config or backup, a working upload after restart, and removal on matching `invalid_grant`. With the bus unavailable, require one session-only notice, an upload after reconnect and no sign-in after restart. Inspect `session-only.jpg`; never export the fixture configs or keyring.
 
 ## Gotchas

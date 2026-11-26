@@ -13,6 +13,7 @@ p.add_argument('--has', help='check for visible text without activating a contro
 p.add_argument('--bounds', action='store_true', help='assert the entire named widget is on-screen; do not click')
 p.add_argument('--indicator', action='store_true', help='toggle the checkbox and verify its indicator pixels change')
 p.add_argument('--scroll-form', action='store_true', help='wheel the settings form down and back; assert the scrollbar moved')
+p.add_argument('--scroll-end', action='store_true', help='wheel to the bottom and verify the last checkbox is above Save')
 args = p.parse_args()
 assert os.environ.get('DISPLAY') == ':97', 'Use only the private lab display'
 matches = []
@@ -21,7 +22,7 @@ def walk(obj):
     if obj is None:
         return
     role, name = obj.getRoleName(), obj.name
-    if args.scroll_form and role == 'scroll bar' and obj.getState().contains(a.STATE_SHOWING):
+    if (args.scroll_form or args.scroll_end) and role == 'scroll bar' and obj.getState().contains(a.STATE_SHOWING):
         if any(x.getRoleName() == 'dialog' for x in ancestors(obj)) and obj.queryValue().maximumValue > 0:
             matches.append(obj)
     elif args.has and obj.getState().contains(a.STATE_SHOWING) and args.has in (name or ''):
@@ -29,7 +30,7 @@ def walk(obj):
     elif not args.has and 'Component' in obj.get_interfaces() and obj.getState().contains(a.STATE_SHOWING) and role not in ('application', 'label'):
         r = obj.queryComponent().getExtents(a.DESKTOP_COORDS)
         if r.width > 0 and r.height > 0:
-            if args.name is None and not args.scroll_form:
+            if args.name is None and not (args.scroll_form or args.scroll_end):
                 if role not in ('menu item', 'filler', 'panel', 'scroll pane'):
                     print(role, repr(name), (r.x, r.y, r.width, r.height))
             elif name == args.name and (not args.role or role == args.role):
@@ -47,7 +48,7 @@ for app in a.Registry.getDesktop(0):
         walk(app)
 if args.has:
     raise SystemExit(0 if matches else 1)
-if args.scroll_form:
+if args.scroll_form or args.scroll_end:
     for bar in matches:
         r = bar.queryComponent().getExtents(a.DESKTOP_COORDS)
         if r.height <= r.width:
@@ -56,6 +57,19 @@ if args.scroll_form:
             subprocess.run(['xdotool', 'mousemove', str(r.x+r.width//2), str(r.y+r.height//2), 'click', '--repeat', '8', button, 'sleep', '.2'], check=True)
         wheel('4'); top = bar.queryValue().currentValue
         wheel('5'); bottom = bar.queryValue().currentValue
+        if args.scroll_end:
+            for _ in range(10):
+                if bottom == bar.queryValue().maximumValue: break
+                wheel('5'); bottom = bar.queryValue().currentValue
+            assert bottom == bar.queryValue().maximumValue and bottom > 0
+            dialog = next(x for x in ancestors(bar) if x.getRoleName() == 'dialog')
+            def bounds(name):
+                obj = a.findDescendant(dialog, lambda x: x.name == name and x.getState().contains(a.STATE_SHOWING))
+                return obj.queryComponent().getExtents(a.DESKTOP_COORDS)
+            last = bounds('Start the Replay Buffer when OBS opens'); save = bounds('Save')
+            assert r.y <= last.y < last.y + last.height <= r.y + r.height <= save.y
+            print(f'Scroll {bottom:g}/{bar.queryValue().maximumValue:g}; last checkbox y={last.y}..{last.y+last.height}; Save y={save.y}')
+            raise SystemExit(0)
         wheel('4')
         if bottom > top:
             print(f'Wheel moved form: {top:g} → {bottom:g}')

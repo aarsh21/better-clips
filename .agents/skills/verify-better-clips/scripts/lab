@@ -89,14 +89,21 @@ obs)
   # Keep Qt accessibility on the display's bus even for the no-keyring run.
   a11y=$(gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method org.a11y.Bus.GetAddress | cut -d "'" -f 2)
   bus=$R/bus; [[ ! -e $R/no-keyring ]] || bus=$R/unavailable
-  svc obs "export DBUS_SESSION_BUS_ADDRESS='unix:path=$bus' AT_SPI_BUS_ADDRESS='$a11y' DISPLAY=:97 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 XDG_CONFIG_HOME='$R/config' LIBGL_ALWAYS_SOFTWARE=1 BC_BROWSER='$BC_BROWSER' BROWSER='$S/xdg-open' PATH='$S':\$PATH YOUTUBE_AUTH_BASE=http://127.0.0.1:9393 YOUTUBE_TOKEN_BASE=http://127.0.0.1:9393 YOUTUBE_API=http://127.0.0.1:9393; exec obs --disable-shutdown-check"
+  runtime=obs
+  # The shipped plugin needs libobs 31's obs_encoder_get_mixer_index on Save.
+  if [[ -x $R/obs31/root/usr/bin/obs ]]; then
+    # OBS searches its extracted modules, then the system's incompatible ones.
+    # Hide only the latter in this process's mount namespace; run OBS as the lab user.
+    runtime="sudo -nE unshare -m --propagation private sh -c 'mount -t tmpfs tmpfs /usr/lib/x86_64-linux-gnu/obs-plugins && exec setpriv --reuid=$UID --regid=$(id -g) --init-groups env HOME=$HOME LD_LIBRARY_PATH=$R/obs31/root/usr/lib/x86_64-linux-gnu $R/obs31/root/usr/bin/obs \"\$@\"' obs"
+  fi
+  svc obs "export DBUS_SESSION_BUS_ADDRESS='unix:path=$bus' AT_SPI_BUS_ADDRESS='$a11y' DISPLAY=:97 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 XDG_CONFIG_HOME='$R/config' LIBGL_ALWAYS_SOFTWARE=1 BC_BROWSER='$BC_BROWSER' BROWSER='$S/xdg-open' PATH='$S':\$PATH YOUTUBE_AUTH_BASE=http://127.0.0.1:9393 YOUTUBE_TOKEN_BASE=http://127.0.0.1:9393 YOUTUBE_API=http://127.0.0.1:9393; exec $runtime --disable-shutdown-check"
   timeout 20 xdotool search --sync --onlyvisible --name '^OBS .*Profile:' >/dev/null
   # The X window exists before Qt registers its controls on the accessibility bus.
-  for i in {1..30}; do "$S/obs-ui" --has Exit && break; sleep .2; done
-  "$S/obs-ui" --has Exit ;;
+  for i in {1..30}; do "$S/obs-ui" --has Settings && break; sleep .2; done
+  "$S/obs-ui" --has Settings ;;
 quit)
   win=$(xdotool search --onlyvisible --name '^OBS .*Profile:' | tail -1); xdotool windowactivate --sync "$win"
-  "$S/obs-ui" Exit --role button
+  xdotool key alt+F4
   if timeout 3 xdotool search --sync --onlyvisible --name '^Exit OBS\?$' >/dev/null; then "$S/obs-ui" Yes --role button; fi
   for i in {1..50}; do ! pgrep -x obs >/dev/null && break; sleep .1; done
   noobs; amp orb service stop "$n-obs" ;;
