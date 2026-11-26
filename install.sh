@@ -74,7 +74,6 @@ if [ "$OS" = macos ]; then
 		fail "The installer failed."
 	PLUGIN="$OBS_CONFIG/plugins/better-clips.plugin"
 	[ -d "$PLUGIN" ] || fail "The plugin wasn't installed to $PLUGIN."
-	rm -rf "$OBS_CONFIG/plugins/obs-replay-r2.plugin"
 else
 	# OBS loads plugins from ~/.config/obs-studio/plugins too, so unpack the
 	# .deb there instead of installing it system-wide.
@@ -94,18 +93,25 @@ else
 	[ -n "$SO" ] || fail "The package has no plugin in it."
 
 	PLUGIN="$OBS_CONFIG/plugins/better-clips"
-	mkdir -p "$PLUGIN/bin/64bit" "$PLUGIN/data"
-	# Copy, then rename, so a crashed copy never leaves half a plugin.
-	cp "$SO" "$PLUGIN/bin/64bit/.better-clips.so.new"
-	mv -f "$PLUGIN/bin/64bit/.better-clips.so.new" "$PLUGIN/bin/64bit/better-clips.so"
-	if [ -n "$LOCALE" ]; then
-		rm -rf "$PLUGIN/data/locale"
-		cp -R "$LOCALE" "$PLUGIN/data/locale"
+	# Stage and keep the previous version outside OBS's module search path.
+	mkdir -p "$OBS_CONFIG/plugins" "$OBS_CONFIG/plugin-backups"
+	STAGE=$(mktemp -d "$OBS_CONFIG/plugin-backups/staged.XXXXXX")
+	trap 'rm -rf "$TMP" "$STAGE"' EXIT
+	mkdir -p "$STAGE/bin/64bit" "$STAGE/data"
+	cp "$SO" "$STAGE/bin/64bit/better-clips.so"
+	[ -s "$LOCALE/en-US.ini" ] && [ -n "$LOCALE" ] || fail 'The package is missing its locale.'
+	cp -R "$LOCALE" "$STAGE/data/locale"
+	DEPS=$(LC_ALL=C ldd "$STAGE/bin/64bit/better-clips.so") || fail 'Cannot load the staged Linux plugin.'
+	case "$DEPS" in *'not found'*) fail "Missing plugin libraries: $(printf '%s\n' "$DEPS" | awk '/not found/{print $1}')";; esac
+	nm -D --defined-only "$STAGE/bin/64bit/better-clips.so" | grep -q ' obs_module_load$' || fail 'The package does not contain a loadable OBS module (requires nm).'
+	BACKUP="$OBS_CONFIG/plugin-backups/better-clips"
+	if [ -e "$PLUGIN" ]; then
+		rm -rf "$BACKUP"
+		mv "$PLUGIN" "$BACKUP"
 	fi
-
-	MISSING=$(ldd "$PLUGIN/bin/64bit/better-clips.so" 2>/dev/null | awk '/not found/ {print $1}' | tr '\n' ' ')
-	if [ -n "$MISSING" ]; then
-		say "Warning: these libraries are missing, so OBS may not load the plugin: $MISSING"
+	if ! mv "$STAGE" "$PLUGIN"; then
+		[ ! -d "$BACKUP" ] || mv "$BACKUP" "$PLUGIN"
+		fail 'Could not install the staged plugin.'
 	fi
 	rm -rf "$OBS_CONFIG/plugins/obs-replay-r2"
 	as_root() {

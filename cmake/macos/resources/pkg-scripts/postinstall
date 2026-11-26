@@ -1,8 +1,22 @@
 #!/bin/sh
 # This distribution installs only into the current user's home directory.
 set -eu
-relative="Library/Application Support/obs-studio/plugins"
-plugins="${2:-${HOME:?}}/$relative"
-[ -d "$plugins/better-clips.plugin" ] || plugins="${HOME:?}/$relative"
-[ -d "$plugins/better-clips.plugin" ] || exit 1
+relative="Library/Application Support/obs-studio"
+root="${2:-${HOME:?}}/$relative"
+[ -d "$root/plugin-staging/better-clips.plugin" ] || root="${HOME:?}/$relative"
+stage="$root/plugin-staging/better-clips.plugin"
+plugins="$root/plugins"
+plugin="$plugins/better-clips.plugin"
+backup="$root/plugin-backups/better-clips.plugin"
+[ -x "$stage/Contents/MacOS/better-clips" ] && [ -s "$stage/Contents/Resources/locale/en-US.ini" ] || exit 1
+/usr/bin/codesign --verify --strict "$stage"
+mkdir -p "$plugins" "$root/plugin-backups"
+if [ -d "$plugin" ]; then
+    rm -rf "$backup"
+    mv "$plugin" "$backup"
+fi
+if ! mv "$stage" "$plugin"; then
+    [ ! -d "$backup" ] || mv "$backup" "$plugin"
+    exit 1
+fi
 rm -rf "$plugins/obs-replay-r2.plugin"

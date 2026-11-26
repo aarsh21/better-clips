@@ -59,11 +59,52 @@ try {
     $Plugin = Join-Path $Plugins 'better-clips'
     $ObsDir = (Get-ItemProperty -ErrorAction SilentlyContinue -Path 'HKLM:\SOFTWARE\OBS Studio').'(default)'
     if (-not $ObsDir) { $ObsDir = Join-Path $env:ProgramFiles 'obs-studio' }
+    if (-not [Environment]::Is64BitProcess) { Fail 'Run the installer in 64-bit PowerShell.' }
+    # Resolve the module against the installed OBS runtime before requesting elevation.
+    if (-not ('Native.BetterClipsLoader' -as [type])) {
+        Add-Type -Name BetterClipsLoader -Namespace Native -MemberDefinition @'
+[DllImport("kernel32", CharSet=CharSet.Unicode, ExactSpelling=true)] public static extern IntPtr AddDllDirectory(string path);
+[DllImport("kernel32")] public static extern bool RemoveDllDirectory(IntPtr cookie);
+[DllImport("kernel32", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
+[DllImport("kernel32", CharSet=CharSet.Ansi, ExactSpelling=true)] public static extern IntPtr GetProcAddress(IntPtr module, string name);
+[DllImport("kernel32")] public static extern bool FreeLibrary(IntPtr module);
+'@
+    }
+    $Dll = Join-Path $Source 'bin\64bit\better-clips.dll'
+    $Cookie = [Native.BetterClipsLoader]::AddDllDirectory((Join-Path $ObsDir 'bin\64bit'))
+    try {
+        $Module = [Native.BetterClipsLoader]::LoadLibraryEx($Dll, [IntPtr]::Zero, 0xD00)
+        if ($Module -eq [IntPtr]::Zero) { Fail 'The new plugin or one of its OBS dependencies could not be loaded. Check your OBS installation.' }
+        try {
+            if ([Native.BetterClipsLoader]::GetProcAddress($Module, 'obs_module_load') -eq [IntPtr]::Zero) { Fail 'Not an OBS plugin.' }
+        } finally { [void][Native.BetterClipsLoader]::FreeLibrary($Module) }
+    } finally { if ($Cookie -ne [IntPtr]::Zero) { [void][Native.BetterClipsLoader]::RemoveDllDirectory($Cookie) } }
+    $Hash = (Get-FileHash -LiteralPath $Dll).Hash
     Say 'Installing the plugin...'
     function Quote($Path) { "'" + $Path.Replace("'", "''") + "'" }
-    $Copy = "`$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -Path $(Quote $Plugins) | Out-Null; " +
-        "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue -Path $(Quote $Plugin); " +
-        "Copy-Item -Recurse -Force -Path $(Quote $Source) -Destination $(Quote $Plugins)"
+    $Swap = {
+        param($Plugins, $Source, $Hash)
+        $ErrorActionPreference = 'Stop'
+        $Plugin = Join-Path $Plugins 'better-clips'
+        $Backups = Join-Path (Split-Path $Plugins) 'plugin-backups'
+        $Backup = Join-Path $Backups 'better-clips'
+        $Stage = Join-Path $Backups ([Guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Force -Path $Plugins, $Backups | Out-Null
+        try {
+            Copy-Item -LiteralPath $Source -Recurse -Destination $Stage
+            if ((Get-FileHash -LiteralPath (Join-Path $Stage 'bin\64bit\better-clips.dll')).Hash -ne $Hash -or
+                !(Test-Path -LiteralPath (Join-Path $Stage 'data\locale\en-US.ini') -PathType Leaf)) { throw 'Incomplete plugin copy.' }
+            if (Test-Path -LiteralPath $Plugin) {
+                if (Test-Path -LiteralPath $Backup) { Remove-Item -LiteralPath $Backup -Recurse -Force }
+                Move-Item -LiteralPath $Plugin -Destination $Backup
+            }
+            try { Move-Item -LiteralPath $Stage -Destination $Plugin } catch {
+                if (Test-Path -LiteralPath $Backup) { Move-Item -LiteralPath $Backup -Destination $Plugin }
+                throw
+            }
+        } finally { if (Test-Path -LiteralPath $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force } }
+    }
+    $Copy = "`$ErrorActionPreference = 'Stop'; & { $Swap } $(Quote $Plugins) $(Quote $Source) $(Quote $Hash)"
     foreach ($Old in @((Join-Path $Plugins 'obs-replay-r2'),
                        (Join-Path $ObsDir 'obs-plugins\64bit\obs-replay-r2.dll'),
                        (Join-Path $ObsDir 'data\obs-plugins\obs-replay-r2'))) {
@@ -78,10 +119,11 @@ try {
         try {
             $Process = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden `
                 -ArgumentList '-NoProfile', '-EncodedCommand', $Encoded
-            if ($Process.ExitCode -ne 0) { Fail 'Plugin installation or cleanup failed.' }
-        } catch {
-            Fail 'Windows did not allow installing to C:\ProgramData. Run the command again and click Yes.'
+        } catch [System.ComponentModel.Win32Exception] {
+            if ($_.Exception.NativeErrorCode -eq 1223) { Fail 'Installation cancelled at the Windows permission prompt.' }
+            throw
         }
+        if ($Process.ExitCode -ne 0) { Fail 'The elevated plugin copy, validation or cleanup failed.' }
     }
     if (-not (Test-Path (Join-Path $Plugin 'bin\64bit\better-clips.dll'))) { Fail "The plugin wasn't installed to $Plugin." }
     $Old = Join-Path $env:APPDATA 'obs-studio\plugins\obs-replay-r2'

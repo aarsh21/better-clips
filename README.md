@@ -94,8 +94,9 @@ curl -fsSL https://raw.githubusercontent.com/aarsh21/better-clips/main/install.s
 irm https://raw.githubusercontent.com/aarsh21/better-clips/main/install.ps1 | iex
 ```
 
-The script waits for OBS to close, installs the latest release and cleans up
-the version you had before, so running it again is also how you update. If you
+The script waits for OBS to close and checks the new plugin before replacing
+the installed copy. On upgrade it keeps the previous Better Clips version in
+`plugin-backups`, beside OBS's `plugins` directory. If you
 used Replay to R2, it removes that plugin too, and Better Clips keeps its
 settings, sign-ins and hotkey. On Linux, only removing an old system-wide
 install may need sudo; on Windows, it asks once for permission.
