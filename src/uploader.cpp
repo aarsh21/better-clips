@@ -72,20 +72,19 @@ bool build(Clip &clip, std::vector<uint8_t> &mp4)
 /* Writes the MP4 into OBS's recording folder, named like OBS's own replays
  * ("Replay 2026-11-24 14-35-07_Valorant.mp4") and never over another file.
  * Returns the path, or an empty string if it couldn't. */
-std::string save_to_disk(const Clip &clip, const std::vector<uint8_t> &mp4)
+std::string write_file(const std::string &dir, std::string file, const std::vector<uint8_t> &mp4)
 {
-	if (clip.save_dir.empty())
+	if (dir.empty())
 		return {};
 
-	std::string file = clip.name;
 	for (char &c : file)
 		if (c == '/')
 			c = ' ';
 	if (file.size() > 4 && file.compare(file.size() - 4, 4, ".mp4") == 0)
 		file.resize(file.size() - 4);
-	const std::string base = clip.save_dir + "/Replay " + file;
+	const std::string base = dir + "/Replay " + file;
 
-	os_mkdirs(clip.save_dir.c_str());
+	os_mkdirs(dir.c_str());
 	for (int n = 1;; n++) {
 		const auto path = base + (n == 1 ? "" : "-" + std::to_string(n)) + ".mp4";
 		QFile f(QString::fromStdString(path));
@@ -106,6 +105,18 @@ std::string save_to_disk(const Clip &clip, const std::vector<uint8_t> &mp4)
 }
 
 /* Keeps a clip that couldn't be uploaded, and says where it went. */
+std::string save_to_disk(const Clip &clip, const std::vector<uint8_t> &mp4)
+{
+	auto path = write_file(clip.save_dir, clip.name, mp4);
+	if (path.empty()) {
+		if (char *dir = obs_module_config_path("recovered-clips")) {
+			path = write_file(dir, clip.name, mp4);
+			bfree(dir);
+		}
+	}
+	return path;
+}
+
 void keep_on_disk(const Clip &clip, const std::vector<uint8_t> &mp4, const std::string &why,
 		  const char *log_reason = nullptr)
 {

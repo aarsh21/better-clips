@@ -330,6 +330,20 @@ bool start(void *data)
 			r->audio_mask = 1;
 	}
 #endif
+	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; ++i) {
+		auto *encoder = obs_output_get_audio_encoder(r->output, i);
+		if (!encoder)
+			continue;
+		const std::string codec = obs_encoder_get_codec(encoder);
+		if (codec != "aac" && codec != "opus") {
+			const auto reason =
+				"Better Clips: " + codec +
+				" audio can't be saved as MP4. Choose AAC or Opus in Settings → Output → Recording, then restart the Replay Buffer.";
+			obs_output_set_last_error(r->output, reason.c_str());
+			notify_user(reason);
+			return false;
+		}
+	}
 	if (!obs_output_can_begin_data_capture(r->output, 0))
 		return false;
 	if (!obs_output_initialize_encoders(r->output, 0))
