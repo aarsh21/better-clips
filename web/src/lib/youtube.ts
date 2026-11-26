@@ -6,12 +6,12 @@ import { toast } from "sonner"
 import {
   api,
   formatDuration,
-  type Clip,
   type Cut,
   type Privacy,
   type YouTubeClip,
 } from "@/lib/api"
 import { copyLink } from "@/lib/clip-actions"
+import { updateClips } from "@/lib/clips"
 
 const KEY = ["clips"]
 
@@ -109,19 +109,17 @@ export function useYouTubeChange() {
     }) => send(clip, change),
     onMutate: async ({ clip, change }) => {
       await qc.cancelQueries({ queryKey: KEY })
-      const previous = qc.getQueryData<Clip[]>(KEY)
       const next = changed(clip, change)
 
-      qc.setQueryData<Clip[]>(KEY, (list) =>
+      updateClips(qc, (list) =>
         next
           ? list?.map((c) => (c.key === clip.key ? next : c))
           : list?.filter((c) => c.key !== clip.key)
       )
 
-      return { previous }
     },
-    onError: (err, _vars, ctx) => {
-      if (ctx?.previous) qc.setQueryData(KEY, ctx.previous)
+    onError: (err, {clip,change}) => {
+      updateClips(qc,list=> change.kind === "delete" && !list.some(c=>c.key===clip.key) ? [...list,clip] : list.map(c=>c.key===clip.key ? clip : c))
       toast.error(err.message)
     },
     onSuccess: (_data, { change }) => toast.success(doneText(change)),

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 
 import { useClipTime } from "@/lib/clock"
@@ -14,14 +14,19 @@ import {
 } from "@/lib/api"
 
 const KEY = ["clips"]
+type Library = Awaited<ReturnType<typeof api.clips>>
+export function updateClips(qc:QueryClient, edit:(clips:Clip[])=>Clip[]) {
+  qc.setQueryData<Library>(KEY, data=>data && {...data,clips:edit(data.clips)})
+}
 
 export function useClips() {
-  return useQuery({
+  const qc = useQueryClient()
+  const query = useQuery({
     queryKey: KEY,
-    queryFn: api.clips,
+    queryFn: () => api.clips(qc.getQueryData<Library>(KEY)?.clips),
     /* New clips from OBS show up on their own. */
     refetchInterval: (query) =>
-      query.state.data?.some(
+      query.state.data?.clips.some(
         (c) =>
           c.source === "youtube" &&
           (c.status === "processing" || c.pendingTitle || c.pendingPrivacy)
@@ -31,6 +36,7 @@ export function useClips() {
     refetchIntervalInBackground: false,
     staleTime: 5_000,
   })
+  return {data:query.data?.clips,warnings:query.data?.warnings,isPending:query.isPending,error:query.error}
 }
 
 /* Moves a clip (keep, delete, restore, rename) and updates the list right
@@ -50,9 +56,9 @@ export function useMoveClip(onMoved?: (from: string, to: string) => void) {
     }) => api.move(clip.key, { to, name }),
     onMutate: async ({ clip, to, name }) => {
       await qc.cancelQueries({ queryKey: KEY })
-      const previous = qc.getQueryData<Clip[]>(KEY)
-      qc.setQueryData<Clip[]>(
-        KEY,
+      const previous = qc.getQueryData<Library>(KEY)?.clips.find(c=>c.key===clip.key)
+      updateClips(
+        qc,
         (clips) =>
           clips &&
           withTitles(
@@ -71,12 +77,13 @@ export function useMoveClip(onMoved?: (from: string, to: string) => void) {
       return { previous }
     },
     onError: (err, _vars, ctx) => {
-      if (ctx?.previous) qc.setQueryData(KEY, ctx.previous)
+      const prev = ctx?.previous
+      if (prev) updateClips(qc,list=>list.map(c=>c.key===prev.key ? prev : c))
       toast.error(err.message)
     },
     onSuccess: ({ key }, { clip }) => {
       onMoved?.(clip.key, key)
-      qc.setQueryData<Clip[]>(KEY, (clips) =>
+      updateClips(qc, (clips) =>
         clips?.map((c) => (c.key === clip.key ? { ...c, key } : c))
       )
     },
@@ -120,7 +127,7 @@ export function useThumbnailWorker(clips: Clip[] | undefined) {
             v: Math.random().toString(36).slice(2, 8),
           }
 
-          qc.setQueryData<Clip[]>(KEY, (list) =>
+          updateClips(qc, (list) =>
             list?.map((c) =>
               c.key === clip.key && c.source === "bucket" ? { ...c, thumb } : c
             )

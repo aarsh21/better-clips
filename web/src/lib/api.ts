@@ -443,15 +443,16 @@ const youtubeClip = (id: string) =>
 export const api = {
   /* Bucket clips and YouTube clips, in one list. An app without YouTube
    * leaves youtube out. */
-  clips: () =>
-    request<{ clips: ApiClip[]; youtube?: ApiYouTubeClip[] }>(
+  clips: (previous?: Clip[]) =>
+    request<{ clips?: ApiClip[]; youtube?: ApiYouTubeClip[]; errors?:{r2?:string;youtube?:string} }>(
       "/api/clips"
-    ).then((d) =>
-      withTitles([
-        ...d.clips.map(parseClip),
-        ...(d.youtube ?? []).map(parseYouTubeClip),
+    ).then((d) => ({
+      warnings: Object.values(d.errors ?? {}),
+      clips: withTitles([
+        ...(d.clips?.map(parseClip) ?? (d.errors?.r2 && previous ? previous.filter(c=>c.source === "bucket") : [])),
+        ...(d.youtube?.map(parseYouTubeClip) ?? (d.errors?.youtube && previous ? previous.filter(c=>c.source === "youtube") : [])),
       ])
-    ),
+    })),
   updateYouTube: (
     id: string,
     body: { title?: string; description?: string; privacy?: Privacy }

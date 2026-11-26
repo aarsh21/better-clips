@@ -8,7 +8,7 @@ import {
   type BucketClip,
   type Clip,
 } from "@/lib/api"
-import { useMoveClip } from "@/lib/clips"
+import { useMoveClip, updateClips } from "@/lib/clips"
 import { retentionText, useSettings } from "@/lib/settings"
 
 export type ClipNav = {
@@ -90,7 +90,7 @@ export function useClipMoves(onMoved?: (from: string, to: string) => void) {
       /* Sharing keeps the clip, which moves it: update the list before the
        * viewer follows, so it doesn't close on a clip it can't find. */
       if (key !== clip.key) {
-        qc.setQueryData<Clip[]>(["clips"], (list) =>
+        updateClips(qc, (list) =>
           list?.map((c) =>
             c.key === clip.key && c.source === "bucket"
               ? { ...c, key, folder: "saved" }
@@ -109,6 +109,7 @@ export function useClipMoves(onMoved?: (from: string, to: string) => void) {
         pending
       )
     } catch (err) {
+      void qc.invalidateQueries({queryKey:["clips"]})
       toast.error(errorMessage(err), { id: pending })
     }
   }
@@ -156,7 +157,7 @@ export function useClipActions(
 
     try {
       await api.destroy(clip.key)
-      qc.setQueryData<Clip[]>(["clips"], (list) =>
+      updateClips(qc, (list) =>
         list?.filter((c) => c.key !== clip.key)
       )
       toast("Deleted forever")

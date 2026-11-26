@@ -49,6 +49,7 @@ const editGrace = 30000
 type Account = {
   user_id: string
   grant_id: string
+  sync_failed: number
   subject: string
   channel_id: string
   channel_title: string
@@ -350,6 +351,7 @@ async function sync(
         )
     })
   )
+  return true
 }
 
 export async function youtubeClips(
@@ -360,12 +362,12 @@ export async function youtubeClips(
   const db = env.DB!,
     a = await account(env, user)
 
-  if (!a) return []
+  if (!a) return { clips: [], stale: false }
 
   ctx.waitUntil(
-    sync(env, a).catch(() =>
-      console.warn("Showing the last available YouTube clip list")
-    )
+    sync(env,a).then(updated => updated ? 0 : null, () => 1).then(async failed => {
+      if (failed !== null && failed !== a.sync_failed) await db.prepare("UPDATE youtube_accounts SET sync_failed=? WHERE user_id=? AND grant_id=?").bind(failed,user,a.grant_id).run()
+    })
   )
 
   const { results } = await db
@@ -378,11 +380,11 @@ export async function youtubeClips(
     .bind(user)
     .all()
 
-  return results.map(({ start, end, ...row }) => ({
+  return { stale: Boolean(a.sync_failed), clips: results.map(({ start, end, ...row }) => ({
     ...row,
     cut: start === null ? null : { start, end },
     url: `https://youtu.be/${row.videoId}`,
-  }))
+  })) }
 }
 
 export async function youtubeMaintenance(env: HostedEnv) {

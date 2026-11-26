@@ -204,7 +204,7 @@ export default function App() {
 }
 
 function Library() {
-  const { data: clips, isPending, error } = useClips()
+  const { data: clips, isPending, error, warnings } = useClips()
   const hasBucket = useHasBucket()
   const views = viewsFor(hasBucket)
   const [chosenView, setView] = React.useState<View>("all")
@@ -267,12 +267,13 @@ function Library() {
       />
 
       <main className="mx-auto max-w-[1600px] px-4 pt-4 pb-24 sm:px-6">
+        {(warnings?.length || (error && clips)) ? <p role="status" className="mb-4 border bg-muted/40 px-3 py-2 text-xs">{error ? "Could not refresh the library." : warnings?.join(" ")} Showing the last available clips.</p> : null}
         <ClipsBody
           clips={clips}
           visible={visible}
           view={view}
           pending={isPending}
-          error={error}
+          error={error ?? (!clips?.length && warnings?.length ? new Error(warnings.join(" ")) : null)}
           hasBucket={hasBucket}
           onOpen={(c) => openClip(c.key)}
           onSettings={openSettings}
@@ -518,7 +519,7 @@ function ClipsBody({
   const { data: settings } = useSettings()
   const hasChannel = useHasChannel()
 
-  if (error)
+  if (error && !clips?.length)
     return (
       <Empty
         icon={ArchiveIcon}

@@ -232,12 +232,9 @@ async function hostedAuth(c: Context<App>, next: Next) {
     )
   c.set("uploader", "owner")
 
-  if (ACCOUNT.has(c.req.path) || c.req.path.startsWith("/api/youtube/"))
+  if (ACCOUNT.has(c.req.path) || c.req.path.startsWith("/api/youtube/") || (c.req.path === "/api/clips" && c.req.method === "GET"))
     return next()
   const entry = who.tenantId ? await loadTenant(c.env, who.tenantId) : null
-
-  if (!entry && c.req.path === "/api/clips" && c.req.method === "GET")
-    return next()
 
   if (!entry)
     return c.json({ error: "Connect your storage first", storage: "none" }, 409)
@@ -602,15 +599,19 @@ export type Clip = {
 
 /* One listing of the whole bucket, plus what the app knows about thumbs. */
 app.get("/api/clips", async (c) => {
-  const t = c.get("tenant")
+  const who = c.get("who")
+  const [r2,yt] = await Promise.allSettled([
+    (who?.tenantId ? loadTenant(c.env,who.tenantId).then(entry=>entry?.tenant) : Promise.resolve(c.get("tenant"))).then(t=>t ? bucketClips(t) : []),
+    who ? youtubeClips(c.env,who.userId,c.executionCtx) : undefined,
+  ])
+  const errors = {
+    r2: r2.status === "rejected" ? "Could not refresh R2 clips. Check the bucket connection in Settings." : undefined,
+    youtube: yt.status === "rejected" || yt.value?.stale ? "Could not refresh YouTube clips. Try again later." : undefined,
+  }
+  return c.json({clips:r2.status === "fulfilled" ? r2.value : undefined, youtube: yt.status === "fulfilled" ? yt.value?.clips : undefined, errors},200,{"cache-control":"no-store"})
+})
 
-  const youtube = isHosted(c.env)
-    ? await youtubeClips(c.env, c.get("who").userId, c.executionCtx)
-    : undefined
-
-  if (!t)
-    return c.json({ clips: [], youtube }, 200, { "cache-control": "no-store" })
-
+async function bucketClips(t: Tenant) {
   const [objects, thumbs] = await Promise.all([
     t.store.list(""),
     t.meta.thumbs(),
@@ -640,8 +641,8 @@ app.get("/api/clips", async (c) => {
     ]
   })
 
-  return c.json({ clips, youtube }, 200, { "cache-control": "no-store" })
-})
+  return clips
+}
 
 app.get("/api/media/*", async (c) => {
   const clip = pathClip(c, "/api/media/")

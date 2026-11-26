@@ -1,0 +1,1 @@
+ALTER TABLE youtube_accounts ADD COLUMN sync_failed INTEGER NOT NULL DEFAULT 0;
