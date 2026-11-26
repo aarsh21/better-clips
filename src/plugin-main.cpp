@@ -96,6 +96,8 @@ void load_config()
 	youtube.upload_token = obs_data_get_string(data, "youtube_upload_token");
 	youtube.channel_id = obs_data_get_string(data, "youtube_channel_id");
 	youtube.channel_title = obs_data_get_string(data, "youtube_channel_title");
+	youtube.previously_connected = obs_data_get_bool(data, "youtube_previously_connected") ||
+				       !youtube.upload_token.empty() || !youtube.refresh_token.empty();
 	obs_data_set_default_string(data, "youtube_privacy", "unlisted");
 	obs_data_set_default_string(data, "youtube_title", "{game} - {date} {time}");
 	obs_data_set_default_int(data, "youtube_audio_track", 1);
@@ -133,6 +135,7 @@ bool write_config(const R2Config &next, const YouTubeSettings &account)
 		obs_data_set_string(data, "youtube_upload_token", youtube.upload_token.c_str());
 		obs_data_set_string(data, "youtube_channel_id", youtube.channel_id.c_str());
 		obs_data_set_string(data, "youtube_channel_title", youtube.channel_title.c_str());
+		obs_data_set_bool(data, "youtube_previously_connected", youtube.previously_connected);
 		obs_data_set_string(data, "youtube_privacy", youtube.privacy.c_str());
 		obs_data_set_string(data, "youtube_title", youtube.title_template.c_str());
 		obs_data_set_string(data, "youtube_description", youtube.description.c_str());
@@ -427,9 +430,11 @@ void set_youtube_settings(const YouTubeSettings &settings)
 {
 	std::lock_guard<std::mutex> lock(config_mutex);
 	youtube = settings;
+	youtube.previously_connected |= !youtube.upload_token.empty() || !youtube.refresh_token.empty();
 	if (!write_config(config, youtube))
 		notify_user(
 			"Better Clips: could not save the YouTube connection. Check your settings folder permissions.");
+	QMetaObject::invokeMethod(qApp, refresh_youtube_account, Qt::QueuedConnection);
 }
 
 void set_config(const R2Config &new_config)

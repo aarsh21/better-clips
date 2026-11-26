@@ -179,3 +179,4 @@ bool uploader_reserve();
 void uploader_cancel_reservation();
 
 bool save_settings(const R2Config &next, const YouTubeSettings &account);
+void refresh_youtube_account();

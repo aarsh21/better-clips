@@ -266,6 +266,15 @@ public:
 		update_preview();
 	}
 
+	void refresh_credentials()
+	{
+		const auto settings = get_youtube_settings();
+		if (!disconnect_button->isHidden() && !youtube_connected(settings)) {
+			show_account(settings);
+			show_status("This OBS is no longer connected. Reconnect to upload to YouTube.", true);
+		}
+	}
+
 	/* The settings with this page's route and upload defaults. The
 	 * connection itself is saved by youtube_connect_async and
 	 * youtube_disconnect. */
@@ -325,14 +334,14 @@ private:
 			(settings.route == YouTubeRoute::Direct ? direct : via_app)->setChecked(true);
 		via_app->setEnabled(!connected);
 		direct->setEnabled(!connected);
-		if (connected && settings.route == YouTubeRoute::ClipsApp)
+		if (!settings.app_url.empty() && settings.route == YouTubeRoute::ClipsApp)
 			app_url->setText(QString::fromStdString(settings.app_url));
 		else if (app_url->text().isEmpty())
 			app_url->setText(HOSTED_APP);
 		app_url->setReadOnly(connected);
 		sign_in->setVisible(!connected);
 		sign_in->setEnabled(true);
-		sign_in->setText("Sign in with YouTube");
+		sign_in->setText(settings.previously_connected ? "Reconnect YouTube" : "Sign in with YouTube");
 		disconnect_button->setVisible(connected);
 		disconnect_button->setText(settings.route == YouTubeRoute::ClipsApp ? "Unpair this OBS" : "Disconnect");
 		form->setRowVisible(remove_channel, connected && settings.route == YouTubeRoute::ClipsApp);
@@ -419,6 +428,8 @@ private:
 	}
 };
 
+QPointer<YouTubePage> open_account;
+
 class SettingsDialog : public QDialog {
 public:
 	explicit SettingsDialog(QWidget *parent) : QDialog(parent)
@@ -464,6 +475,7 @@ public:
 		s3_form->addRow("Public URL", public_url);
 
 		youtube_page = new YouTubePage(youtube);
+		open_account = youtube_page;
 
 		pages = new QStackedWidget();
 		pages->addWidget(app_page);
@@ -771,6 +783,12 @@ void show_settings_dialog()
 	current = dialog;
 	dialog->setAttribute(Qt::WA_DeleteOnClose);
 	dialog->show();
+}
+
+void refresh_youtube_account()
+{
+	if (open_account)
+		open_account->refresh_credentials();
 }
 
 void start_youtube_reviews()
