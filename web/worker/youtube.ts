@@ -127,12 +127,13 @@ export async function youtubeInfo(env: HostedEnv, user: string) {
           .bind(user)
           .all()
       ).results,
-      clipCount: await env
+      ...(await env
         .DB!.prepare(
-          "SELECT count(*) FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL"
+          `SELECT count(*) AS clipCount, count(start) + count(end) AS cutPointCount
+           FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL`
         )
         .bind(user)
-        .first<number>("count(*)"),
+        .first<{ clipCount: number; cutPointCount: number }>()),
     }
   )
 }

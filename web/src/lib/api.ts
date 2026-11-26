@@ -315,6 +315,7 @@ export type Me =
         channelTitle: string
         devices: { id: string; lastSeen: number | null }[]
         clipCount: number
+        cutPointCount: number
       } | null
     }
 

@@ -100,7 +100,16 @@ function ConnectedChannel({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
   })
 
-  const { channelTitle: title, devices, clipCount } = channel
+  const { channelTitle: title, devices, clipCount, cutPointCount } = channel
+
+  const removed = [
+    clipCount &&
+      `${clipCount} library ${clipCount === 1 ? "entry" : "entries"}`,
+    cutPointCount &&
+      `${cutPointCount} saved cut ${cutPointCount === 1 ? "point" : "points"}`,
+  ]
+    .filter(Boolean)
+    .join(" and ")
 
   const disconnect = useMutation({
     mutationFn: api.disconnectYouTube,
@@ -168,10 +177,11 @@ function ConnectedChannel({
       {confirming ? (
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Better Clips loses access to {title} and all paired OBS devices stop
-            uploading there. Better Clips removes your YouTube library entries
-            ({clipCount}) and all their saved cut points. Your videos stay on
-            YouTube.
+            Better Clips loses access to {title}.
+            {removed && ` This removes ${removed} from Better Clips.`}
+            {devices.length > 0 &&
+              ` This unpairs ${devices.length} OBS ${devices.length === 1 ? "device" : "devices"}.`}{" "}
+            Your videos stay on YouTube.
           </p>
           <div className="flex gap-2">
             <Button
