@@ -229,6 +229,13 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::string &clip_id,
 		   const std::string &title)
 {
+	youtube_watch(owner, settings, clip_id, title, {}, {});
+}
+
+void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::string &clip_id,
+		   const std::string &title, const std::string &path, std::function<bool(bool ready)> finish)
+{
+	const std::string kept = path.empty() ? ". Check the video in YouTube Studio." : ". Local copy: " + path;
 	QUrl url = QUrl(text(settings.app_url)).resolved(QUrl("/api/youtube/upload/status"));
 	url.setQuery(QUrlQuery({{"clipId", text(clip_id)}}));
 	const bool direct = settings.route == YouTubeRoute::Direct;
@@ -238,7 +245,8 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 	}
 	QMetaObject::invokeMethod(
 		owner,
-		[owner, url, title, direct, token = settings.upload_token, refresh = settings.refresh_token] {
+		[owner, url, title, kept, finish, direct, token = settings.upload_token,
+		 refresh = settings.refresh_token] {
 			auto *timer = new QTimer(owner);
 			timer->setSingleShot(true);
 			auto access =
@@ -264,18 +272,20 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 					const auto http = reply.code == CURLE_OK ? reply.status : 0;
 					if (!direct && http == 401)
 						unpaired(token);
-					if (http == 200 && status == "ready")
-						notify_user("YouTube: " + title + " is ready to play.");
-					else if (http == 200 && status == "failed")
-						notify_user("YouTube could not process " + title +
-							    ". Check the video in YouTube Studio.");
-					else if ((!direct && http == 401) || http == 404)
-						notify_user("Clips can no longer check " + title +
-							    ". Check the video in YouTube Studio.");
+					if (http == 200 && status == "ready") {
+						bool removed = !finish || finish(true);
+						notify_user("YouTube: " + title + " is ready to play" +
+							    (removed ? "." : kept));
+					} else if (http == 200 && status == "failed") {
+						if (finish)
+							finish(false);
+						notify_user("YouTube could not process " + title + kept);
+					} else if ((!direct && http == 401) || http == 404)
+						notify_user("Clips can no longer check " + title + kept);
 					else {
 						if (direct && http == 401)
 							access->clear();
-						timer->start(std::min(timer->interval() * 2, 60000));
+						timer->start(std::min(timer->interval() * 2, 600000));
 						return;
 					}
 					timer->deleteLater();
@@ -292,17 +302,11 @@ void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::s
 					if (reply.ok() && !access->isEmpty())
 						poll();
 					else if (obj.value("error") == "invalid_grant") {
-						notify_user("Clips can no longer check " + title +
-							    ". Check the video in YouTube Studio.");
+						notify_user("Clips can no longer check " + title + kept);
 						timer->deleteLater();
 					} else
 						timer->start(std::min(timer->interval() * 2, 60000));
 				});
-			});
-			QTimer::singleShot(600000, timer, [=] {
-				notify_user("Clips stopped waiting for " + title +
-					    ". Check its progress in YouTube Studio.");
-				timer->deleteLater();
 			});
 			timer->start(3000);
 		},

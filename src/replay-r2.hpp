@@ -170,3 +170,6 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		    YouTubeSession &session, std::string &link, std::string &error, const std::atomic<bool> &stopping,
 		    QObject *owner);
 void set_upload_success_handler(void (*handler)(Destination));
+
+void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::string &clip_id,
+		   const std::string &title, const std::string &path, std::function<bool(bool ready)> finish);
