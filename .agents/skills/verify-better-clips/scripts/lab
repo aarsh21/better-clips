@@ -47,6 +47,11 @@ start)
   svc bus "exec dbus-daemon --session --nofork --address=unix:path=$R/bus"
   mkdir -p "$R/keyring-data" "$R/keyring-control"
   svc keyring "export DBUS_SESSION_BUS_ADDRESS=unix:path=$R/bus XDG_DATA_HOME='$R/keyring-data'; printf lab-only | gnome-keyring-daemon --foreground --unlock --components=secrets --control-directory='$R/keyring-control'"
+  # Wait for the unlocked daemon to own the bus first; a probe sent earlier
+  # D-Bus-activates a second, locked keyring that has no login collection.
+  for i in {1..100}; do [[ -S $R/keyring-control/control ]] && break; sleep .1; done
+  [[ -S $R/keyring-control/control ]] || die 'Keyring daemon did not start'
+  sleep .3
   # Prove this isolated keyring can persist, without using the desktop user's keychain.
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$R/bus"
   printf probe | secret-tool store --label=preflight run "$id"

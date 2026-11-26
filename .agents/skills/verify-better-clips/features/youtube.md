@@ -6,7 +6,7 @@ Google sign-in, through-app browser pairing, direct desktop OAuth, review-before
 
 ## How to get to it (user POV)
 
-From a signed-out hosted dashboard use Sign in with Google. In OBS dock Settings choose YouTube → Through the Better Clips app → Sign in with YouTube. Click Save after connecting. For direct uploads, disconnect first, choose Directly to YouTube, sign in, choose review and click Save. Press the hotkey; in the review dialog click Upload.
+From the signed-out hosted dashboard at `/apps/` click **Sign in with Google**, read the YouTube disclosure (**Before you connect YouTube**) and click **Continue**. `/` is the public homepage, not the dashboard. In OBS dock Settings choose YouTube → Through the Better Clips app → Sign in with YouTube. Click Save after connecting. For direct uploads, disconnect first, choose Directly to YouTube, sign in, choose review and click Save. Press the hotkey; in the review dialog click Upload.
 
 ## Driving it with xdotool and agent-browser
 

@@ -371,7 +371,7 @@ def login(purpose, pair=False, *, existing=False, cancel=False):
         )
         return
     if not pair:
-        assert result == "/", result
+        assert result == "/apps/", result
         return
     u = urlsplit(result)
     assert (u.hostname, u.port, u.path) == ("127.0.0.1", 12345, "/callback"), result

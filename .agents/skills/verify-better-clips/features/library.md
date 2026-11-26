@@ -6,7 +6,7 @@ R2 playback, rename and nondestructive trim; YouTube rename, visibility, whole-s
 
 ## How to get to it (user POV)
 
-Open a clip card. Click its title or press E to rename. R2 has a real video player and Trim; YouTube offers Cut and a visibility menu. Delete on R2 moves the clip to Trash; Delete from YouTube asks for confirmation before changing the channel.
+In the dashboard at `/apps/`, open a clip card. Click its title or press E to rename. R2 has a real video player and Trim; YouTube offers Cut and a visibility menu. Delete on R2 moves the clip to Trash; Delete from YouTube asks for confirmation before changing the channel.
 
 ## Driving it with agent-browser
 

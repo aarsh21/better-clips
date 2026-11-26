@@ -1,5 +1,7 @@
 # Better Clips user paths
 
+The dashboard is at `/apps/` on both Workers; the hosted `/` is the public homepage and the self-hosted `/` redirects to `/apps/`. Old `/#/clip/…`, `/?auth_error=` and `/?connected=` links forward to `/apps/`; Google and Cloudflare sign-in return there. Every Google sign-in or YouTube connect opens a disclosure first (**Continue** goes on to Google). `/faq`, `/privacy` and `/terms` are public. Big headings use an uppercase display face, so `wait --text` sees them in capitals (`NO CLIPS YET`).
+
 Use the run ID and `$E=.amp/in/artifacts/bc-$id/` from SKILL.md. Chapters deliberately share one account and library; don't start a chapter halfway through a failed run without checking its preconditions.
 
 | Path | Chapter | Decisive evidence |

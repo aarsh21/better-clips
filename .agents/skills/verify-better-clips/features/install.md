@@ -8,7 +8,7 @@ Password sign-in; Connect OBS; local .deb install; carry forward destination, to
 
 ## How to get to it (user POV)
 
-Open the empty Better Clips library, sign in and copy its install command. Quit OBS before upgrading. Reopen OBS and check the Better Clips dock and its Settings button.
+Open the empty Better Clips library at `/apps/`, sign in and copy its install command. Quit OBS before upgrading. Reopen OBS and check the Better Clips dock and its Settings button.
 
 ## Driving it with agent-browser and xdotool
 
