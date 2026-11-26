@@ -302,7 +302,7 @@ export type Me =
   | {
       hosted?: true
       email: string
-      storage: { id: string; bucket: string; auto: boolean } | null
+      storage: { id: string; bucket: string; auto: boolean; keyOrigin: "app" | "manual" | "unknown" } | null
       /** The connected channel. clips may upload, list, rename, change
        * visibility, cut and delete its videos. */
       youtube?: {

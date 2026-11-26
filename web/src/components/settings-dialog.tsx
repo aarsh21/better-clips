@@ -8,7 +8,7 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { cn } from "cn"
 
-import { OwnKeyForm, useSignOut } from "@/components/connect-storage"
+import { AutoRequirements, OwnKeyForm, useSignOut } from "@/components/connect-storage"
 import { InfoLinks } from "@/components/sign-in"
 import { YouTubeObsSteps } from "@/components/youtube"
 import { YouTubeSettings } from "@/components/youtube-settings"
@@ -156,6 +156,7 @@ function StorageSettings() {
               : "No bucket is connected yet. "}
             Add an R2 bucket in your own Cloudflare account, free up to 10 GB.
           </p>
+          <AutoRequirements />
           <a
             href="/api/auth/setup"
             className={buttonVariants({
@@ -285,7 +286,7 @@ function AccountSettings() {
           <span className="truncate text-[11px] text-muted-foreground">
             {me.email}
             {me.storage &&
-              (me.storage.auto ? " · set up automatically" : " · your key")}
+              (me.storage.keyOrigin === "app" ? " · app-created key" : me.storage.keyOrigin === "manual" ? " · your key" : " · connected key")}
           </span>
         </div>
         <Button
@@ -318,7 +319,7 @@ function AccountSettings() {
         <div className="flex flex-col gap-2 border border-destructive/30 bg-destructive/5 p-3">
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             Better Clips stops using this bucket right away, and OBS stops
-            uploading. Your clips stay in the bucket. To turn the key off for
+            uploading. Existing share links stop working. Your clips stay in the bucket. To turn the key off for
             good, delete it in R2 → Manage API tokens.
           </p>
           <div className="flex gap-2">

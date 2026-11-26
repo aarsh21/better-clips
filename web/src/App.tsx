@@ -17,7 +17,7 @@ import { toast } from "sonner"
 
 import { ClipGrid } from "@/components/clip-grid"
 import { ClipToolbar } from "@/components/clip-toolbar"
-import { ConnectStorage } from "@/components/connect-storage"
+import { AutoRequirements, ConnectStorage } from "@/components/connect-storage"
 import type { SettingsTab } from "@/components/settings-dialog"
 import { ObsConnect } from "@/components/setup-steps"
 import { SignIn } from "@/components/sign-in"
@@ -688,6 +688,7 @@ function ChooseDestination({ onOwnKey }: { onOwnKey: () => void }) {
             Download clips, trim them losslessly and share them with expiring
             links. Free up to 10 GB.
           </p>
+          <AutoRequirements />
           <a href="/api/auth/setup" className={buttonVariants()}>
             Set up automatically
           </a>

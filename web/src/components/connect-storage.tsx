@@ -10,6 +10,10 @@ import { Input } from "@/components/ui/input"
 import { announceAccountChange, api } from "@/lib/api"
 
 /* The hosted app's second step: pick where clips are stored. */
+export function AutoRequirements() {
+  return <p className="text-[11px] leading-relaxed text-muted-foreground">Automatic setup needs a Cloudflare login with one account, R2 enabled, and permission to manage buckets and create account API tokens. Otherwise, connect a bucket with your own key.</p>
+}
+
 export function ConnectStorage() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me })
   const [own, setOwn] = React.useState(false)
@@ -25,6 +29,7 @@ export function ConnectStorage() {
       </p>
 
       <div className="flex flex-col gap-3 border bg-muted/30 p-4">
+        <AutoRequirements />
         <a
           href="/api/auth/setup"
           className={buttonVariants({ size: "lg", className: "w-full" })}

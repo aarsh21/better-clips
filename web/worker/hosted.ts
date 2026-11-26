@@ -245,6 +245,7 @@ type TenantRow = {
   secret_enc: string
   key_version: number
   created_by_app: number
+  app_key: number | null
   obs_token_hash: string
   obs_token_enc: string
 }
@@ -965,8 +966,8 @@ async function saveTenant(
     .DB!.prepare(
       `INSERT INTO tenants (id, user_id, endpoint, bucket, access_key_id, secret_enc,
          key_version, created_by_app, obs_token_hash, obs_token_enc, settings,
-         cleanup_on, created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         cleanup_on, created, app_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       id,
@@ -983,7 +984,7 @@ async function saveTenant(
       /* A bucket you bring may hold clips the app never saw: clean-up
        * waits until you confirm the lengths in Settings. */
       b.createdByApp ? 1 : 0,
-      Date.now()
+      Date.now(), Number(b.newKey)
     )
     .run()
   forgetUser(userId)
@@ -1110,6 +1111,7 @@ export function hostedRoutes(app: Hono<any>) {
           id: entry.row.id,
           bucket: entry.row.bucket,
           auto: entry.row.created_by_app === 1,
+          keyOrigin: entry.row.app_key === null ? "unknown" : entry.row.app_key ? "app" : "manual",
         },
       },
       200,
