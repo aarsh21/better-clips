@@ -540,6 +540,7 @@ public:
 
 		align_labels({top, app_form, s3_form, youtube_page->form});
 		show_destination();
+		status->setText(plugin_startup_notice());
 	}
 
 private:
@@ -609,7 +610,8 @@ private:
 	void paste_setup_code()
 	{
 		R2Config config = current();
-		if (!apply_setup_code(QApplication::clipboard()->text().toStdString(), config)) {
+		const auto code = QApplication::clipboard()->text().trimmed();
+		if (!apply_setup_code(code.toStdString(), config)) {
 			status->setText(
 				"No setup code on the clipboard. Copy it from Connect OBS in your Better Clips app.");
 			return;
@@ -620,9 +622,9 @@ private:
 		access_key->setText(QString::fromStdString(config.access_key));
 		secret_key->setText(QString::fromStdString(config.secret_key));
 		folder->setText(QString::fromStdString(config.folder));
-		public_url->clear();
-		destination->setCurrentIndex(
-			destination->findData(int(config.app_url.empty() ? Destination::S3 : Destination::ClipsApp)));
+		public_url->setText(QString::fromStdString(config.public_url));
+		destination->setCurrentIndex(destination->findData(
+			int(code.startsWith("r2obs2:") ? Destination::ClipsApp : Destination::S3)));
 		status->setText("Setup code pasted. Click Test Upload, then Save.");
 	}
 
@@ -738,17 +740,25 @@ bool apply_setup_code(const std::string &text, R2Config &config)
 	QString code = QString::fromStdString(text).trimmed();
 	if (!code.startsWith("r2obs1:") && !code.startsWith("r2obs2:"))
 		return false;
-	QJsonObject fields = QJsonDocument::fromJson(QByteArray::fromBase64(code.mid(7).toUtf8())).object();
+	auto payload = QByteArray::fromBase64Encoding(code.mid(7).toUtf8(), QByteArray::AbortOnBase64DecodingErrors);
+	if (!payload)
+		return false;
+	QJsonObject fields = QJsonDocument::fromJson(payload.decoded).object();
 	auto field = [&](const char *name) {
-		return fields.value(name).toString().toStdString();
+		return fields.value(name).toString().trimmed().toStdString();
 	};
-
-	if (!field("a").empty() && !field("t").empty()) {
+	const bool app = code.startsWith("r2obs2:");
+	const QUrl url(QString::fromStdString(field(app ? "a" : "u")), QUrl::StrictMode);
+	if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty() || url.hasQuery() ||
+	    url.hasFragment() || !secure_url(url.toString().toStdString()) ||
+	    (!app && url.path().split('/', Qt::SkipEmptyParts).isEmpty()))
+		return false;
+	if (app && !field("t").empty()) {
 		config.app_url = field("a");
 		config.upload_token = field("t");
-	} else if (!field("u").empty() && !field("k").empty() && !field("s").empty()) {
-		config.app_url.clear();
-		config.upload_token.clear();
+	} else if (!app && !field("k").empty() && !field("s").empty()) {
+		if (config.s3_url != field("u"))
+			config.public_url.clear();
 		config.s3_url = field("u");
 		config.access_key = field("k");
 		config.secret_key = field("s");
@@ -756,7 +766,6 @@ bool apply_setup_code(const std::string &text, R2Config &config)
 	} else {
 		return false;
 	}
-	config.public_url.clear();
 	return true;
 }
 

@@ -53,6 +53,7 @@ bool ui_alive = true;
 bool initialized = false;
 bool just_set_up = false; /* the install script's setup code was applied */
 bool dock_placed = false; /* the dock was put next to Controls once */
+QString startup_notice;
 
 std::string config_path()
 {
@@ -252,19 +253,27 @@ void apply_pending_setup_code()
 	if (!text)
 		return;
 	R2Config next = get_config();
+	const bool app = QString::fromUtf8(text).trimmed().startsWith("r2obs2:");
 	bool applied = apply_setup_code(text, next);
 	bfree(text);
-	os_unlink(file.c_str());
 
 	if (!applied) {
+		os_unlink(file.c_str());
+		startup_notice = "Invalid setup code. Copy a fresh setup code from your Better Clips app.";
 		obs_log(LOG_WARNING, "Ignored %s: not a setup code", file.c_str());
 		return;
 	}
 	next.start_replay_buffer = true;
-	youtube.destination = next.app_url.empty() ? Destination::S3 : Destination::ClipsApp;
-	enable_replay_buffer_in_profile();
+	auto account = get_youtube_settings();
+	account.destination = app ? Destination::ClipsApp : Destination::S3;
 	bind_default_hotkey();
-	set_config(next);
+	if (!save_settings(next, account)) {
+		startup_notice =
+			"Could not save the setup code. Check the settings folder permissions and restart OBS to retry.";
+		return;
+	}
+	os_unlink(file.c_str());
+	enable_replay_buffer_in_profile();
 	just_set_up = true;
 	obs_log(LOG_INFO, "Applied the setup code from the install script");
 }
@@ -351,6 +360,11 @@ void on_frontend_save(obs_data_t *, bool saving, void *)
 bool replay_r2_running()
 {
 	return replay_output && obs_output_active(replay_output);
+}
+
+QString plugin_startup_notice()
+{
+	return startup_notice;
 }
 
 void save_replay_to_r2()
@@ -449,6 +463,7 @@ bool save_settings(const R2Config &next, const YouTubeSettings &account)
 		return false;
 	config = next;
 	youtube = account;
+	startup_notice.clear();
 	return true;
 }
 

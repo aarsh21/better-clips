@@ -18,8 +18,20 @@ Remove-Item Env:CLIPS_SETUP_CODE -ErrorAction SilentlyContinue
 function Say($Text) { Write-Host "==> $Text" -ForegroundColor Cyan }
 function Fail($Text) { Write-Host "Error: $Text" -ForegroundColor Red; throw $Text }
 
-if ($Code -and $Code -notmatch '^r2obs[12]:') {
-    Fail "That doesn't look like a setup code. Copy it again from Settings > OBS in your clips app."
+if ($Code) {
+    try {
+        if ($Code -cnotmatch '^r2obs([12]):([A-Za-z0-9+/]+={0,2})$') { throw 'prefix or encoding' }
+        $App = $Matches[1] -eq '2'
+        $Payload = [Text.UTF8Encoding]::new($false, $true).GetString([Convert]::FromBase64String($Matches[2])) | ConvertFrom-Json
+        $Keys = if ($App) { 'a','t' } else { 'u','k','s' }
+        foreach ($Key in $Keys) {
+            if ($Payload.$Key -isnot [string] -or !$Payload.$Key.Trim()) { throw 'missing field' }
+        }
+        $Url = [uri]$Payload.($Keys[0])
+        if (!$Url.IsAbsoluteUri -or !$Url.Host -or $Url.UserInfo -or $Url.Query -or $Url.Fragment -or
+            (!$App -and !$Url.AbsolutePath.Trim('/')) -or
+            ($Url.Scheme -ne 'https' -and !($Url.Scheme -eq 'http' -and $Url.Host -in 'localhost','127.0.0.1' -and $Url.Authority.Contains(':')))) { throw 'invalid URL' }
+    } catch { Fail 'Invalid setup code. Copy a fresh setup code from your Better Clips app.' }
 }
 if (-not [Environment]::Is64BitOperatingSystem) { Fail 'Only 64-bit Windows is supported.' }
 

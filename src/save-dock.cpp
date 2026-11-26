@@ -61,6 +61,7 @@ public:
 		message->setWordWrap(true);
 		message->setTextInteractionFlags(Qt::TextSelectableByMouse);
 		message->setStyleSheet("color: palette(placeholder-text);");
+		message->setText(plugin_startup_notice());
 
 		auto *layout = new QVBoxLayout(this);
 		layout->addWidget(save);
