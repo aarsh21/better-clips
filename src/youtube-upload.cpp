@@ -15,19 +15,6 @@ QString text(const std::string &s)
 }
 
 using namespace youtube_http;
-void unpaired(YouTubeRoute route, const std::string &token)
-{
-	auto current = get_youtube_settings();
-	auto &credential = route == YouTubeRoute::Direct ? current.refresh_token : current.upload_token;
-	if (current.route != route || token.empty() || credential != token)
-		return;
-	credential.clear();
-	current.channel_title.clear();
-	current.channel_id.clear();
-	set_youtube_settings(current);
-	notify_user(
-		"Better Clips: this OBS isn't connected to YouTube any more. Open Tools → Better Clips Settings → YouTube to reconnect.");
-}
 
 bool rejected_refresh(const Reply &reply)
 {

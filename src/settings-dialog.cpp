@@ -299,11 +299,12 @@ public:
 
 	void refresh_credentials()
 	{
+		if (disconnect_button->isHidden())
+			return;
 		const auto settings = get_youtube_settings();
-		if (!disconnect_button->isHidden() && !youtube_connected(settings)) {
-			show_account(settings);
+		show_account(settings);
+		if (!youtube_connected(settings))
 			show_status("This OBS is no longer connected. Reconnect to upload to YouTube.", true);
-		}
 	}
 
 	~YouTubePage() override
@@ -888,6 +889,8 @@ void wait_for_tests()
 
 void show_settings_dialog()
 {
+	if (!plugin_disabled())
+		check_youtube_pairing();
 	static QPointer<SettingsDialog> current;
 	if (current) {
 		current->showNormal();

@@ -778,6 +778,19 @@ export function youtubeRoutes(app: Hono<any>) {
       }
     )
   })
+  app.get(path + "/obs/status", async (c) => {
+    const a = await obs(c)
+
+    if (!a) return c.json({ error: reconnect, reason: "unpaired" }, 401)
+
+    return c.json(
+      { channelTitle: a.channel_title, channelId: a.channel_id },
+      200,
+      {
+        "cache-control": "no-store",
+      }
+    )
+  })
   app.post(path + "/obs/unpair", async (c) => {
     const env: HostedEnv = c.env
 

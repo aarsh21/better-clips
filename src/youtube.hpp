@@ -37,6 +37,10 @@ void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 			   std::function<void(bool ok, const std::string &error)> done);
 void cancel_youtube_sign_in();
 
+/* UI thread: recheck the hosted pairing without waiting; ignore obsolete replies. */
+void check_youtube_pairing();
+void unpaired(YouTubeRoute route, const std::string &token);
+
 /* Hosted defaults to unpairing only this device. Direct always revokes its own token. */
 enum class DisconnectResult { Revoked, Unpaired, Failed };
 void youtube_disconnect(std::function<void(DisconnectResult result)> done, bool remove_channel = false);

@@ -491,9 +491,19 @@ def exercise():
     token = login("pair", True)
     second = login("pair", True, existing=True)
     assert len(call("/api/me")["youtube"]["devices"]) == 2
+    status_path = "/api/youtube/obs/status"
+    channel = {"channelTitle": "Local channel", "channelId": CHANNEL}
+    session_cookie = cookies.pop("clips_sid")  # OBS has a bearer, not the dashboard's browser session.
+    check(call(status_path, bearer=second) == channel, "paired device status returns its channel")
+    cookies["clips_sid"] = session_cookie
     call("/api/youtube/upload/status?clipId=none", status=404, bearer=token)
     assert call("/api/youtube/obs/unpair", "POST", {}, bearer=second) == {"unpaired": True}
     assert call("/api/youtube/obs/unpair", "POST", {}, 401, second)["reason"] == "unpaired"
+    denied = call(status_path, status=401, bearer=second)
+    check(
+        denied["reason"] == "unpaired" and "Sign in" in denied["error"] and call(status_path, bearer=token) == channel,
+        "unpaired device status is rejected; the other device stays paired",
+    )
     call("/api/youtube/upload/status?clipId=none", status=404, bearer=token)
     check(len(call("/api/me")["youtube"]["devices"]) == 1 and not revoked, "unpair removed only the second OBS")
     check(
@@ -523,6 +533,7 @@ def exercise():
     revoked = True  # Google confirms invalid_token when the user retries.
     call("/api/youtube/disconnect", "POST", {}, origin=BASE)
     assert revoked
+    check(call(status_path, status=401, bearer=token) == denied, "web disconnect invalidates OBS status")
     cookies.clear()
     token = login("pair", True)
     slow = call(

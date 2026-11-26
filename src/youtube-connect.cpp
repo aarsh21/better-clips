@@ -231,6 +231,52 @@ void youtube_connect_async(YouTubeRoute route, const std::string &app_url,
 	}
 }
 
+void unpaired(YouTubeRoute route, const std::string &token)
+{
+	auto current = get_youtube_settings();
+	auto &credential = route == YouTubeRoute::Direct ? current.refresh_token : current.upload_token;
+	if (current.route != route || token.empty() || credential != token)
+		return;
+	credential.clear();
+	current.channel_title.clear();
+	current.channel_id.clear();
+	set_youtube_settings(current);
+	notify_user(
+		"Better Clips: this OBS isn't connected to YouTube any more. Open Tools → Better Clips Settings → YouTube to reconnect.");
+}
+
+void check_youtube_pairing()
+{
+	const auto yt = get_youtube_settings();
+	if (yt.route != YouTubeRoute::ClipsApp || yt.upload_token.empty())
+		return;
+	if (!pairing)
+		pairing = std::make_unique<QObject>();
+	const auto url = QUrl(QString::fromStdString(yt.app_url)).resolved(QUrl("/api/youtube/obs/status"));
+	send(pairing.get(), {url, "GET", {"Authorization: Bearer " + QByteArray::fromStdString(yt.upload_token)}},
+	     [token = yt.upload_token](const Reply &r) {
+		     if (r.code != CURLE_OK)
+			     return;
+		     // Older Workers may return their browser sign-in challenge for an unknown path.
+		     const auto reason = r.json.value("reason");
+		     if (r.status == 401 && (reason == "unpaired" || reason == "revoked")) {
+			     unpaired(YouTubeRoute::ClipsApp, token);
+			     return;
+		     }
+		     if (r.status != 200 || !r.json.value("channelTitle").isString())
+			     return;
+		     const auto id = r.json.value("channelId").toString().toStdString();
+		     const auto title = r.json.value("channelTitle").toString().toStdString();
+		     auto current = get_youtube_settings();
+		     if (current.route != YouTubeRoute::ClipsApp || current.upload_token != token || id.empty() ||
+			 (current.channel_id == id && current.channel_title == title))
+			     return;
+		     current.channel_id = id;
+		     current.channel_title = title;
+		     set_youtube_settings(current);
+	     });
+}
+
 void youtube_disconnect(std::function<void(DisconnectResult)> done, bool remove_channel)
 {
 	auto yt = get_youtube_settings();

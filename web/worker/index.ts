@@ -110,6 +110,7 @@ const OPEN = new Set([
   "/api/youtube/connect",
   "/api/youtube/callback",
   "/api/youtube/obs/exchange",
+  "/api/youtube/obs/status",
   "/api/youtube/obs/unpair",
   "/api/youtube/upload/start",
   "/api/youtube/upload/complete",

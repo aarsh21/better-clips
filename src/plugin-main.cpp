@@ -348,6 +348,7 @@ void on_frontend_event(enum obs_frontend_event event, void *)
 		 * to Controls. After that, OBS remembers where the user keeps it. */
 		if (!dock_placed)
 			place_save_dock();
+		check_youtube_pairing();
 		start_obs_replay_buffer();
 		if (just_set_up) {
 			just_set_up = false;
