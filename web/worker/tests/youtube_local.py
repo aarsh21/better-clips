@@ -813,10 +813,8 @@ def exercise():
     start = "/api/youtube/upload/start"
     audience_url = "/api/youtube/audience"
     assert call("/api/me")["youtube"]["defaultMadeForKids"] is None
-    before = len(sessions)
-    error = call(start, "POST", legacy, 422, token)["error"]
-    assert "clips.zabimaru.me" in error and "Settings → YouTube" in error and "update Better Clips" in error
-    assert len(sessions) == before
+    opened = call(start, "POST", legacy, bearer=token)
+    assert sessions[urlsplit(opened["sessionUrl"]).path]["meta"]["status"]["selfDeclaredMadeForKids"] is False
     for value in [True, False]:
         call(audience_url, "PUT", {"madeForKids": value})
         assert call("/api/me")["youtube"]["defaultMadeForKids"] is value
@@ -826,7 +824,7 @@ def exercise():
     for invalid in [None, "false", 0]:
         call(audience_url, "PUT", {"madeForKids": invalid}, 400)
         call(start, "POST", {**legacy, "madeForKids": invalid}, 400, token)
-    print("Legacy upload: missing choice returns actionable 422; both account defaults and opposite plugin overrides reach insert")
+    print("Legacy upload: missing choice uploads as not made for kids; both account defaults and opposite plugin overrides reach insert")
     quota = True
     assert (
         "limit"

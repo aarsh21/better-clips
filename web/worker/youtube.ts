@@ -855,20 +855,12 @@ export function youtubeRoutes(app: Hono<any>) {
       title,
       description,
       privacy,
-      madeForKids = accountAudience(a) ?? undefined,
+      // Clips are gameplay highlights; without a choice, they're not for kids.
+      madeForKids = accountAudience(a) ?? false,
       size,
       category,
       recordedAt,
     } = await c.req.json()
-
-    if (madeForKids === undefined)
-      return c.json(
-        {
-          error:
-            "Choose whether your clips are made for kids at clips.zabimaru.me → Settings → YouTube, or update Better Clips.",
-        },
-        422
-      )
 
     if (
       !titleOk(title) ||
