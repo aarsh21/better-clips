@@ -3,6 +3,7 @@
 
 #include "replay-r2.hpp"
 #include "sha256.hpp"
+#include "youtube-http.hpp"
 
 #include <curl/curl.h>
 #include <QUrl>
@@ -149,8 +150,10 @@ bool secure_url(const std::string &url)
 }
 
 static bool s3_request(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body,
-		       const char *content_type, bool remove, std::string &error)
+		       const char *content_type, bool remove, std::string &error, bool &permanent,
+		       const std::atomic<bool> &stop)
 {
+	permanent = true;
 	ParsedUrl url;
 	if (!parse_s3_url(config.s3_url, url, error))
 		return false;
@@ -163,6 +166,7 @@ static bool s3_request(const R2Config &config, const std::string &key, const std
 		return false;
 	}
 
+	permanent = false;
 	time_t now = time(nullptr);
 	struct tm utc;
 #ifdef _WIN32
@@ -239,6 +243,7 @@ static bool s3_request(const R2Config &config, const std::string &key, const std
 		/* Give up when the connection stalls below 1 KB/s for 60 seconds. */
 		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
 		curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
+		youtube_http::cancel_on_stop(curl, stop);
 
 		CURLcode res = curl_easy_perform(curl);
 		long status = 0;
@@ -261,6 +266,7 @@ static bool s3_request(const R2Config &config, const std::string &key, const std
 				}
 			}
 			std::string summary = s3_error_summary(response);
+			permanent = youtube_http::permanent_http_error(status);
 			error = "HTTP " + std::to_string(status) + (summary.empty() ? "" : " (" + summary + ")");
 			return false;
 		}
@@ -271,10 +277,18 @@ static bool s3_request(const R2Config &config, const std::string &key, const std
 bool s3_put_object(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body,
 		   const char *content_type, std::string &error)
 {
-	return s3_request(config, key, body, content_type, false, error);
+	bool permanent;
+	return s3_request(config, key, body, content_type, false, error, permanent, false);
+}
+
+bool s3_upload(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body, std::string &error,
+	       bool &permanent, const std::atomic<bool> &stop)
+{
+	return s3_request(config, key, body, "video/mp4", false, error, permanent, stop);
 }
 
 bool s3_delete_object(const R2Config &config, const std::string &key, std::string &error)
 {
-	return s3_request(config, key, {}, "application/octet-stream", true, error);
+	bool permanent;
+	return s3_request(config, key, {}, "application/octet-stream", true, error, permanent, false);
 }

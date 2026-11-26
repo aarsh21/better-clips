@@ -97,7 +97,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 				      .value("reason")
 				      .toString();
 		session.permanent_failure =
-			status / 100 == 4 && status != 408 && status != 409 && status != 429 &&
+			permanent_http_error(status) &&
 			!(status == 403 && (reason == "rateLimitExceeded" || reason == "userRateLimitExceeded"));
 		if (status / 100 != 2 && error.empty()) {
 			auto message = reply.json.value("error");
@@ -158,7 +158,7 @@ bool youtube_upload(const Clip &clip, const YouTubeUpload &details, const std::v
 		auto bytes = QByteArray::fromRawData(reinterpret_cast<const char *>(mp4.data() + offset), n);
 		auto url = QUrl(text(session.url));
 		auto r = direct ? google_request(url, range, bytes) : transfer(request(url, {}, range, bytes));
-		if (!direct && (r.status == 404 || r.status == 410)) {
+		if (r.status == 404 || r.status == 410) {
 			session = {}; // Explicitly expired; no video ID has been confirmed.
 			return fail("The YouTube upload session expired.");
 		}

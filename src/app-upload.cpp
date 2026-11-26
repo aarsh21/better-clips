@@ -4,6 +4,7 @@
  * start, then parts of up to 50 MB, then complete. */
 
 #include "replay-r2.hpp"
+#include "youtube-http.hpp"
 
 #include <curl/curl.h>
 
@@ -51,12 +52,14 @@ std::string escape(const std::string &text)
 /* Sends one request to the app and returns its JSON answer, or nullptr with
  * error set. GET sends no body; other methods send size bytes of data. */
 obs_data_t *call(const R2Config &config, const char *method, const std::string &path, const char *content_type,
-		 const uint8_t *data, size_t size, std::string &error)
+		 const uint8_t *data, size_t size, std::string &error, bool &permanent, const std::atomic<bool> &stop)
 {
+	permanent = false;
 	std::string url = config.app_url;
 	while (!url.empty() && url.back() == '/')
 		url.pop_back();
 	if (!secure_url(url)) {
+		permanent = true;
 		error = "The Better Clips app URL must start with https://";
 		return nullptr;
 	}
@@ -94,6 +97,7 @@ obs_data_t *call(const R2Config &config, const char *method, const std::string &
 	/* Give up when the connection stalls below 1 KB/s for 60 seconds. */
 	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
 	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
+	youtube_http::cancel_on_stop(curl, stop);
 
 	CURLcode res = curl_easy_perform(curl);
 	long status = 0;
@@ -108,6 +112,7 @@ obs_data_t *call(const R2Config &config, const char *method, const std::string &
 
 	obs_data_t *reply = response.rfind("{", 0) == 0 ? obs_data_create_from_json(response.c_str()) : nullptr;
 	if (status < 200 || status >= 300) {
+		permanent = youtube_http::permanent_http_error(status);
 		const char *message = reply ? obs_data_get_string(reply, "error") : "";
 		error = "HTTP " + std::to_string(status) +
 			(*message ? std::string(" (") + message + ")" : ". Is the Better Clips app URL right?");
@@ -122,56 +127,73 @@ obs_data_t *call(const R2Config &config, const char *method, const std::string &
 } // namespace
 
 bool app_upload(const R2Config &config, const std::string &name, const std::vector<uint8_t> &mp4, std::string &key,
-		std::string &error)
+		std::string &error, MultipartReceipt &receipt, bool &permanent, const std::atomic<bool> &stop)
 {
-	obs_data_t *started = call(config, "POST", "/api/upload/start?name=" + escape(name), "application/octet-stream",
-				   nullptr, 0, error);
-	if (!started)
-		return false;
-	const std::string target = obs_data_get_string(started, "key");
-	const std::string query =
-		"?key=" + escape(target) + "&uploadId=" + escape(obs_data_get_string(started, "uploadId"));
-	obs_data_release(started);
+	if (receipt.completion.empty()) {
+		obs_data_t *started = call(config, "POST", "/api/upload/start?name=" + escape(name),
+					   "application/octet-stream", nullptr, 0, error, permanent, stop);
+		if (!started)
+			return false;
+		receipt.target = obs_data_get_string(started, "key");
+		receipt.query = "?key=" + escape(receipt.target) +
+				"&uploadId=" + escape(obs_data_get_string(started, "uploadId"));
+		obs_data_release(started);
 
-	obs_data_array_t *parts = obs_data_array_create();
-	bool ok = true;
-	for (size_t offset = 0, number = 1; ok && offset < mp4.size(); offset += PART_SIZE, number++) {
-		size_t size = (std::min)(PART_SIZE, mp4.size() - offset);
-		obs_data_t *uploaded = call(config, "PUT",
-					    "/api/upload/part" + query + "&part=" + std::to_string(number),
-					    "application/octet-stream", mp4.data() + offset, size, error);
-		ok = uploaded != nullptr;
+		obs_data_array_t *parts = obs_data_array_create();
+		bool ok = true;
+		for (size_t offset = 0, number = 1; ok && offset < mp4.size(); offset += PART_SIZE, number++) {
+			size_t size = (std::min)(PART_SIZE, mp4.size() - offset);
+			obs_data_t *uploaded = call(
+				config, "PUT", "/api/upload/part" + receipt.query + "&part=" + std::to_string(number),
+				"application/octet-stream", mp4.data() + offset, size, error, permanent, stop);
+			ok = uploaded != nullptr;
+			if (ok) {
+				obs_data_t *part = obs_data_create();
+				obs_data_set_int(part, "partNumber", (long long)number);
+				obs_data_set_string(part, "etag", obs_data_get_string(uploaded, "etag"));
+				obs_data_array_push_back(parts, part);
+				obs_data_release(part);
+				obs_data_release(uploaded);
+			}
+		}
+
 		if (ok) {
-			obs_data_t *part = obs_data_create();
-			obs_data_set_int(part, "partNumber", (long long)number);
-			obs_data_set_string(part, "etag", obs_data_get_string(uploaded, "etag"));
-			obs_data_array_push_back(parts, part);
-			obs_data_release(part);
-			obs_data_release(uploaded);
+			obs_data_t *request = obs_data_create();
+			obs_data_set_array(request, "parts", parts);
+			receipt.completion = obs_data_get_json(request);
+			obs_data_release(request);
+		}
+		obs_data_array_release(parts);
+
+		if (!ok) {
+			std::string ignored;
+			bool ignored_failure;
+			obs_data_release(call(config, "POST", "/api/upload/abort" + receipt.query, "application/json",
+					      nullptr, 0, ignored, ignored_failure, stop));
+			return false;
 		}
 	}
-
-	if (ok) {
-		obs_data_t *request = obs_data_create();
-		obs_data_set_array(request, "parts", parts);
-		const char *json = obs_data_get_json(request);
-		obs_data_t *done = call(config, "POST", "/api/upload/complete" + query, "application/json",
-					(const uint8_t *)json, strlen(json), error);
-		ok = done != nullptr;
-		if (ok)
-			key = obs_data_get_string(done, "key");
-		obs_data_release(done);
-		obs_data_release(request);
-	}
-	obs_data_array_release(parts);
-
-	/* Throw away the uploaded parts; a retry starts a new upload. */
-	if (!ok) {
-		std::string ignored;
-		obs_data_release(
-			call(config, "POST", "/api/upload/abort" + query, "application/json", nullptr, 0, ignored));
-	}
+	/* Once complete has been sent the object may already exist. Only replay
+	 * that same completion; an older Worker may return 400, never start again. */
+	obs_data_t *done = call(config, "POST", "/api/upload/complete" + receipt.query, "application/json",
+				reinterpret_cast<const uint8_t *>(receipt.completion.data()), receipt.completion.size(),
+				error, permanent, stop);
+	if (!done)
+		return false;
+	key = obs_data_get_string(done, "key");
+	obs_data_release(done);
+	bool ok = !key.empty() && key == receipt.target;
+	if (!ok)
+		error = "Unexpected multipart completion receipt";
 	return ok;
+}
+
+bool app_upload(const R2Config &config, const std::string &name, const std::vector<uint8_t> &mp4, std::string &key,
+		std::string &error)
+{
+	MultipartReceipt receipt;
+	bool permanent;
+	return app_upload(config, name, mp4, key, error, receipt, permanent, false);
 }
 
 bool app_check(const R2Config &config, std::string &error)
@@ -180,7 +202,9 @@ bool app_check(const R2Config &config, std::string &error)
 		error = "Paste the setup code from Connect OBS in your Better Clips app";
 		return false;
 	}
-	obs_data_t *reply = call(config, "GET", "/api/upload/check", "application/json", nullptr, 0, error);
+	bool permanent;
+	obs_data_t *reply =
+		call(config, "GET", "/api/upload/check", "application/json", nullptr, 0, error, permanent, false);
 	bool ok = reply != nullptr;
 	obs_data_release(reply);
 	return ok;

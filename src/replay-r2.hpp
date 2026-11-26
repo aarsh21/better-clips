@@ -157,3 +157,11 @@ void replay_r2_request_save(obs_output_t *output);
 std::string focused_app_name();
 
 bool s3_delete_object(const R2Config &config, const std::string &key, std::string &error);
+
+bool s3_upload(const R2Config &config, const std::string &key, const std::vector<uint8_t> &body, std::string &error,
+	       bool &permanent, const std::atomic<bool> &stop);
+struct MultipartReceipt {
+	std::string target, query, completion;
+};
+bool app_upload(const R2Config &config, const std::string &name, const std::vector<uint8_t> &mp4, std::string &key,
+		std::string &error, MultipartReceipt &receipt, bool &permanent, const std::atomic<bool> &stop);

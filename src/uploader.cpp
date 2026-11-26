@@ -147,6 +147,7 @@ void upload_clip(Clip &clip)
 	const bool yt = clip.youtube.destination == Destination::YouTube;
 	YouTubeUpload details;
 	YouTubeSession session;
+	MultipartReceipt receipt;
 	if (yt) {
 		if (clip.youtube_audio_index < 0) {
 			keep_on_disk(clip, mp4, "the selected YouTube audio track is not in the Replay Buffer");
@@ -170,9 +171,11 @@ void upload_clip(Clip &clip)
 			error = "OBS is closing";
 			break;
 		}
-		bool uploaded = yt        ? youtube_upload(clip, details, mp4, session, link, error, stopping)
-				: via_app ? app_upload(clip.config, clip.name, mp4, key, error)
-					  : s3_put_object(clip.config, key, mp4, "video/mp4", error);
+		bool uploaded = yt ? youtube_upload(clip, details, mp4, session, link, error, stopping)
+				: via_app
+					? app_upload(clip.config, clip.name, mp4, key, error, receipt,
+						     session.permanent_failure, stopping)
+					: s3_upload(clip.config, key, mp4, error, session.permanent_failure, stopping);
 		if (uploaded) {
 			auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 					  std::chrono::steady_clock::now() - upload_start)

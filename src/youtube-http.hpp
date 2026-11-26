@@ -7,6 +7,21 @@
 #include <functional>
 
 namespace youtube_http {
+inline bool permanent_http_error(long status)
+{
+	return status / 100 == 4 && status != 408 && status != 409 && status != 429;
+}
+
+inline void cancel_on_stop(CURL *curl, const std::atomic<bool> &stop)
+{
+	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+	curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &stop);
+	curl_easy_setopt(
+		curl, CURLOPT_XFERINFOFUNCTION, +[](void *ctx, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int {
+			return static_cast<const std::atomic<bool> *>(ctx)->load();
+		});
+}
+
 struct Request {
 	QUrl url;
 	const char *method = "GET";
