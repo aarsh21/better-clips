@@ -1,6 +1,6 @@
 import * as React from "react"
 
-import type { Cut } from "@/lib/api"
+import type { Cut, YouTubeClip } from "@/lib/api"
 
 /* The parts of YouTube's IFrame Player API this app uses:
  * https://developers.google.com/youtube/iframe_api_reference */
@@ -69,7 +69,9 @@ function loadPlayerApi() {
 /* The embed URL. YouTube refuses to play an embed that can't tell which site
  * it's on (error 153), so it gets this page's origin, and the iframe sends
  * the referrer. A cut plays through the player's start and end. */
-export function embedUrl(videoId: string, cut: Cut | null) {
+export function embedUrl(clip: YouTubeClip, cut: Cut | null) {
+  if (clip.status !== "ready" || clip.madeForKids !== false) return ""
+
   const params = new URLSearchParams({
     autoplay: "1",
     playsinline: "1",
@@ -83,7 +85,7 @@ export function embedUrl(videoId: string, cut: Cut | null) {
     params.set("end", String(cut.end))
   }
 
-  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params}`
+  return `https://www.youtube.com/embed/${encodeURIComponent(clip.videoId)}?${params}`
 }
 
 /* Controls the player in iframe once YouTube's script has loaded; null

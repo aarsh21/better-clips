@@ -186,18 +186,10 @@ export function Faq() {
               <b>Your email address and Google account ID</b>, to sign you in.
             </li>
             <li>
-              <b>Upload YouTube videos</b>, to send the clips you save in OBS to
-              your channel.
-            </li>
-            <li>
-              <b>View your YouTube account</b>, to find your channel and show
-              each clip&apos;s title, visibility, length, thumbnail and whether
-              YouTube has finished processing it.
-            </li>
-            <li>
               <b>See, edit and permanently delete your YouTube videos</b>, to
-              rename a clip, change who can watch it and delete it when you ask.
-              Better Clips only changes videos it uploaded.
+              find your channel, upload your replays and show them in your
+              library. Only videos uploaded by Better Clips can be renamed, have
+              their visibility changed or be deleted through the app.
             </li>
           </ul>
           <p>
@@ -206,10 +198,10 @@ export function Faq() {
             tick every box.
           </p>
           <p>
-            Direct OBS uploads need permission to upload videos and view your
-            channel and processing status. Version 0.4.0 also requests your
-            Google account ID and email, but does not use them. Direct OBS does
-            not ask to edit or delete your existing videos.
+            In direct mode, OBS asks only to upload videos and to view your
+            YouTube account so it can show the channel and check processing. It
+            doesn&apos;t ask for your email or Google account ID. (Version 0.4.0
+            also asked for those, but never used them.)
           </p>
         </Q>
         <Q q="Does OBS hold my Google token?">
@@ -220,9 +212,10 @@ export function Faq() {
               works with the app.
             </li>
             <li>
-              <b>Directly: yes.</b> OBS keeps a Google token in its plugin
-              settings on your PC, and sends it only to Google. Keep those
-              settings private, and disconnect OBS when you stop using it.
+              <b>Directly: yes.</b> OBS saves the token in your operating
+              system&apos;s secure storage and sends it only to Google. If
+              secure storage is unavailable, the token stays in memory and you
+              need to sign in again after restarting OBS.
             </li>
           </ul>
         </Q>
@@ -345,8 +338,8 @@ export function Privacy() {
             <li>
               With YouTube: your channel&apos;s ID and name, and Google&apos;s
               refresh token, encrypted at rest when you upload through this app.
-              In direct mode the token stays in the plugin&apos;s settings on
-              your computer. Better Clips does not encrypt it there.
+              In direct mode, OBS uses your operating system&apos;s secure
+              storage, or keeps the token only in memory for this session.
             </li>
             <li>
               With a bucket: its name and access key, with the secret key
@@ -402,8 +395,8 @@ export function Privacy() {
         <Q q="Direct mode in OBS">
           <p>
             When OBS uploads to YouTube directly, it keeps Google&apos;s token
-            only on your computer, in OBS&apos;s settings, and sends it only to
-            Google. It never reaches Better Clips&apos; servers.
+            on your computer and sends it only to Google. It never reaches
+            Better Clips&apos; servers.
           </p>
         </Q>
         <Q q="Cookies and playback">
@@ -425,8 +418,9 @@ export function Privacy() {
             account. While your channel is connected it keeps its Google token,
             paired devices and clip records. It schedules a channel and video
             refresh after six days, with retries if Google is unavailable.
-            Direct OBS keeps the channel details and Google token in the plugin
-            settings until you disconnect or it detects loss of access.
+            Direct OBS keeps the channel details in the plugin settings and the
+            Google token in your system&apos;s secure storage (or in memory for
+            one session) until you disconnect or it detects loss of access.
           </p>
         </Q>
         <Q q="Removing access">

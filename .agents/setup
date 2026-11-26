@@ -4,7 +4,7 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 echo 'Installing missing Linux build tools'
-packages=(build-essential ninja-build pkg-config libobs-dev qt6-base-dev libcurl4-openssl-dev zsh)
+packages=(build-essential ninja-build pkg-config libobs-dev qt6-base-dev libcurl4-openssl-dev libsecret-1-dev zsh)
 missing=()
 for package in "${packages[@]}"; do
   if [[ $(dpkg-query -W -f='${Status}' "$package" 2>/dev/null) != 'install ok installed' ]]; then

@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "replay-r2.hpp"
 #include "plugin-support.h"
+#include "youtube-credential.hpp"
 
 #include <obs-frontend-api.h>
 #include <util/config-file.h>
@@ -31,8 +32,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QSaveFile>
 #include <QMainWindow>
+#include <QMessageBox>
+#include <QUuid>
 #include <QMetaObject>
 #include <QStatusBar>
 
@@ -49,6 +53,8 @@ namespace {
 std::mutex config_mutex;
 R2Config config;
 YouTubeSettings youtube;
+std::string credential_id;
+bool session_only = false, storage_notice_shown = false;
 obs_hotkey_id save_hotkey = OBS_INVALID_HOTKEY_ID;
 obs_output_t *replay_output = nullptr; /* our in-memory replay buffer */
 bool ui_alive = true;
@@ -65,30 +71,95 @@ std::string config_path()
 	return result;
 }
 
+void show_storage_notice()
+{
+	if (!session_only || storage_notice_shown)
+		return;
+	storage_notice_shown = true;
+	auto *box = new QMessageBox(
+		QMessageBox::Information, "Better Clips",
+		"Secure storage is unavailable. You can upload this session, but you’ll need to sign in again after restarting OBS.",
+		QMessageBox::Ok, static_cast<QWidget *>(obs_frontend_get_main_window()));
+	box->setAttribute(Qt::WA_DeleteOnClose);
+	box->open();
+}
+
+void replace_credential(const std::string &token)
+{
+	// A distinct id per grant keeps an inaccessible old keyring entry from
+	// becoming the active credential after a session-only replacement.
+	const auto old = credential_id;
+	credential_id.clear();
+	session_only = false;
+	if (!token.empty()) {
+		auto id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+		if (youtube_credential::store(id, token))
+			credential_id = id;
+		else
+			session_only = true;
+	}
+	if (!old.empty())
+		youtube_credential::remove(old);
+}
+
+// During migration, backup rotation would copy the plaintext back into .bak.
+bool write_migrated_config(const QString &path, const QJsonObject &obj)
+{
+	const auto bytes = QJsonDocument(obj).toJson();
+	QSaveFile out(path);
+	return out.open(QIODevice::WriteOnly) && out.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) &&
+	       out.write(bytes) == bytes.size() && out.commit();
+}
+
 bool migrate_config()
 {
-	const QFileInfo target(QString::fromStdString(config_path()));
-	const QDir dir = target.dir();
+	const QString target = QString::fromStdString(config_path());
+	const QDir dir = QFileInfo(target).dir();
 	const QString legacy = QDir::cleanPath(dir.filePath("../obs-replay-r2/config.json"));
-	bool found = false;
-	for (const QString &path : {target.filePath(), target.filePath() + ".bak", legacy, legacy + ".bak"}) {
+	bool found = false, selected = false;
+	QJsonObject active;
+	for (const auto &path : {target, target + ".bak", legacy, legacy + ".bak"}) {
 		QFile source(path);
 		if (!source.exists())
 			continue;
 		found = true;
-		if (!source.open(QIODevice::ReadOnly))
+		if (!source.open(QIODevice::ReadOnly)) {
+			if (selected && path == target + ".bak")
+				return false;
 			continue;
+		}
 		const auto bytes = source.readAll();
-		if (!QJsonDocument::fromJson(bytes).isObject())
+		source.close();
+		const auto doc = QJsonDocument::fromJson(bytes);
+		if (!doc.isObject()) {
+			if (selected && bytes.contains("youtube_refresh_token") && !write_migrated_config(path, active))
+				return false;
 			continue;
-		if (path == target.filePath())
-			return true;
-		QSaveFile copy(target.filePath());
-		return dir.mkpath(".") && copy.open(QIODevice::WriteOnly) &&
-		       copy.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) &&
-		       copy.write(bytes) == bytes.size() && copy.commit();
+		}
+		auto obj = doc.object();
+		const auto old = obj.take("youtube_refresh_token");
+		if (!selected) {
+			credential_id = obj.value("youtube_credential_id").toString().toStdString();
+			youtube.refresh_token = old.toString().toStdString();
+			if (!youtube.refresh_token.empty())
+				replace_credential(youtube.refresh_token);
+			else if (!credential_id.empty())
+				youtube.refresh_token = youtube_credential::read(credential_id);
+		}
+		if (!old.isUndefined()) {
+			if (old.toString().toStdString() == youtube.refresh_token && !credential_id.empty())
+				obj.insert("youtube_credential_id", QString::fromStdString(credential_id));
+			if (!write_migrated_config(path, obj))
+				return false;
+		}
+		if (!selected) {
+			if (path != target && (!dir.mkpath(".") || !write_migrated_config(target, obj)))
+				return false;
+			active = obj;
+			selected = true;
+		}
 	}
-	return !found; // fresh install, not an unreadable previous configuration
+	return selected || !found;
 }
 
 void load_config()
@@ -110,7 +181,6 @@ void load_config()
 	obs_data_set_default_int(data, "destination", config.app_url.empty() && !config.s3_url.empty() ? 1 : 0);
 	youtube.destination = static_cast<Destination>(obs_data_get_int(data, "destination"));
 	youtube.route = static_cast<YouTubeRoute>(obs_data_get_int(data, "youtube_route"));
-	youtube.refresh_token = obs_data_get_string(data, "youtube_refresh_token");
 	youtube.app_url = obs_data_get_string(data, "youtube_app_url");
 	youtube.upload_token = obs_data_get_string(data, "youtube_upload_token");
 	youtube.channel_id = obs_data_get_string(data, "youtube_channel_id");
@@ -123,6 +193,10 @@ void load_config()
 	obs_data_set_default_string(data, "youtube_title", "{game} - {date} {time}");
 	obs_data_set_default_int(data, "youtube_audio_track", 1);
 	youtube.privacy = obs_data_get_string(data, "youtube_privacy");
+	auto *audience = obs_data_item_byname(data, "youtube_made_for_kids");
+	if (audience && obs_data_item_gettype(audience) == OBS_DATA_BOOLEAN)
+		youtube.made_for_kids = obs_data_item_get_bool(audience);
+	obs_data_item_release(&audience);
 	youtube.title_template = obs_data_get_string(data, "youtube_title");
 	youtube.description = obs_data_get_string(data, "youtube_description");
 	youtube.review_before_upload = obs_data_get_bool(data, "youtube_review");
@@ -151,7 +225,7 @@ bool write_config(const R2Config &next, const YouTubeSettings &account)
 		obs_data_set_bool(data, "start_replay_buffer", config.start_replay_buffer);
 		obs_data_set_int(data, "destination", static_cast<int>(youtube.destination));
 		obs_data_set_int(data, "youtube_route", static_cast<int>(youtube.route));
-		obs_data_set_string(data, "youtube_refresh_token", youtube.refresh_token.c_str());
+		obs_data_set_string(data, "youtube_credential_id", credential_id.c_str());
 		obs_data_set_string(data, "youtube_app_url", youtube.app_url.c_str());
 		obs_data_set_string(data, "youtube_upload_token", youtube.upload_token.c_str());
 		obs_data_set_string(data, "youtube_channel_id", youtube.channel_id.c_str());
@@ -159,6 +233,8 @@ bool write_config(const R2Config &next, const YouTubeSettings &account)
 		obs_data_set_bool(data, "youtube_previously_paired", youtube.previously_paired);
 		obs_data_set_bool(data, "youtube_previously_direct", youtube.previously_direct);
 		obs_data_set_string(data, "youtube_privacy", youtube.privacy.c_str());
+		if (youtube.made_for_kids.has_value())
+			obs_data_set_bool(data, "youtube_made_for_kids", *youtube.made_for_kids);
 		obs_data_set_string(data, "youtube_title", youtube.title_template.c_str());
 		obs_data_set_string(data, "youtube_description", youtube.description.c_str());
 		obs_data_set_bool(data, "youtube_review", youtube.review_before_upload);
@@ -344,6 +420,7 @@ void on_frontend_event(enum obs_frontend_event event, void *)
 	}
 	switch (event) {
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+		show_storage_notice();
 		/* Until OBS has saved a layout with the dock in it, put it next
 		 * to Controls. After that, OBS remembers where the user keeps it. */
 		if (!dock_placed)
@@ -499,6 +576,11 @@ YouTubeSettings get_youtube_settings()
 void set_youtube_settings(const YouTubeSettings &settings)
 {
 	std::lock_guard<std::mutex> lock(config_mutex);
+	if (settings.refresh_token != youtube.refresh_token ||
+	    (settings.route != YouTubeRoute::Direct && !credential_id.empty()))
+		replace_credential(settings.refresh_token);
+	if (session_only)
+		QMetaObject::invokeMethod(qApp, show_storage_notice, Qt::QueuedConnection);
 	youtube = settings;
 	youtube.previously_paired |= !youtube.upload_token.empty();
 	youtube.previously_direct |= !youtube.refresh_token.empty();

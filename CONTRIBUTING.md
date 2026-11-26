@@ -29,7 +29,7 @@ install.sh, install.ps1 one-line installers
 Build it on Linux with:
 
 ```sh
-sudo apt install obs-studio libobs-dev qt6-base-dev libcurl4-openssl-dev cmake ninja-build pkg-config
+sudo apt install obs-studio libobs-dev qt6-base-dev libcurl4-openssl-dev libsecret-1-dev cmake ninja-build pkg-config
 cmake --preset ubuntu-x86_64
 cmake --build build_x86_64
 ```

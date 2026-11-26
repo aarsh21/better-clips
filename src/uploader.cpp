@@ -270,6 +270,12 @@ void upload_clip(Delivery job)
 		}
 		job.bytes = static_cast<qint64>(mp4.size());
 		job.modified = QFileInfo(QString::fromStdString(recovery)).lastModified().toMSecsSinceEpoch();
+		if (!clip.youtube.made_for_kids.has_value()) {
+			notify_user(
+				"Better Clips: choose Yes or No for ‘Made for kids?’ in YouTube settings before uploading. Local copy: " +
+				recovery);
+			return;
+		}
 		if (clip.youtube.review_before_upload) {
 			notify_user("Better Clips: review the upload in OBS. A copy is kept at " + recovery);
 			QMetaObject::invokeMethod(

@@ -14,15 +14,10 @@ import {
   type HostedEnv,
 } from "./hosted"
 
-const scope = (name: string) =>
-  `https://www.googleapis.com/auth/youtube.${name}`
-
 const requiredScopes = [
   "openid",
   "email",
-  scope("upload"),
-  scope("readonly"),
-  scope("force-ssl"),
+  "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 function hasAllScopes(scopes: string | undefined) {
@@ -98,6 +93,7 @@ type Video = {
     license?: string
     embeddable?: boolean
     publicStatsViewable?: boolean
+    madeForKids?: boolean
     selfDeclaredMadeForKids?: boolean
     containsSyntheticMedia?: boolean
     publishAt?: string
@@ -311,7 +307,7 @@ async function sync(
 
   const { results: batch } = await env
     .DB!.prepare(
-      `UPDATE youtube_clips SET nextSync=?1,editLease=0 WHERE id IN (
+      `UPDATE youtube_clips SET nextSync=?1,editLease=0,madeForKids=NULL WHERE id IN (
     SELECT id FROM youtube_clips WHERE user_id=?2 AND videoId IS NOT NULL AND nextSync<=?3 AND editLease<=?3
     AND (?4 IS NULL OR videoId IN (SELECT value FROM json_each(?4)))
     ORDER BY status='processing' DESC,nextSync LIMIT 50) RETURNING videoId,editedAt`
@@ -356,7 +352,7 @@ async function sync(
                 title=?2,pendingTitle=CASE WHEN ?11 THEN nullif(pendingTitle,?2) END,
                 description=?3,pendingDescription=CASE WHEN ?11 THEN nullif(pendingDescription,?3) END,
                 privacy=?4,pendingPrivacy=CASE WHEN ?11 THEN nullif(pendingPrivacy,?4) END,
-                durationSeconds=?5,thumbnail=?6,status=?7,misses=0,missing_since=NULL,nextSync=?1
+                durationSeconds=?5,thumbnail=?6,status=?7,misses=0,missing_since=NULL,nextSync=?1,madeForKids=?12
                 WHERE videoId=?8 AND editedAt=?9 AND nextSync=?10 AND editLease=0`
         )
         .bind(
@@ -380,7 +376,8 @@ async function sync(
           id,
           editedAt,
           lease,
-          Number(inGrace)
+          Number(inGrace),
+          isAudience(v.status.madeForKids) ? Number(v.status.madeForKids) : null
         )
     })
   )
@@ -419,7 +416,7 @@ export async function youtubeClips(
     .prepare(
       `SELECT id,videoId,coalesce(pendingTitle,title) AS title,pendingTitle,
        coalesce(pendingDescription,description) AS description,pendingDescription,category,
-       coalesce(pendingPrivacy,privacy) AS privacy,pendingPrivacy,recordedAt,uploaded,durationSeconds,thumbnail,CASE WHEN missing_since IS NULL THEN status ELSE 'missing' END AS status,start,end
+       coalesce(pendingPrivacy,privacy) AS privacy,pendingPrivacy,recordedAt,uploaded,durationSeconds,thumbnail,CASE WHEN missing_since IS NULL THEN status ELSE 'missing' END AS status,start,end,madeForKids
        FROM youtube_clips WHERE user_id=? AND videoId IS NOT NULL ORDER BY recordedAt DESC`
     )
     .bind(user)
@@ -428,8 +425,9 @@ export async function youtubeClips(
   return {
     returning: Boolean(a.had_clips),
     stale: Boolean(a.sync_failed),
-    clips: results.map(({ start, end, ...row }) => ({
+    clips: results.map(({ start, end, madeForKids, ...row }) => ({
       ...row,
+      madeForKids: madeForKids === 0 ? false : madeForKids === 1 ? true : null,
       cut: start === null ? null : { start, end },
       url: `https://youtu.be/${row.videoId}`,
     })),
@@ -506,6 +504,9 @@ const privacyOk = (v: string) =>
 // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof
 const isText = (value: unknown): value is string => typeof value === "string"
 
+const isAudience = (value: unknown): value is boolean =>
+  value === true || value === false
+
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- untrusted request field
 const titleOk = (v: unknown) =>
   isText(v) && !!v.trim() && [...v].length <= 100 && !/[<>]/.test(v)
@@ -578,7 +579,6 @@ export function youtubeRoutes(app: Hono<any>) {
       state: f.state,
       scope: requiredScopes.join(" "),
       access_type: "offline",
-      include_granted_scopes: "true",
       code_challenge: await sha256(f.verifier),
       code_challenge_method: "S256",
     }).toString()
@@ -828,13 +828,21 @@ export function youtubeRoutes(app: Hono<any>) {
 
     if (!a) return c.json({ error: reconnect, reason: "unpaired" }, 401)
 
-    const { title, description, privacy, size, category, recordedAt } =
-      await c.req.json()
+    const {
+      title,
+      description,
+      privacy,
+      madeForKids,
+      size,
+      category,
+      recordedAt,
+    } = await c.req.json()
 
     if (
       !titleOk(title) ||
       !descriptionOk(description) ||
       !privacyOk(privacy) ||
+      !isAudience(madeForKids) ||
       !Number.isSafeInteger(size) ||
       size <= 0 ||
       !isText(category) ||
@@ -856,7 +864,10 @@ export function youtubeRoutes(app: Hono<any>) {
         },
         body: JSON.stringify({
           snippet: { title, description, categoryId: "20" },
-          status: { privacyStatus: privacy },
+          status: {
+            privacyStatus: privacy,
+            selfDeclaredMadeForKids: madeForKids,
+          },
         }),
       }
     )

@@ -46,6 +46,13 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CURL::libcurl)
 # curl.h includes windows.h, whose min and max macros break std::min/std::max.
 if(WIN32)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NOMINMAX)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE advapi32)
+elseif(APPLE)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE "-framework Security" "-framework CoreFoundation")
+else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE PkgConfig::LIBSECRET)
 endif()
 
 target_sources(
@@ -61,6 +68,7 @@ target_sources(
     src/sha256.cpp
     src/uploader.cpp
     src/youtube-http.cpp
+    src/youtube-credential.cpp
     src/youtube-upload.cpp
     src/youtube-connect.cpp
     src/focused-app.cpp

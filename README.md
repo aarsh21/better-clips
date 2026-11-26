@@ -307,7 +307,7 @@ libobs, obs-frontend-api, Qt 6 and libcurl.
 
 ```sh
 # Debian / Ubuntu
-sudo apt install obs-studio libobs-dev qt6-base-dev libcurl4-openssl-dev cmake ninja-build pkg-config
+sudo apt install obs-studio libobs-dev qt6-base-dev libcurl4-openssl-dev libsecret-1-dev cmake ninja-build pkg-config
 cmake --preset ubuntu-x86_64
 cmake --build build_x86_64
 ```

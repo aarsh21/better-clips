@@ -109,8 +109,9 @@ QComboBox *privacy_box(const std::string &privacy)
 
 QLabel *terms_label()
 {
-	auto *terms =
-		new QLabel(QString("Uploads follow <a href=\"%1\">YouTube's Terms of Service</a>.").arg(YOUTUBE_TERMS));
+	auto *terms = new QLabel(
+		QString("By clicking 'upload,' you certify that the content you are uploading complies with the YouTube Terms of Service (including the YouTube Community Guidelines) at <a href=\"%1\">%1</a>. Please be sure not to violate others' copyright or privacy rights.")
+			.arg(YOUTUBE_TERMS));
 	terms->setOpenExternalLinks(true);
 	terms->setWordWrap(true);
 	return terms;
@@ -237,6 +238,12 @@ public:
 		status->hide();
 
 		privacy = privacy_box(settings.privacy);
+		audience = new QComboBox();
+		audience->addItem("Choose an audience");
+		audience->addItem("Yes", true);
+		audience->addItem("No", false);
+		if (settings.made_for_kids.has_value())
+			audience->setCurrentIndex(audience->findData(*settings.made_for_kids));
 
 		title_template = new QLineEdit(QString::fromStdString(settings.title_template));
 		title_template->setPlaceholderText("{game} - {date} {time}");
@@ -277,6 +284,11 @@ public:
 
 		defaults = new QFormLayout();
 		defaults->addRow("Visibility", privacy);
+		defaults->addRow("Made for kids?", audience);
+		auto *audience_help = hint_label(
+			"Choose Yes if your clips are directed at children. <a href=\"https://support.google.com/youtube/answer/9528076\">How to choose</a>");
+		audience_help->setOpenExternalLinks(true);
+		defaults->addRow(QString(), audience_help);
 		defaults->addRow("Title", title_template);
 		defaults->addRow(QString(), title_preview);
 		defaults->addRow("Description", description);
@@ -321,6 +333,9 @@ public:
 		YouTubeSettings settings = get_youtube_settings();
 		settings.route = route();
 		settings.privacy = privacy->currentData().toString().toStdString();
+		settings.made_for_kids = audience->currentData().isValid()
+						 ? std::optional<bool>(audience->currentData().toBool())
+						 : std::nullopt;
 		settings.title_template = title_template->text().trimmed().toStdString();
 		if (settings.title_template.empty())
 			settings.title_template = YouTubeSettings().title_template;
@@ -340,7 +355,7 @@ private:
 	QLineEdit *app_url, *title_template;
 	QLabel *route_hint, *channel, *status, *title_preview, *access;
 	QPushButton *sign_in, *disconnect_button, *remove_channel, *cancel_sign_in;
-	QComboBox *privacy, *audio_track;
+	QComboBox *privacy, *audience, *audio_track;
 	QPlainTextEdit *description;
 	QCheckBox *review;
 

@@ -19,7 +19,7 @@ using namespace youtube_http;
 std::unique_ptr<QObject> pairing;
 QPointer<QTcpServer> sign_in_listener;
 const QString direct_scopes = QStringLiteral(
-	"openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly");
+	"https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly");
 
 void sign_in_failed(const std::function<void(bool, const std::string &)> &done, const char *message)
 {
@@ -39,9 +39,7 @@ void direct_exchange(QObject *owner, const QString &code, const QString &redirec
 		auto obj = r.json;
 		auto refresh = obj.value("refresh_token").toString();
 		auto access = obj.value("access_token").toString();
-		auto scopes = obj.value("scope").toString().split(' ');
-		if (scopes.contains("https://www.googleapis.com/auth/userinfo.email"))
-			scopes.append("email");
+		const auto scopes = obj.value("scope").toString().split(' ');
 		for (const auto &scope : direct_scopes.split(' ')) {
 			if (!scopes.contains(scope)) {
 				blog(LOG_WARNING, "[better-clips] YouTube token exchange failed (%s)",

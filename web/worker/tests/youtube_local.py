@@ -36,6 +36,7 @@ CHANNEL = "UC-local-testing"
 PREFIX = "https://www.googleapis.com/auth/youtube."
 codes, tokens, sessions, videos = {}, {}, {}, {}
 grants = set()
+extra_grants = set()  # Google may return an older, wider grant on reconnect.
 unticked = None
 quota = False
 revoked = False
@@ -107,8 +108,6 @@ class Google(BaseHTTPRequestHandler):
                 )
                 assert q["state"] and q["access_type"] == "offline"
                 assert set(q["scope"].split()) == {
-                    "openid",
-                    "email",
                     PREFIX + "upload",
                     PREFIX + "readonly",
                 }
@@ -153,6 +152,7 @@ class Google(BaseHTTPRequestHandler):
                 )
                 grants.clear()
                 grants.update(req["scope"].split())
+                grants.update(extra_grants)
                 grants.discard(unticked)
                 revoked = False
             elif revoked or f.get("refresh_token") != "testing-refresh":
@@ -224,7 +224,8 @@ class Google(BaseHTTPRequestHandler):
                         "channelId": CHANNEL,
                         "thumbnails": {"high": {"url": "https://example.com/test.jpg"}},
                     },
-                    status={**s["meta"]["status"], "uploadStatus": "uploaded"},
+                    status={**s["meta"]["status"], "uploadStatus": "uploaded",
+                            "madeForKids": s["meta"]["status"]["selfDeclaredMadeForKids"]},
                     contentDetails={"duration": "PT13S"},
                 )
             # Lose one partially received request AND the final successful reply.
@@ -237,11 +238,12 @@ class Google(BaseHTTPRequestHandler):
         if not access or revoked:
             return self.reply(401, {})
         if p.path == "/oauth2/v3/userinfo":
+            assert {"openid", "email"} <= access
             return self.reply(
                 200, {"sub": "local-subject", "email": "test@example.org"}
             )
         if p.path == "/youtube/v3/channels":
-            assert PREFIX + "readonly" in access
+            assert {PREFIX + "readonly", PREFIX + "force-ssl"} & access
             return self.reply(
                 200, {"items": [{"id": CHANNEL, "snippet": {"title": "Local channel"}}]}
             )
@@ -250,7 +252,7 @@ class Google(BaseHTTPRequestHandler):
                 return self.reply(
                     403, {"error": {"errors": [{"reason": "quotaExceeded"}]}}
                 )
-            assert PREFIX + "upload" in access and q["uploadType"] == "resumable"
+            assert {PREFIX + "upload", PREFIX + "force-ssl"} & access and q["uploadType"] == "resumable"
             key = "/session/" + secrets.token_hex(12)
             sessions[key] = {
                 "direct": PREFIX + "force-ssl" not in access,
@@ -262,7 +264,7 @@ class Google(BaseHTTPRequestHandler):
             return self.reply(200, Location=FAKE + key)
         if p.path == "/youtube/v3/videos":
             if self.command == "GET":
-                assert PREFIX + "readonly" in access
+                assert {PREFIX + "readonly", PREFIX + "force-ssl"} & access
                 reads.append(q["id"])
                 assert list_gate.wait(10), "library polls blocked on Google"
                 if reads.count(q["id"]) >= 2 and q["id"] in videos:
@@ -349,16 +351,15 @@ def login(purpose, pair=False, *, existing=False, cancel=False):
         check((result.hostname,result.port,result.path) == ("127.0.0.1",12345,"/callback") and fields["state"] == ["test-state"] and fields["error"] == ["access_denied"] and bool(fields["error_description"]), "cancelled consent returns to the validated OBS listener")
         return
     scopes = params["scope"][0].split()
+    assert "include_granted_scopes" not in params
     check(
         set(scopes)
         == {
             "openid",
             "email",
-            PREFIX + "upload",
-            PREFIX + "readonly",
             PREFIX + "force-ssl",
         },
-        "first consent asks for all five scopes",
+        "hosted consent asks for identity and force-ssl only",
     )
     result = call(call(auth, status=302), status=302)
     if unticked:
@@ -482,13 +483,19 @@ def exercise():
     for unticked in [
         "openid",
         "email",
-        PREFIX + "upload",
-        PREFIX + "readonly",
         PREFIX + "force-ssl",
     ]:
         login("pair", True)
     unticked = None
+    extra_grants.update({PREFIX + "upload", PREFIX + "readonly"})
     token = login("pair", True)
+    assert set(sql("SELECT scopes FROM youtube_accounts")[0][0].split()) >= extra_grants
+    extra_grants.clear()
+    check(call("/api/youtube/obs/status", bearer=token)["channelId"] == CHANNEL, "older broad grant still paired")
+    old = call("/api/youtube/upload/start", "POST", dict(title="Existing grant", description="", privacy="private",
+               madeForKids=True, size=1, category="", recordedAt="2026-11-01"), bearer=token)
+    check(sessions[urlsplit(old["sessionUrl"]).path]["meta"]["status"]["selfDeclaredMadeForKids"] is True,
+          "existing broad grant refreshes and starts an upload without reconnecting")
     second = login("pair", True, existing=True)
     assert len(call("/api/me")["youtube"]["devices"]) == 2
     status_path = "/api/youtube/obs/status"
@@ -543,6 +550,7 @@ def exercise():
             title="slow",
             description="",
             privacy="private",
+            madeForKids=True,
             size=1,
             category="",
             recordedAt="2026-11-01",
@@ -591,6 +599,8 @@ def exercise():
         assert p.returncode == 0, (p.stdout, p.stderr)
         assert len(sessions) == n + 1
         s = list(sessions.values())[-1]
+        check(s["meta"]["status"]["selfDeclaredMadeForKids"] is direct,
+              f"insert carries the selected audience: direct={direct}, made for kids={direct}")
         assert (
             s["data"] == mp4.read_bytes()
             and 262144 in s["queries"]
@@ -699,6 +709,17 @@ def exercise():
         assert actual == ("New title", "Second edit", "private"), actual
     assert not stale_reads[vid]
     print("Repeated stale reads and a description-only follow-up PATCH: OK")
+
+    # Google's classification may disagree with the creator's declaration,
+    # and omission on a later read must clear the previously confirmed value.
+    for audience in (True, False, None):
+        if audience is None:
+            videos[vid]["status"].pop("madeForKids")
+        else:
+            videos[vid]["status"]["madeForKids"] = audience
+        sync_due()
+        check(call("/api/clips")["youtube"][0]["madeForKids"] is audience,
+              f"library reflects Google's audience: {audience}")
     call(endpoint + "/cut", "PUT", {"start": 2.5, "end": 7}, 400)
     call(endpoint + "/cut", "PUT", {"start": 2, "end": 7})
     assert call("/api/clips")["youtube"][0]["cut"] == {"start": 2, "end": 7}
@@ -783,10 +804,14 @@ def exercise():
         "title": "Replay",
         "description": "",
         "privacy": "unlisted",
+        "madeForKids": False,
         "size": 123,
         "category": "Game",
         "recordedAt": "2026-11-25T00:00:00Z",
     }
+    for invalid in ({}, {"madeForKids": None}, {"madeForKids": "false"}):
+        details = {k: v for k, v in metadata.items() if k != "madeForKids"}
+        call("/api/youtube/upload/start", "POST", {**details, **invalid}, 400, token)
     quota = True
     assert (
         "limit"
@@ -811,6 +836,9 @@ def exercise():
         subprocess.run([str(probe), action], env=probe_env, timeout=15, check=True)
 
     account("connect")
+    extra_grants.update({"openid", "email"})
+    account("connect")
+    extra_grants.clear()
     print("Direct loopback, state rejection, PKCE exchange and channel lookup: OK")
     for processing_result in ["processed", "rejected"]:
         upload(direct=True)
@@ -819,6 +847,8 @@ def exercise():
     revoke_failure = False
     account("revoked")
     account("unpaired")
+    account("stale-refresh")
+    print("Late invalid_grant for previous sign-in leaves replacement credential and channel intact")
     p = subprocess.run(
         [str(probe), "direct", str(mp4)],
         env=probe_env,

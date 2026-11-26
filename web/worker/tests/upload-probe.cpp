@@ -49,6 +49,18 @@ int main(int argc, char **argv)
 		std::string action(argv[1]);
 		Browser browser;
 		QDesktopServices::setUrlHandler("http", &browser, "open");
+		if (action == "stale-refresh") {
+			settings.route = YouTubeRoute::Direct;
+			settings.refresh_token = "old-grant";
+			youtube_watch(&monitor, settings, "pending", "Previous upload");
+			settings.refresh_token = "replacement-grant";
+			settings.channel_title = "Replacement channel";
+			app.exec(); // The pending check receives invalid_grant for the old sign-in.
+			return settings.refresh_token == "replacement-grant" &&
+					       settings.channel_title == "Replacement channel"
+				       ? 0
+				       : 1;
+		}
 		if (action == "connect") {
 			youtube_connect_async(YouTubeRoute::Direct, "must be ignored",
 					      [&](bool ok, const std::string &error) {
@@ -82,6 +94,7 @@ int main(int argc, char **argv)
 	if (argc != 3)
 		return 2;
 	Clip clip;
+	clip.youtube.made_for_kids = std::string(argv[1]) == "direct";
 	if (std::string(argv[1]) == "direct") {
 		clip.youtube.route = YouTubeRoute::Direct;
 		std::getline(std::cin, clip.youtube.refresh_token);

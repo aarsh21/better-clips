@@ -46,6 +46,8 @@ type ApiYouTubeClip = {
   category: string
   privacy: Privacy
   pendingPrivacy: Privacy | null
+  /** Google's classification, never the uploader's declaration. */
+  madeForKids: boolean | null
   pendingTitle: string | null
   recordedAt: string
   uploaded: string

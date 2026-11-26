@@ -69,8 +69,8 @@ export function YouTubeViewer({
   const clipTime = useClipTime()
   const ready = clip.status === "ready"
   /* Cutting shows the whole video, so you can move the cut outwards. */
-  const src = embedUrl(clip.videoId, mode === "cut" ? null : clip.cut)
-  const { player, playing } = useYouTubePlayer(iframe, ready ? src : "")
+  const src = embedUrl(clip, mode === "cut" ? null : clip.cut)
+  const { player, playing } = useYouTubePlayer(iframe, src)
 
   /* The cut bar loops inside the range it's editing instead. */
   useCutEnd(player, mode === "cut" ? null : clip.cut)
@@ -144,7 +144,7 @@ export function YouTubeViewer({
       />
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
-        {ready ? (
+        {src ? (
           <iframe
             ref={iframe}
             key={src}
@@ -162,16 +162,7 @@ export function YouTubeViewer({
             )}
           />
         ) : (
-          <div className="relative aspect-video max-h-[calc(100dvh-9.5rem)] w-full">
-            {clip.thumbnail && (
-              <img
-                src={clip.thumbnail}
-                alt=""
-                className="absolute inset-0 size-full object-contain"
-              />
-            )}
-            <YouTubeStatus clip={clip} large />
-          </div>
+          <PlayerFallback clip={clip} />
         )}
       </div>
 
@@ -250,6 +241,41 @@ export function YouTubeViewer({
         }}
       />
     </>
+  )
+}
+
+function PlayerFallback({ clip }: { clip: YouTubeClip }) {
+  return (
+    <div className="relative flex aspect-video max-h-[calc(100dvh-9.5rem)] w-full flex-col items-center justify-center gap-3 text-center">
+      {clip.status === "ready" ? (
+        <>
+          <p className="text-sm text-white">
+            {clip.madeForKids
+              ? "This video is made for kids."
+              : "YouTube hasn’t confirmed this video’s audience."}
+          </p>
+          <a
+            href={clip.url}
+            target="_blank"
+            rel="noreferrer"
+            className={buttonVariants({ variant: "secondary" })}
+          >
+            <YoutubeLogoIcon /> Watch on YouTube
+          </a>
+        </>
+      ) : (
+        <>
+          {clip.thumbnail && (
+            <img
+              src={clip.thumbnail}
+              alt=""
+              className="absolute inset-0 size-full object-contain"
+            />
+          )}
+          <YouTubeStatus clip={clip} large />
+        </>
+      )}
+    </div>
   )
 }
 
