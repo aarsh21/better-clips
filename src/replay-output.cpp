@@ -31,7 +31,6 @@ struct ReplayR2 {
 
 	std::mutex mutex;
 	std::deque<encoder_packet> packets;
-	std::deque<int64_t> keyframes; /* dts_usec of each video keyframe in packets */
 	int64_t cur_size = 0;
 	int64_t cur_time = 0; /* dts_usec of the oldest packet */
 
@@ -50,13 +49,13 @@ void clear(ReplayR2 *r)
 {
 	for (const auto &save : r->pending) {
 		uploader_cancel_reservation();
+		obs_log(LOG_WARNING, "Buffer stopped before %s could be saved", save.clip->name.c_str());
 		notify_user("Better Clips: buffer stopped before " + save.clip->name + " could be saved.");
 	}
 	r->pending.clear();
 	for (encoder_packet &pkt : r->packets)
 		obs_encoder_packet_release(&pkt);
 	r->packets.clear();
-	r->keyframes.clear();
 	r->cur_size = 0;
 	r->cur_time = 0;
 }
@@ -68,8 +67,6 @@ bool purge_front(ReplayR2 *r)
 	r->packets.pop_front();
 
 	bool keyframe = pkt.type == OBS_ENCODER_VIDEO && pkt.keyframe;
-	if (keyframe)
-		r->keyframes.pop_front();
 
 	if (r->packets.empty()) {
 		r->cur_size = 0;
@@ -209,7 +206,7 @@ std::string clip_name(time_t wall_time, const std::string &scene)
 
 /* Copies the buffer into a clip with timestamps starting at zero, sorted by
  * dts_usec, as replay_buffer_save() does in obs-ffmpeg-mux.c. */
-void snapshot(ReplayR2 *r, Clip *clip)
+void snapshot(ReplayR2 *r, Clip *clip, int64_t end)
 {
 	fill_video_track(clip->video, obs_output_get_video_encoder(r->output));
 	for (size_t i = 0; i < MAX_OUTPUT_AUDIO_ENCODERS; i++) {
@@ -242,6 +239,8 @@ void snapshot(ReplayR2 *r, Clip *clip)
 
 	clip->packets.reserve(r->packets.size());
 	for (const encoder_packet &src : r->packets) {
+		if (src.sys_dts_usec >= end)
+			continue;
 		encoder_packet pkt;
 		obs_encoder_packet_ref(&pkt, const_cast<encoder_packet *>(&src));
 
@@ -378,6 +377,25 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 
 	if (!r->active)
 		return;
+	/* The first packet at or after the press is the exclusive end, not part
+	 * of the save. In particular, don't evict an entire 8-second GOP for a
+	 * single new keyframe arriving exactly at the end of an 8-second save. */
+	while (!r->pending.empty() && packet->sys_dts_usec >= r->pending.front().timestamp) {
+		const auto end = r->pending.front().timestamp;
+		auto clip = std::move(r->pending.front().clip);
+		r->pending.pop_front();
+		while (!r->packets.empty() && r->max_time_usec &&
+		       end - r->packets.front().sys_dts_usec > r->max_time_usec)
+			purge_gop(r);
+		if (r->packets.empty() || r->packets.front().sys_dts_usec >= end) {
+			uploader_cancel_reservation();
+			notify_user(
+				"Better Clips: no keyframe in the replay window. Shorten the recording encoder's keyframe interval or increase the buffer limits. Save declined.");
+			continue;
+		}
+		snapshot(r, clip.get(), end);
+		uploader_enqueue(clip.release());
+	}
 	/* We may have joined the shared encoder mid-GOP: start on a keyframe. */
 	bool is_keyframe = packet->type == OBS_ENCODER_VIDEO && packet->keyframe;
 	if (r->packets.empty() && !is_keyframe)
@@ -389,22 +407,7 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 		r->cur_time = pkt.dts_usec;
 	r->cur_size += (int64_t)pkt.size;
 	r->packets.push_back(pkt);
-	if (is_keyframe)
-		r->keyframes.push_back(pkt.dts_usec);
 	purge(r, pkt.dts_usec);
-
-	while (!r->pending.empty() && packet->sys_dts_usec >= r->pending.front().timestamp) {
-		auto clip = std::move(r->pending.front().clip);
-		r->pending.pop_front();
-		if (r->packets.empty()) {
-			uploader_cancel_reservation();
-			notify_user(
-				"Better Clips: no keyframe in the replay window. Shorten the recording encoder's keyframe interval or increase the buffer limits. Save declined.");
-			continue;
-		}
-		snapshot(r, clip.get());
-		uploader_enqueue(clip.release());
-	}
 }
 
 } // namespace
