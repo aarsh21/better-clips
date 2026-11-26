@@ -24,6 +24,7 @@ the Free Software Foundation; either version 2 of the License, or
 #include <QMainWindow>
 #include <QPointer>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTimer>
@@ -92,13 +93,21 @@ public:
 		message->setTextFormat(Qt::PlainText);
 		readiness = new QLabel();
 		readiness->setWordWrap(true);
+		auto *body = new QWidget();
+		auto *details = new QVBoxLayout(body);
+		details->setContentsMargins(0, 0, 0, 0);
+		details->addWidget(message);
+		details->addWidget(readiness);
+		details->addStretch();
+		auto *scroll = new QScrollArea();
+		scroll->setFrameShape(QFrame::NoFrame);
+		scroll->setWidgetResizable(true);
+		scroll->setWidget(body);
 
 		auto *layout = new QVBoxLayout(this);
 		layout->addWidget(save);
 		layout->addLayout(row);
-		layout->addWidget(readiness);
-		layout->addWidget(message);
-		layout->addStretch(1);
+		layout->addWidget(scroll, 1);
 
 		auto *timer = new QTimer(this);
 		connect(timer, &QTimer::timeout, this, [this]() { refresh(); });
@@ -128,6 +137,9 @@ public:
 						: youtube        ? "paired"
 								 : "configured",
 						last_success));
+		message->setVisible(!message->text().isEmpty());
+		message->setMinimumHeight(message->heightForWidth(message->width()));
+		readiness->setMinimumHeight(readiness->heightForWidth(readiness->width()));
 
 		int seconds = get_replay_seconds();
 		if (seconds > 0 && !length->hasFocus() && length->value() != seconds) {
