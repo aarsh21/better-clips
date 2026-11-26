@@ -173,3 +173,7 @@ void set_upload_success_handler(void (*handler)(Destination));
 
 void youtube_watch(QObject *owner, const YouTubeSettings &settings, const std::string &clip_id,
 		   const std::string &title, const std::string &path, std::function<bool(bool ready)> finish);
+
+/* Reserve before accepting a press; enqueue or cancel exactly once. */
+bool uploader_reserve();
+void uploader_cancel_reservation();

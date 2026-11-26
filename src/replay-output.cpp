@@ -48,8 +48,10 @@ struct ReplayR2 {
 
 void clear(ReplayR2 *r)
 {
-	for (const auto &save : r->pending)
+	for (const auto &save : r->pending) {
+		uploader_cancel_reservation();
 		notify_user("Better Clips: buffer stopped before " + save.clip->name + " could be saved.");
+	}
 	r->pending.clear();
 	for (encoder_packet &pkt : r->packets)
 		obs_encoder_packet_release(&pkt);
@@ -395,6 +397,7 @@ void encoded_packet(void *data, struct encoder_packet *packet)
 		auto clip = std::move(r->pending.front().clip);
 		r->pending.pop_front();
 		if (r->packets.empty()) {
+			uploader_cancel_reservation();
 			notify_user(
 				"Better Clips: no keyframe in the replay window. Shorten the recording encoder's keyframe interval or increase the buffer limits. Save declined.");
 			continue;
@@ -442,6 +445,11 @@ void replay_r2_request_save(obs_output_t *output)
 	std::lock_guard<std::mutex> lock(r->mutex);
 	if (!r->active || r->packets.empty()) {
 		notify_user("Better Clips: no replay frames available yet. This save was declined.");
+		return;
+	}
+	if (!uploader_reserve()) {
+		notify_user(
+			"Better Clips: uploads and disk saves are busy. This save was declined; try again shortly.");
 		return;
 	}
 	r->pending.push_back({timestamp, std::move(clip)});

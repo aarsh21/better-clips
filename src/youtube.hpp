@@ -54,3 +54,7 @@ struct YouTubeUpload {
 bool youtube_review(YouTubeUpload &upload, const std::string &channel_title);
 void start_youtube_reviews();
 void stop_youtube_reviews();
+
+/* UI thread. The MP4 already exists on disk; approval schedules delivery. */
+void youtube_review(const YouTubeUpload &upload, const std::string &channel_title, const std::string &path,
+		    std::function<void(YouTubeUpload)> approved);

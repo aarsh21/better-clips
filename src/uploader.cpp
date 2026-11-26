@@ -29,8 +29,15 @@ namespace {
 
 std::mutex mutex;
 std::condition_variable wake;
-std::deque<std::unique_ptr<Clip>> queue;   /* waiting to upload */
-std::deque<std::unique_ptr<Clip>> to_disk; /* arrived while the uploads were full */
+struct Delivery {
+	std::shared_ptr<Clip> clip;
+	std::string path; /* nonempty for an approved, disk-backed review */
+	YouTubeUpload details;
+	qint64 bytes = 0, modified = 0;
+};
+std::deque<Delivery> queue, to_disk;
+size_t buffered_uploads = 0; /* exclude approved jobs: those don't hold MP4s */
+size_t reserved = 0;         /* accepted presses not yet handed off by the encoder */
 std::atomic<bool> stopping{false};
 std::thread worker;
 std::thread disk_worker;
@@ -43,7 +50,8 @@ constexpr int RETRY_DELAYS[] = {2, 5, 15, 30, 60};
 
 /* Each waiting clip holds its video in memory, so stop taking new ones when
  * uploads fall this far behind instead of running OBS out of memory. */
-constexpr size_t MAX_QUEUED = 3;
+constexpr size_t UPLOAD_SLOTS = 2;
+constexpr size_t DISK_SLOTS = 3;
 
 std::string format_mb(size_t bytes)
 {
@@ -71,7 +79,7 @@ bool build(Clip &clip, std::vector<uint8_t> &mp4)
 	/* The MP4 has everything now; free the buffered packets. */
 	for (encoder_packet &pkt : clip.packets)
 		obs_encoder_packet_release(&pkt);
-	clip.packets.clear();
+	std::vector<encoder_packet>().swap(clip.packets);
 	return true;
 }
 
@@ -139,8 +147,6 @@ void keep_on_disk(const Clip &clip, const std::vector<uint8_t> &mp4, const std::
 	notify_user("Better Clips: " + why + ". Saved it to " + path);
 }
 
-void upload_clip(Clip &clip);
-
 QString receipt_dir()
 {
 	char *dir = obs_module_config_path("processing");
@@ -168,14 +174,16 @@ void watch_copy(const YouTubeSettings &settings, const QJsonObject &r, const QSt
 		      });
 }
 
-void track_copy(const Clip &clip, const std::string &id, const std::string &title, const std::string &path)
+void track_copy(const Delivery &job, const std::string &id)
 {
+	const auto &clip = *job.clip;
+	const auto &path = job.path;
 	const QFileInfo file(QString::fromStdString(path));
 	QJsonObject r{{"clip", QString::fromStdString(id)},
-		      {"title", QString::fromStdString(title)},
+		      {"title", QString::fromStdString(job.details.title)},
 		      {"path", file.absoluteFilePath()},
-		      {"bytes", file.size()},
-		      {"modified", file.lastModified().toMSecsSinceEpoch()},
+		      {"bytes", job.bytes},
+		      {"modified", job.modified},
 		      {"channel", QString::fromStdString(clip.youtube.channel_id)},
 		      {"app", QString::fromStdString(clip.youtube.app_url)},
 		      {"direct", clip.youtube.route == YouTubeRoute::Direct}};
@@ -213,23 +221,41 @@ void resume_watches()
 	}
 }
 
-void upload_clip(Clip &clip)
+void upload_clip(Delivery job)
 {
+	Clip &clip = *job.clip;
 	std::vector<uint8_t> mp4;
 	std::string error;
-	if (!build(clip, mp4))
+	if (!job.path.empty()) {
+		if (stopping)
+			return; /* Already safe on disk. */
+		QFile in(QString::fromStdString(job.path));
+		if (in.open(QIODevice::ReadOnly) && in.size() == job.bytes &&
+		    QFileInfo(in).lastModified().toMSecsSinceEpoch() == job.modified) {
+			mp4.resize(static_cast<size_t>(job.bytes));
+			if (in.read(reinterpret_cast<char *>(mp4.data()), static_cast<qint64>(mp4.size())) !=
+			    static_cast<qint64>(mp4.size()))
+				mp4.clear();
+		}
+		if (mp4.empty()) {
+			notify_user("Better Clips: the reviewed file changed or could not be read. Upload skipped: " +
+				    job.path);
+			return;
+		}
+	} else if (!build(clip, mp4))
 		return;
 	if (stopping) {
-		keep_on_disk(clip, mp4, "OBS is closing");
+		if (job.path.empty())
+			keep_on_disk(clip, mp4, "OBS is closing");
 		return;
 	}
 
 	const bool yt = clip.youtube.destination == Destination::YouTube;
-	YouTubeUpload details;
+	auto &details = job.details;
 	YouTubeSession session;
 	MultipartReceipt receipt;
-	std::string recovery;
-	if (yt) {
+	auto &recovery = job.path;
+	if (yt && recovery.empty()) {
 		if (clip.youtube_audio_index < 0) {
 			keep_on_disk(clip, mp4, "the selected YouTube audio track is not in the Replay Buffer");
 			return;
@@ -242,8 +268,24 @@ void upload_clip(Clip &clip)
 				"Better Clips: couldn't save a YouTube recovery copy in the recording or plugin folder. Clip lost; check disk space and permissions.");
 			return;
 		}
-		if (clip.youtube.review_before_upload && !youtube_review(details, clip.youtube.channel_title)) {
-			notify_user("Better Clips: YouTube upload cancelled. Local copy: " + recovery);
+		job.bytes = static_cast<qint64>(mp4.size());
+		job.modified = QFileInfo(QString::fromStdString(recovery)).lastModified().toMSecsSinceEpoch();
+		if (clip.youtube.review_before_upload) {
+			notify_user("Better Clips: review the upload in OBS. A copy is kept at " + recovery);
+			QMetaObject::invokeMethod(
+				processing,
+				[job] {
+					youtube_review(job.details, job.clip->youtube.channel_title, job.path,
+						       [job](YouTubeUpload edits) mutable {
+							       std::lock_guard<std::mutex> lock(mutex);
+							       if (!stopping) {
+								       job.details = std::move(edits);
+								       queue.push_back(std::move(job));
+								       wake.notify_all();
+							       }
+						       });
+				},
+				Qt::QueuedConnection);
 			return;
 		}
 	}
@@ -283,7 +325,7 @@ void upload_clip(Clip &clip)
 				message += ". A copy is kept until YouTube finishes processing: " + recovery;
 			notify_user(message, link);
 			if (yt)
-				track_copy(clip, session.clip_id, details.title, recovery);
+				track_copy(job, session.clip_id);
 			return;
 		}
 
@@ -307,27 +349,30 @@ void upload_clip(Clip &clip)
 		keep_on_disk(clip, mp4, "upload failed (" + error + ")");
 }
 
-void write_clip(Clip &clip)
+void write_clip(Delivery job)
 {
+	Clip &clip = *job.clip;
 	std::vector<uint8_t> mp4;
 	if (build(clip, mp4))
 		keep_on_disk(clip, mp4, "still uploading earlier clips");
 }
 
 /* Handles clips from one queue until OBS closes and the queue is empty. */
-void run(std::deque<std::unique_ptr<Clip>> &clips, void (*handle)(Clip &))
+void run(std::deque<Delivery> &clips, void (*handle)(Delivery))
 {
 	for (;;) {
-		std::unique_ptr<Clip> clip;
+		Delivery job;
 		{
 			std::unique_lock<std::mutex> lock(mutex);
 			wake.wait(lock, [&] { return stopping || !clips.empty(); });
 			if (clips.empty())
 				return; /* stopping and nothing left */
-			clip = std::move(clips.front());
+			job = std::move(clips.front());
 			clips.pop_front();
+			if (&clips == &queue && job.path.empty())
+				--buffered_uploads;
 		}
-		handle(*clip);
+		handle(std::move(job));
 	}
 }
 
@@ -369,22 +414,34 @@ void uploader_enqueue(Clip *clip)
 {
 	{
 		std::lock_guard<std::mutex> lock(mutex);
-		if (queue.size() < MAX_QUEUED) {
+		--reserved;
+		if (buffered_uploads < UPLOAD_SLOTS) {
 			obs_log(LOG_INFO, "Saved replay %s from memory (%zu packets)", clip->name.c_str(),
 				clip->packets.size());
-			queue.emplace_back(clip);
-		} else if (to_disk.size() < MAX_QUEUED) {
+			queue.push_back({std::shared_ptr<Clip>(clip), {}, {}});
+			++buffered_uploads;
+		} else {
 			/* Uploads are stuck behind a slow or broken connection: write
 			 * this one to disk now rather than hold it in memory. */
 			obs_log(LOG_WARNING, "%zu clips are still waiting to upload; saving %s to disk", queue.size(),
 				clip->name.c_str());
-			to_disk.emplace_back(clip);
-		} else {
-			obs_log(LOG_WARNING, "Dropped %s: uploads and disk writes are both behind", clip->name.c_str());
-			notify_user("Better Clips: still saving earlier clips, this one was not saved");
-			delete clip;
-			return;
+			to_disk.push_back({std::shared_ptr<Clip>(clip), {}, {}});
 		}
 	}
 	wake.notify_all();
+}
+
+bool uploader_reserve()
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	if (stopping || buffered_uploads + to_disk.size() + reserved >= UPLOAD_SLOTS + DISK_SLOTS)
+		return false;
+	++reserved;
+	return true;
+}
+
+void uploader_cancel_reservation()
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	--reserved;
 }

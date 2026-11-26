@@ -619,44 +619,9 @@ private:
 
 /* ---- Reviewing a clip before it goes to YouTube ---- */
 
-/* One review, shared by the uploader thread that waits and the dialog that
- * answers. */
-struct Review {
-	std::mutex mutex;
-	std::condition_variable done;
-	bool answered = false;
-	bool upload = false;
-	YouTubeUpload fields;
-
-	void answer(bool ok, const YouTubeUpload *edited = nullptr)
-	{
-		{
-			std::lock_guard<std::mutex> lock(mutex);
-			if (answered)
-				return;
-			answered = true;
-			upload = ok;
-			if (edited)
-				fields = *edited;
-		}
-		done.notify_all();
-	}
-};
-
-/* Cancels a review whose dialog never opened: Qt drops a queued call it
- * hasn't run when OBS closes first. */
-struct CancelUnlessShown {
-	std::shared_ptr<Review> review;
-	~CancelUnlessShown()
-	{
-		if (review)
-			review->answer(false);
-	}
-};
-
-std::mutex reviews_mutex;
-std::unique_ptr<QObject> reviews;
-QPointer<QDialog> open_review; /* UI thread only */
+/* Review dialogs hold metadata only. All accesses run on the UI thread. */
+bool reviewing = false;
+QSet<QDialog *> open_reviews;
 
 class ReviewDialog : public QDialog {
 public:
@@ -720,26 +685,6 @@ private:
 	QComboBox *privacy;
 };
 
-/* Opens the review on the UI thread. It shows without taking focus, so a game
- * keeps it; the taskbar flashes until you look. */
-void show_review(const std::shared_ptr<Review> &review, const std::string &channel_title)
-{
-	auto *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
-	auto *dialog = new ReviewDialog(parent, review->fields, channel_title);
-	dialog->setAttribute(Qt::WA_DeleteOnClose);
-	dialog->setAttribute(Qt::WA_ShowWithoutActivating);
-	dialog->setWindowModality(Qt::WindowModal);
-	QObject::connect(dialog, &QDialog::finished, [review, dialog](int result) {
-		YouTubeUpload edited = dialog->edited();
-		review->answer(result == QDialog::Accepted, &edited);
-	});
-	/* Closed with OBS's window, or by OBS closing. */
-	QObject::connect(dialog, &QObject::destroyed, [review]() { review->answer(false); });
-	open_review = dialog;
-	dialog->show();
-	QApplication::alert(dialog);
-}
-
 } // namespace
 
 /* "r2obs2:" + base64 of {"a": app URL, "t": upload token}. Older apps gave
@@ -802,42 +747,37 @@ void show_settings_dialog()
 
 void start_youtube_reviews()
 {
-	reviews = std::make_unique<QObject>();
+	reviewing = true;
 }
 
 void stop_youtube_reviews()
 {
-	std::lock_guard<std::mutex> lock(reviews_mutex);
-	reviews.reset(); // Dropping a queued call destroys its CancelUnlessShown guard.
-	delete open_review.data();
+	reviewing = false;
+	while (!open_reviews.empty())
+		delete *open_reviews.begin();
 }
 
-bool youtube_review(YouTubeUpload &upload, const std::string &channel_title)
+void youtube_review(const YouTubeUpload &upload, const std::string &channel_title, const std::string &path,
+		    std::function<void(YouTubeUpload)> approved)
 {
-	std::unique_lock<std::mutex> posting(reviews_mutex);
-	if (!reviews)
-		return false;
-
-	auto review = std::make_shared<Review>();
-	review->fields = upload;
-	auto guard = std::make_shared<CancelUnlessShown>();
-	guard->review = review;
-	notify_user("Better Clips: review the clip in OBS to upload it to YouTube");
-	QMetaObject::invokeMethod(
-		reviews.get(),
-		[guard, channel_title]() {
-			std::shared_ptr<Review> shown = std::move(guard->review);
-			show_review(shown, channel_title);
-		},
-		Qt::QueuedConnection);
-	guard.reset();
-	posting.unlock();
-
-	std::unique_lock<std::mutex> lock(review->mutex);
-	review->done.wait(lock, [&] { return review->answered; });
-	if (review->upload)
-		upload = review->fields;
-	return review->upload;
+	if (!reviewing || open_reviews.size() >= 16) {
+		notify_user("Better Clips: can't open another review. Local copy: " + path);
+		return;
+	}
+	auto *parent = static_cast<QWidget *>(obs_frontend_get_main_window());
+	auto *dialog = new ReviewDialog(parent, upload, channel_title);
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	dialog->setAttribute(Qt::WA_ShowWithoutActivating);
+	open_reviews.insert(dialog);
+	QObject::connect(dialog, &QDialog::finished, [approved = std::move(approved), path, dialog](int result) {
+		if (result == QDialog::Accepted)
+			approved(dialog->edited());
+		else
+			notify_user("Better Clips: YouTube upload cancelled. Local copy: " + path);
+	});
+	QObject::connect(dialog, &QObject::destroyed, [dialog]() { open_reviews.remove(dialog); });
+	dialog->show();
+	QApplication::alert(dialog);
 }
 
 #include "settings-dialog.moc"
